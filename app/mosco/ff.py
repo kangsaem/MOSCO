@@ -32,6 +32,7 @@ class Info:
     audio_ch: int = 0
     pix_fmt: str = ""
     codec: str = ""
+    field_order: str = "progressive"     # tt / bb / tb / bt = 인터레이스
     extra: dict = field(default_factory=dict)
 
     @property
@@ -62,7 +63,8 @@ def probe(path: str) -> Info:
     if not cs and int(v["height"]) < 720:
         matrix = "bt601"
     return Info(path, int(v["width"]), int(v["height"]), fps, nb, dur, tc, matrix,
-                bool(aus), int(aus[0].get("channels", 2)) if aus else 0, v.get("pix_fmt", ""), v.get("codec_name", ""))
+                bool(aus), int(aus[0].get("channels", 2)) if aus else 0, v.get("pix_fmt", ""), v.get("codec_name", ""),
+                v.get("field_order", "progressive") or "progressive")
 
 
 def _ss(frame: int, fps: Fraction) -> str:
@@ -75,6 +77,9 @@ class Reader:
     depth=16 → uint16 RGB (렌더용, 10bit 보존) / depth=8 → uint8 RGB (분석·재생)."""
 
     def __init__(self, info: Info, start=0, depth=8, size=None, hw=False, count=None):
+        self._args = (info, start, depth, size, False, count)
+        self.hw = hw
+        self._first = True
         self.info = info
         self.w, self.h = size or (info.w, info.h)
         self.depth = depth
@@ -95,6 +100,12 @@ class Reader:
 
     def read(self):
         buf = self.p.stdout.read(self.nbytes)
+        if len(buf) < self.nbytes and self._first and self.hw:
+            # GPU 디코딩 실패 → CPU 로 다시
+            self.close()
+            self.__init__(*self._args)
+            return self.read()
+        self._first = False
         if len(buf) < self.nbytes:
             return None
         a = np.frombuffer(buf, np.uint16 if self.depth == 16 else np.uint8)
@@ -156,6 +167,9 @@ class Writer:
             vf = f"scale=out_color_matrix={m}:out_range=tv:flags=accurate_rnd+full_chroma_int,format=yuv422p10le"
             args += ["-vf", vf, "-c:v", "prores_ks", "-profile:v", str(PRORES.get(kind, 3)),
                      "-vendor", "apl0", "-pix_fmt", "yuv422p10le"]
+        if info.field_order in ("tt", "bb", "tb", "bt") and not h264:
+            # 인터레이스 원본: 필드 순서 유지(프레임 단위 처리, 4:2:2 라 색 번짐 없음)
+            args += ["-flags", "+ildct+ilme", "-field_order", info.field_order]
         prim = {"bt709": "bt709", "bt601": "smpte170m", "bt2020": "bt2020"}[m]
         args += ["-colorspace", {"bt709": "bt709", "bt601": "smpte170m", "bt2020": "bt2020nc"}[m],
                  "-color_primaries", {"bt709": "bt709", "bt601": "smpte170m", "bt2020": "bt2020"}[prim],
