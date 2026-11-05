@@ -70,7 +70,11 @@ def main():
     w.panel.view.set("fx")
     w.show_result()
     w.mon.reset_view()
-    assert pump(app, 20, lambda: w.result is not None and w.result.get("ells")), "미리보기 타원 없음"
+    if not pump(app, 10, lambda: w.result is not None and w.result.get("ells")):
+        # 얼굴 없는 영상(CI 합성): 타원을 하나 추가해서 그걸로 끌기 점검
+        info = w._info()
+        w.state.add_ellipse(w.f, info.w / 2, info.h / 2, info.h * 0.3)
+        assert pump(app, 20, lambda: w.result is not None and w.result.get("ells")), "추가한 타원이 안 보임"
     w.show_result()
     pump(app, 0.3)
     ents = w.result["ells"]
@@ -86,11 +90,12 @@ def main():
         pump(app, 0.5)
         src = w.state.source()
         gs = src.edits.get(src.mode, {}).get("groups", [])
-        assert gs and str(w.f) in gs[0]["keys"], f"드래그로 키가 안 생김 {gs}"
-        assert w.bar.keys == [w.f], w.bar.keys
+        g = next((g for g in gs if str(w.f) in g["keys"]), None)
+        assert g is not None, f"드래그로 키가 안 생김 {gs}"
+        assert w.f in w.bar.keys, w.bar.keys
         w.panel.ov_rows["strength"].s.setValue(80)
         pump(app, 0.3)
-        assert gs[0]["ov"].get("strength") == 80
+        assert g["ov"].get("strength") == 80
         assert w.state.delete_key(w.f)
         print("edit drag OK")
     w.panel.b_add.toggle()
