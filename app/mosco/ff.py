@@ -1,0 +1,235 @@
+"""FFmpeg: 정보 읽기, 프레임 읽기(파이프), ProRes 쓰기, 타임코드."""
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+from dataclasses import dataclass, field
+from fractions import Fraction
+
+import numpy as np
+
+from . import paths
+
+NOWIN = 0x08000000 if os.name == "nt" else 0   # CREATE_NO_WINDOW
+
+
+def _run(args, **kw):
+    return subprocess.run(args, capture_output=True, creationflags=NOWIN, **kw)
+
+
+@dataclass
+class Info:
+    path: str
+    w: int
+    h: int
+    fps: Fraction
+    frames: int
+    duration: float
+    timecode: str = ""
+    matrix: str = "bt709"
+    has_audio: bool = False
+    audio_ch: int = 0
+    pix_fmt: str = ""
+    codec: str = ""
+    extra: dict = field(default_factory=dict)
+
+    @property
+    def fps_f(self) -> float:
+        return float(self.fps)
+
+
+def probe(path: str) -> Info:
+    r = _run([paths.ffprobe(), "-v", "error", "-print_format", "json", "-show_streams", "-show_format", path])
+    if r.returncode:
+        raise RuntimeError(r.stderr.decode("utf-8", "replace").strip() or "ffprobe 실패")
+    j = json.loads(r.stdout)
+    vs = [s for s in j["streams"] if s["codec_type"] == "video" and not s.get("disposition", {}).get("attached_pic")]
+    if not vs:
+        raise RuntimeError("영상 스트림이 없습니다")
+    v = vs[0]
+    aus = [s for s in j["streams"] if s["codec_type"] == "audio"]
+    fps = Fraction(v.get("avg_frame_rate") or v.get("r_frame_rate") or "30000/1001")
+    if fps == 0:
+        fps = Fraction(v.get("r_frame_rate", "30000/1001"))
+    dur = float(v.get("duration") or j["format"].get("duration") or 0)
+    nb = int(v.get("nb_frames") or 0) or int(round(dur * float(fps)))
+    tc = v.get("tags", {}).get("timecode") or j["format"].get("tags", {}).get("timecode", "")
+    for s in j["streams"]:
+        tc = tc or s.get("tags", {}).get("timecode", "")
+    cs = v.get("color_space", "")
+    matrix = "bt601" if cs in ("smpte170m", "bt470bg") else ("bt2020" if cs.startswith("bt2020") else "bt709")
+    if not cs and int(v["height"]) < 720:
+        matrix = "bt601"
+    return Info(path, int(v["width"]), int(v["height"]), fps, nb, dur, tc, matrix,
+                bool(aus), int(aus[0].get("channels", 2)) if aus else 0, v.get("pix_fmt", ""), v.get("codec_name", ""))
+
+
+def _ss(frame: int, fps: Fraction) -> str:
+    """n번 프레임 정확 탐색: (n-0.5)/fps (DTME 실측)."""
+    return f"{max(0.0, (frame - 0.5) / float(fps)):.6f}"
+
+
+class Reader:
+    """원본 프레임을 순서대로 읽는 파이프.
+    depth=16 → uint16 RGB (렌더용, 10bit 보존) / depth=8 → uint8 RGB (분석·재생)."""
+
+    def __init__(self, info: Info, start=0, depth=8, size=None, hw=False, count=None):
+        self.info = info
+        self.w, self.h = size or (info.w, info.h)
+        self.depth = depth
+        fmt = "rgb48le" if depth == 16 else "rgb24"
+        vf = f"scale={self.w}:{self.h}:in_color_matrix={info.matrix}:in_range=auto:flags=accurate_rnd+full_chroma_int+bicubic,format={fmt}"
+        args = [paths.ffmpeg(), "-v", "error", "-nostdin"]
+        if hw:
+            args += ["-hwaccel", "cuda"]
+        if start > 0:
+            args += ["-ss", _ss(start, info.fps)]
+        args += ["-i", info.path, "-map", "0:v:0", "-an", "-sn", "-vf", vf]
+        if count:
+            args += ["-frames:v", str(count)]
+        args += ["-f", "rawvideo", "-pix_fmt", fmt, "-"]
+        self.nbytes = self.w * self.h * 3 * (2 if depth == 16 else 1)
+        self.p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=NOWIN,
+                                  bufsize=self.nbytes * 2)
+
+    def read(self):
+        buf = self.p.stdout.read(self.nbytes)
+        if len(buf) < self.nbytes:
+            return None
+        a = np.frombuffer(buf, np.uint16 if self.depth == 16 else np.uint8)
+        return a.reshape(self.h, self.w, 3)
+
+    def error(self) -> str:
+        try:
+            return self.p.stderr.read().decode("utf-8", "replace").strip()
+        except Exception:  # noqa: BLE001
+            return ""
+
+    def close(self):
+        try:
+            self.p.stdout.close()
+            self.p.kill()
+            self.p.wait(3)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def grab(info: Info, frame: int, depth=16, size=None):
+    """프레임 1장."""
+    r = Reader(info, frame, depth, size, count=1)
+    try:
+        a = r.read()
+        if a is None:
+            raise RuntimeError(r.error() or "프레임을 읽지 못했습니다")
+        return a.copy()
+    finally:
+        r.close()
+
+
+PRORES = {"422 HQ": 3, "422": 2, "422 LT": 1}
+
+
+class Writer:
+    """uint16 RGB(또는 RGBA) 프레임 → ProRes .mov. 오디오는 원본에서 그대로(PCM)."""
+
+    def __init__(self, out: str, info: Info, kind="422 HQ", alpha=False, audio=True, h264=False):
+        self.alpha = alpha
+        self.depth8 = h264
+        fmt = "rgba64le" if alpha else ("rgb24" if h264 else "rgb48le")
+        args = [paths.ffmpeg(), "-v", "error", "-y", "-nostdin",
+                "-f", "rawvideo", "-pix_fmt", fmt, "-s", f"{info.w}x{info.h}", "-framerate", str(info.fps), "-i", "-"]
+        use_audio = audio and info.has_audio
+        if use_audio:
+            # 오디오는 영상 길이만큼(마지막 프레임이 잘리지 않게 -shortest 대신)
+            t = info.frames / float(info.fps) if info.frames else info.duration
+            args += ["-t", f"{t:.6f}", "-i", info.path, "-map", "0:v", "-map", "1:a?"]
+        m = info.matrix
+        if h264:
+            vf = f"scale=out_color_matrix={m}:out_range=tv:flags=accurate_rnd+full_chroma_int,format=yuv420p"
+            args += ["-vf", vf, "-c:v", "libx264", "-preset", "veryfast", "-crf", "20"]
+        elif alpha:
+            vf = f"scale=out_color_matrix={m}:out_range=tv:flags=accurate_rnd+full_chroma_int,format=yuva444p10le"
+            args += ["-vf", vf, "-c:v", "prores_ks", "-profile:v", "4", "-alpha_bits", "16",
+                     "-vendor", "apl0", "-pix_fmt", "yuva444p10le"]
+        else:
+            vf = f"scale=out_color_matrix={m}:out_range=tv:flags=accurate_rnd+full_chroma_int,format=yuv422p10le"
+            args += ["-vf", vf, "-c:v", "prores_ks", "-profile:v", str(PRORES.get(kind, 3)),
+                     "-vendor", "apl0", "-pix_fmt", "yuv422p10le"]
+        prim = {"bt709": "bt709", "bt601": "smpte170m", "bt2020": "bt2020"}[m]
+        args += ["-colorspace", {"bt709": "bt709", "bt601": "smpte170m", "bt2020": "bt2020nc"}[m],
+                 "-color_primaries", {"bt709": "bt709", "bt601": "smpte170m", "bt2020": "bt2020"}[prim],
+                 "-color_trc", {"bt709": "bt709", "bt601": "smpte170m", "bt2020": "bt2020-10"}[m],
+                 "-color_range", "tv"]
+        if use_audio:
+            args += ["-c:a", "aac", "-b:a", "320k"] if h264 else ["-c:a", "pcm_s24le"]
+        if info.timecode:
+            args += ["-timecode", info.timecode]
+        args += [out]
+        self.out = out
+        self.p = subprocess.Popen(args, stdin=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=NOWIN)
+
+    def write(self, frame: np.ndarray):
+        if self.depth8:
+            if frame.dtype != np.uint8:
+                frame = (frame >> 8).astype(np.uint8)
+            self.p.stdin.write(np.ascontiguousarray(frame).tobytes())
+        else:
+            self.p.stdin.write(np.ascontiguousarray(frame, np.uint16).tobytes())
+
+    def close(self) -> str:
+        try:
+            self.p.stdin.close()
+        except Exception:  # noqa: BLE001
+            pass
+        err = self.p.stderr.read().decode("utf-8", "replace").strip()
+        code = self.p.wait()
+        if code:
+            raise RuntimeError(err or f"ffmpeg 오류 {code}")
+        return err
+
+    def kill(self):
+        try:
+            self.p.kill()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+# ------------------------------------------------------------ 타임코드
+def _drop(fps: Fraction) -> bool:
+    return abs(float(fps) - 29.97) < 0.01 or abs(float(fps) - 59.94) < 0.01
+
+
+def tc_to_frames(tc: str, fps: Fraction) -> int:
+    if not tc:
+        return 0
+    try:
+        sep = ";" in tc or "." in tc
+        hh, mm, ss, ff = [int(x) for x in tc.replace(";", ":").replace(".", ":").split(":")]
+    except ValueError:
+        return 0
+    nom = round(float(fps))
+    n = ((hh * 60 + mm) * 60 + ss) * nom + ff
+    if sep and _drop(fps):
+        d = 2 if nom == 30 else 4
+        tm = hh * 60 + mm
+        n -= d * (tm - tm // 10)
+    return n
+
+
+def frames_to_tc(n: int, fps: Fraction) -> str:
+    nom = round(float(fps))
+    if _drop(fps):
+        d = 2 if nom == 30 else 4
+        per10 = nom * 600 - d * 9
+        per1 = nom * 60 - d
+        tens, rem = divmod(n, per10)
+        if rem > d:
+            n += d * 9 * tens + d * ((rem - d) // per1)
+        else:
+            n += d * 9 * tens
+        sep = ";"
+    else:
+        sep = ":"
+    ff = n % nom; s = n // nom
+    return f"{s // 3600:02d}:{s // 60 % 60:02d}:{s % 60:02d}{sep}{ff:02d}"

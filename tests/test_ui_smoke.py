@@ -1,0 +1,89 @@
+"""화면 흐름 점검(오프스크린). 사용: python tests/test_ui_smoke.py 영상1 [영상2] [캡처폴더]"""
+import os
+import sys
+import time
+from pathlib import Path
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
+
+from PySide6.QtWidgets import QApplication  # noqa: E402
+
+from mosco.ui_main import MainWindow  # noqa: E402
+
+
+def pump(app, sec, until=None):
+    t = time.time()
+    while time.time() - t < sec:
+        app.processEvents()
+        if until and until():
+            return True
+        time.sleep(0.01)
+    return False
+
+
+def main():
+    vids = [a for a in sys.argv[1:] if Path(a).suffix.lower() in (".mov", ".mp4")]
+    out = Path(next((a for a in sys.argv[1:] if not a.lower().endswith((".mov", ".mp4"))), "ui_shots"))
+    out.mkdir(exist_ok=True)
+    app = QApplication(sys.argv)
+    w = MainWindow()
+    w.resize(1536, 864)
+    w.show()
+    w.state.add_files(vids)
+    st = w.state
+    ok = pump(app, 120, lambda: all(st.analysis(s) and st.analysis(s)["state"] == "done" for s in st.project.sources))
+    assert ok, "분석이 끝나지 않음"
+    if len(vids) > 1:
+        st.select(1)
+        st.set_mode("blur")
+        pump(app, 120, lambda: st.analysis(st.source())["state"] == "done")
+        st.select(0)
+    pump(app, 3, lambda: w.result is not None)
+    w.seek(40)
+    assert pump(app, 20, lambda: w.result is not None and w.result.get("i") == 40), "미리보기 없음"
+    w.grab().save(str(out / "1_beauty_fx.png"))
+    w.panel.view.set("split")
+    w.show_result()
+    pump(app, 0.5)
+    w.grab().save(str(out / "2_beauty_split.png"))
+    w.panel.set_key("final")
+    pump(app, 0.5)
+    w.grab().save(str(out / "3_beauty_split_key.png"))
+    w.panel.set_key("skin")
+    pump(app, 0.3)
+    w.mon.grab().save(str(out / "4_skin_key.png"))
+    w.panel.set_key("off")
+    w.mon.zoom_step(1)
+    w.mon.zoom_step(1)
+    pump(app, 0.3)
+    w.mon.grab().save(str(out / "5_zoom.png"))
+    # 값 바꾸기 → 미리보기 갱신
+    w.panel.rows[("beauty", "strength")].s.setValue(90)
+    assert pump(app, 10, lambda: w.result is not None and w.result.get("i") == 40 and w.state.source().beauty["strength"] == 90)
+    assert w.state.undo(), "실행취소 실패"
+    assert w.state.source().beauty["strength"] == 50, "실행취소 값 복원 실패"
+    # 재생
+    f0 = w.f
+    w.toggle_play()
+    pump(app, 4, lambda: w.f > f0 + 5)
+    assert w.f > f0, f"재생 안 됨 f={w.f} f0={f0}"
+    w.toggle_play()
+    if len(vids) > 1:
+        st.select(1)
+        w.panel.view.set("fx")
+        assert pump(app, 20, lambda: w.result is not None and w.result.get("i") is not None)
+        w.seek(35)
+        assert pump(app, 20, lambda: w.result is not None and w.result.get("i") == 35)
+        w.grab().save(str(out / "6_blur.png"))
+        w.panel.view.set("split")
+        w.show_result()
+        pump(app, 0.3)
+        w.grab().save(str(out / "7_blur_split.png"))
+    print("UI OK", out)
+    w.state.dirty = False
+    w.close()
+
+
+if __name__ == "__main__":
+    main()

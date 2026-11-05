@@ -1,0 +1,9 @@
+models/ 폴더의 모델 파일
+
+face_detection_full_range.onnx  — MediaPipe Face Detection (full range, BlazeFace)
+face_landmark.onnx              — MediaPipe Face Mesh (468 랜드마크)
+
+- 원 모델: Google MediaPipe, Apache License 2.0 (https://github.com/google-ai-edge/mediapipe)
+- 받은 곳: PyPI 패키지 face-detection-tflite 0.6.0 (MIT, Patrick Levin) 에 들어 있는 .tflite
+- 변환: tf2onnx 1.17 (opset 13), 구조·가중치 변경 없음
+- 상업 사용: Apache 2.0 은 상업 사용·재배포 허용(이 고지 유지 조건)

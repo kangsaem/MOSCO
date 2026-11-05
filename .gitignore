@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+cache/
+presets/
+settings.json
+build/
+dist/
+*.spec
+engine_test/
+ui_shots/
