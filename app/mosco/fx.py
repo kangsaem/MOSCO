@@ -7,7 +7,7 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
-from . import analyze, models
+from . import models
 
 try:
     _guided = cv2.ximgproc.guidedFilter
@@ -115,56 +115,93 @@ def _smooth_img(img, face_w):
 
 
 class BeautyResult:
-    __slots__ = ("out", "region", "skin", "alpha", "roi", "ell")
+    __slots__ = ("out", "region", "skin", "alpha", "ells", "ref")
 
     def __init__(self):
-        self.out = self.region = self.skin = self.alpha = self.roi = self.ell = None
+        self.out = self.region = self.skin = self.alpha = self.ref = None
+        self.ells = []
 
 
-def beauty(frame16, pts, presence, p, frame_no=0, want_keys=False) -> BeautyResult:
-    """frame16: (H,W,3) uint16. pts: 468x2 랜드마크(없으면 None). p: 뷰티 값."""
+def _item_ell(it, p):
+    s = it.ov.get("size", 100) / 100
+    cx, cy, w, h, ang = it.ell
+    return (cx, cy, w * s, h * s, ang)
+
+
+def _center_ref(img, ell, x0, y0):
+    """랜드마크가 없는 타원(추가 타원): 가운데 부분 피부색."""
+    cx, cy, w, h, _ = ell
+    r = max(2, int(min(w, h) * 0.12))
+    x, y = int(cx - x0), int(cy - y0 + h * 0.05)
+    H, W = img.shape[:2]
+    if not (r <= x < W - r and r <= y < H - r):
+        return None
+    _, cb, cr = _ycc(img[y - r:y + r, x - r:x + r].reshape(-1, 3))
+    return float(np.median(cb)), float(np.median(cr))
+
+
+def beauty(frame16, items, p, frame_no=0, want_keys=False) -> BeautyResult:
+    """frame16: (H,W,3) uint16. items: edits.Item 목록(자동·추가 타원). p: 뷰티 값."""
     res = BeautyResult()
     res.out = frame16
-    if pts is None or presence <= 0:
-        return res
     H, W = frame16.shape[:2]
-    ell = analyze.head_ellipse(pts, p["size"], p["neck"])
-    res.ell = ell
-    feather = max(ell[2], ell[3]) * p["feather"] / 100 / 2
-    roi = ellipse_roi(ell, feather, W, H)
-    if roi is None:
-        return res
-    x0, y0, x1, y1 = roi
-    res.roi = roi
-    img = frame16[y0:y1, x0:x1].astype(np.float32) * K
-    face_w = float(np.ptp(pts[models.FACE_OVAL, 0]))
-    alpha = ellipse_alpha(ell, roi, feather) * presence
-    ref = tuple(p["skin_ref"]) if p.get("skin_ref") else skin_ref_auto(img, pts, x0, y0)
-    if ref is None:
-        ref = (-0.06, 0.07)
-    skin = skin_mask_soft(img, ref, p["skin_range"], face_w)
-    feat = feature_mask(pts, roi, face_w)
-    region = alpha * skin * (1 - feat)
-    res.alpha, res.skin, res.region = alpha, skin, region
-    st = p["strength"] / 100
-    if st <= 0 and p["unify"] <= 0:
-        return res
-    res_img = img
-    if st > 0:
-        base = _smooth_img(img, face_w)
-        fine = img - cv2.GaussianBlur(img, (0, 0), max(0.8, face_w / 400))
-        sm = base + (p["texture"] / 100) * fine
-        if p["grain"] > 0:
-            rng = np.random.default_rng(frame_no)
-            sm = sm + rng.normal(0, p["grain"] / 100 * 0.03, img.shape[:2]).astype(np.float32)[..., None]
-        res_img = img + (sm - img) * (region * st)[..., None]
-    if p["unify"] > 0:
-        y, cb, cr = _ycc(res_img)
-        u = region * (p["unify"] / 100 * 0.6)
-        res_img = _rgb(y, cb + (ref[0] - cb) * u, cr + (ref[1] - cr) * u)
-    o = frame16.copy()
-    o[y0:y1, x0:x1] = np.clip(res_img * 65535 + 0.5, 0, 65535).astype(np.uint16)
-    res.out = o
+    if want_keys:
+        res.region = np.zeros((H, W), np.float32)
+        res.alpha = np.zeros((H, W), np.float32)
+    o = None
+    for it in items:
+        if it.presence <= 0:
+            continue
+        ell = _item_ell(it, p)
+        res.ells.append((it, ell))
+        fe = it.ov.get("feather", p["feather"])
+        feather = max(ell[2], ell[3]) * fe / 100 / 2
+        roi = ellipse_roi(ell, feather, W, H)
+        if roi is None:
+            continue
+        x0, y0, x1, y1 = roi
+        src = (o if o is not None else frame16)[y0:y1, x0:x1]
+        img = src.astype(np.float32) * K
+        pts = it.pts
+        face_w = float(np.ptp(pts[models.FACE_OVAL, 0])) if pts is not None else ell[2] / 1.5
+        alpha = ellipse_alpha(ell, roi, feather) * it.presence
+        if p.get("skin_ref"):
+            ref = tuple(p["skin_ref"])
+        elif pts is not None:
+            ref = skin_ref_auto(img, pts, x0, y0)
+        else:
+            ref = _center_ref(img, ell, x0, y0)
+        if ref is None:
+            ref = (-0.06, 0.07)
+        res.ref = res.ref or ref
+        skin = skin_mask_soft(img, ref, p["skin_range"], face_w)
+        region = alpha * skin
+        if pts is not None and p.get("features", True):
+            region = region * (1 - feature_mask(pts, roi, face_w))
+        if want_keys:
+            np.maximum(res.region[y0:y1, x0:x1], region, out=res.region[y0:y1, x0:x1])
+            np.maximum(res.alpha[y0:y1, x0:x1], alpha, out=res.alpha[y0:y1, x0:x1])
+        st = it.ov.get("strength", p["strength"]) / 100
+        if st <= 0 and p["unify"] <= 0:
+            continue
+        res_img = img
+        if st > 0:
+            base = _smooth_img(img, face_w)
+            fine = img - cv2.GaussianBlur(img, (0, 0), max(0.8, face_w / 400))
+            sm = base + (p["texture"] / 100) * fine
+            if p["grain"] > 0:
+                rng = np.random.default_rng(frame_no * 131 + x0)
+                sm = sm + rng.normal(0, p["grain"] / 100 * 0.03, img.shape[:2]).astype(np.float32)[..., None]
+            res_img = img + (sm - img) * (region * st)[..., None]
+        if p["unify"] > 0:
+            y, cb, cr = _ycc(res_img)
+            u = region * (p["unify"] / 100 * 0.6)
+            res_img = _rgb(y, cb + (ref[0] - cb) * u, cr + (ref[1] - cr) * u)
+        if o is None:
+            o = frame16.copy()
+        o[y0:y1, x0:x1] = np.clip(res_img * 65535 + 0.5, 0, 65535).astype(np.uint16)
+    if o is not None:
+        res.out = o
     return res
 
 
@@ -186,18 +223,17 @@ def pick_skin(frame16, x, y):
 
 
 # ------------------------------------------------------------ 블러
-def blur(frame16, faces, p, want_alpha=False):
-    """faces: [(id, cx, cy, w, h)]. 반환 (out16, alpha(H,W) 또는 None, ellipses[(id, ell)])."""
+def blur(frame16, items, p, want_alpha=False):
+    """items: edits.Item 목록. 반환 (out16, alpha(H,W) 또는 None, [(item, ell)])."""
     H, W = frame16.shape[:2]
-    out = frame16.copy() if faces else frame16
+    out = frame16.copy() if items else frame16
     full_a = np.zeros((H, W), np.float32) if want_alpha else None
     ells = []
-    st = max(1, p["strength"]) / 100
-    for f in faces:
-        fid, cx, cy, w, h = f[:5]
-        ell = analyze.face_to_head(cx, cy, w, h, p["margin"])
-        ells.append((fid, ell))
-        feather = max(ell[2], ell[3]) * p["feather"] / 100 / 2
+    for it in items:
+        ell = _item_ell(it, p)
+        ells.append((it, ell))
+        fe = it.ov.get("feather", p["feather"])
+        feather = max(ell[2], ell[3]) * fe / 100 / 2
         roi = ellipse_roi(ell, feather, W, H)
         if roi is None:
             continue
@@ -205,6 +241,7 @@ def blur(frame16, faces, p, want_alpha=False):
         a = ellipse_alpha(ell, roi, feather)
         img = out[y0:y1, x0:x1].astype(np.float32)
         size = max(ell[2], ell[3])
+        st = max(1, it.ov.get("strength", p["strength"])) / 100
         if p["kind"] == "mosaic":
             blk = max(3, int(size * st * 0.14))
             sw, sh = max(1, (x1 - x0) // blk), max(1, (y1 - y0) // blk)
@@ -219,19 +256,6 @@ def blur(frame16, faces, p, want_alpha=False):
     return out, full_a, ells
 
 
-def blur_alpha_full(shape, faces, p):
-    H, W = shape[:2]
-    a = np.zeros((H, W), np.float32)
-    for f in faces:
-        ell = analyze.face_to_head(*f[1:5], p["margin"])
-        feather = max(ell[2], ell[3]) * p["feather"] / 100 / 2
-        roi = ellipse_roi(ell, feather, W, H)
-        if roi:
-            x0, y0, x1, y1 = roi
-            np.maximum(a[y0:y1, x0:x1], ellipse_alpha(ell, roi, feather), out=a[y0:y1, x0:x1])
-    return a
-
-
 def rgba_overlay(out16, alpha):
     """4444 오버레이: 블러된 RGB + 알파(블러 영역 밖은 알파 0)."""
     a16 = np.clip(alpha * 65535 + 0.5, 0, 65535).astype(np.uint16)
@@ -240,8 +264,9 @@ def rgba_overlay(out16, alpha):
 
 # ------------------------------------------------------------ 검수 표시(타원·ID)
 def draw_review(img, ells, color=(65535, 51400, 19500), ids=True, thick=2):
-    """img uint16/uint8 RGB 위에 타원·ID."""
-    for fid, ell in ells:
+    """img uint8 RGB 위에 타원·ID. ells: [(item 또는 id, ell)]"""
+    for it, ell in ells:
+        fid = getattr(it, "tid", it)
         cx, cy, ew, eh, ang = ell
         cv2.ellipse(img, (int(cx), int(cy)), (int(ew / 2), int(eh / 2)), ang, 0, 360, color, thick, cv2.LINE_AA)
         if ids and fid is not None:

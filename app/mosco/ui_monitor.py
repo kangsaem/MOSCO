@@ -55,6 +55,10 @@ class ZoomBox(QWidget):
 class Monitor(QWidget):
     picked = Signal(float, float)       # 원본 좌표
     view_changed = Signal()
+    selected = Signal(object)           # 타원 key 또는 None
+    edited = Signal(object, object)     # key, (cx, cy, w, h, ang)  — 드래그 끝
+    add_at = Signal(float, float)       # 타원 추가 위치
+    merge_with = Signal(object)         # 합치기 상대 key
 
     def __init__(self):
         super().__init__()
@@ -63,7 +67,10 @@ class Monitor(QWidget):
         self.setFocusPolicy(Qt.ClickFocus)
         self.full = (1920, 1080)
         self.imgs: list[QImage] = []
-        self.ells = []          # [(id, (cx,cy,w,h,ang))]
+        self.ells = []          # [{"key", "label", "ell", "manual", "keyed"}]
+        self.sel = None
+        self.tool = None        # None | "add" | "merge"
+        self._edit = None       # (key, mode, p0, ell0)  mode: move | w | h
         self.show_ell = True
         self.show_ids = False
         self.focus_ell = None   # 반반 얼굴 자동 확대용
@@ -97,8 +104,44 @@ class Monitor(QWidget):
         self.update()
 
     def set_overlay(self, ells, show_ell, show_ids):
+        if self._edit is not None:
+            return                 # 드래그 중에는 유지
         self.ells, self.show_ell, self.show_ids = ells or [], show_ell, show_ids
         self.update()
+
+    def set_selected(self, key):
+        self.sel = key
+        self.update()
+
+    def set_tool(self, tool):
+        self.tool = tool
+        self.setCursor(Qt.CrossCursor if tool else Qt.ArrowCursor)
+
+    # ------------------------------------------------------------ 타원 맞추기
+    def _hit(self, q: QPointF, s):
+        """q: 원본 좌표. 반환 (entry, mode) — 선택된 타원 손잡이 우선."""
+        import math
+        tol = 8 / max(s, 1e-3)
+        for e in self.ells:
+            if e["key"] != self.sel:
+                continue
+            cx, cy, w, h, ang = e["ell"]
+            a = math.radians(ang)
+            ux, uy = math.cos(a), math.sin(a)
+            for mode, (dx, dy) in (("w", (ux * w / 2, uy * w / 2)), ("w", (-ux * w / 2, -uy * w / 2)),
+                                   ("h", (-uy * h / 2, ux * h / 2)), ("h", (uy * h / 2, -ux * h / 2))):
+                if abs(q.x() - (cx + dx)) <= tol and abs(q.y() - (cy + dy)) <= tol:
+                    return e, mode
+        best = None
+        for e in self.ells:
+            cx, cy, w, h, ang = e["ell"]
+            a = math.radians(-ang)
+            x, y = q.x() - cx, q.y() - cy
+            xr, yr = x * math.cos(a) - y * math.sin(a), x * math.sin(a) + y * math.cos(a)
+            d = (xr / max(w / 2, 1)) ** 2 + (yr / max(h / 2, 1)) ** 2
+            if d <= 1.05 and (best is None or w * h < best["ell"][2] * best["ell"][3]):
+                best = e
+        return (best, "move") if best else (None, None)
 
     def set_default(self, mode):
         """반반 뷰티 = face, 나머지 = fit. 수동 확대 중이면 유지."""
@@ -196,17 +239,60 @@ class Monitor(QWidget):
         self.zoom_step(d, e.position())
 
     def mousePressEvent(self, e):
+        q, pane = self.to_img(e.position())
         if e.button() == Qt.LeftButton and self.picking:
-            q, _ = self.to_img(e.position())
             if q is not None:
                 self.picked.emit(q.x(), q.y())
             return
+        if e.button() == Qt.LeftButton and q is not None and self.tool == "add":
+            self.add_at.emit(q.x(), q.y())
+            return
+        if e.button() == Qt.LeftButton and q is not None and self.show_ell:
+            s, _ = self.xform(pane)
+            ent, mode = self._hit(q, s)
+            if self.tool == "merge":
+                if ent is not None:
+                    self.merge_with.emit(ent["key"])
+                return
+            if ent is not None:
+                if ent["key"] != self.sel:
+                    self.sel = ent["key"]
+                    self.selected.emit(ent["key"])
+                self._edit = [ent["key"], mode, q, tuple(ent["ell"]), s, False]
+                self.update()
+                return
+            if self.sel is not None:
+                self.sel = None
+                self.selected.emit(None)
         if e.button() in (Qt.LeftButton, Qt.MiddleButton):
             pane = self.panes()[0]
             s, c = self.xform(pane)
             self._drag = (e.position(), s, QPointF(c))
 
     def mouseMoveEvent(self, e):
+        if self._edit:
+            import math
+            key, mode, q0, ell0, s, _ = self._edit
+            q, _ = self.to_img(e.position())
+            if q is None:
+                return
+            cx, cy, w, h, ang = ell0
+            if mode == "move":
+                ell = (cx + q.x() - q0.x(), cy + q.y() - q0.y(), w, h, ang)
+            else:
+                a = math.radians(ang)
+                x, y = q.x() - cx, q.y() - cy
+                if mode == "w":
+                    w = max(8.0, 2 * abs(x * math.cos(a) + y * math.sin(a)))
+                else:
+                    h = max(8.0, 2 * abs(-x * math.sin(a) + y * math.cos(a)))
+                ell = (cx, cy, w, h, ang)
+            for ent in self.ells:
+                if ent["key"] == key:
+                    ent["ell"] = ell
+            self._edit[5] = True
+            self.update()
+            return
         if self._drag:
             p0, s, c = self._drag
             d = e.position() - p0
@@ -215,6 +301,14 @@ class Monitor(QWidget):
             self._set_manual(s, QPointF(c.x() - d.x() / s, c.y() - d.y() / s))
 
     def mouseReleaseEvent(self, e):
+        if self._edit:
+            key, mode, q0, ell0, s, moved = self._edit
+            self._edit = None
+            if moved:
+                for ent in self.ells:
+                    if ent["key"] == key:
+                        self.edited.emit(key, tuple(ent["ell"]))
+            return
         self._drag = None
 
     def mouseDoubleClickEvent(self, e):
@@ -245,33 +339,47 @@ class Monitor(QWidget):
             oy = pane.center().y() - c.y() * s
             p.drawImage(QRectF(ox, oy, W * s, H * s), img)
             if self.show_ell and self.ells:
-                pen = QPen(QColor("#f2c94c"), 2, Qt.DashLine)
-                p.setPen(pen)
                 f = QFont(p.font())
                 f.setBold(True)
                 f.setPointSize(9)
                 p.setFont(f)
-                for fid, (cx, cy, ew, eh, ang) in self.ells:
+                for ent in self.ells:
+                    cx, cy, ew, eh, ang = ent["ell"]
+                    sel = ent["key"] == self.sel and self.sel is not None
+                    col = QColor("#ffffff") if sel else (QColor("#7fd1ff") if ent.get("manual") else QColor("#f2c94c"))
+                    pen = QPen(col, 2 if not sel else 2.5, Qt.SolidLine if sel else Qt.DashLine)
+                    p.setPen(pen)
                     p.save()
                     p.translate(ox + cx * s, oy + cy * s)
                     p.rotate(ang)
                     p.setBrush(Qt.NoBrush)
                     p.drawEllipse(QPointF(0, 0), ew / 2 * s, eh / 2 * s)
+                    if sel:
+                        p.setBrush(QColor("#ffffff"))
+                        for hx, hy in ((ew / 2, 0), (-ew / 2, 0), (0, eh / 2), (0, -eh / 2)):
+                            p.drawRect(QRectF(hx * s - 4, hy * s - 4, 8, 8))
                     p.restore()
-                    if self.show_ids and fid is not None:
+                    if ent.get("keyed"):
+                        p.setPen(Qt.NoPen)
+                        p.setBrush(col)
+                        kx, ky = ox + cx * s, oy + (cy - eh / 2) * s - 10
+                        p.drawPolygon([QPointF(kx, ky - 5), QPointF(kx + 5, ky), QPointF(kx, ky + 5), QPointF(kx - 5, ky)])
+                    lab = ent.get("label")
+                    if self.show_ids and lab:
                         tx, ty = ox + (cx - ew / 2) * s, oy + (cy - eh / 2) * s - 4
-                        r = QRectF(tx, ty - 14, 8 + 7 * len(str(fid)), 15)
-                        p.fillRect(r, QColor("#f2c94c"))
+                        r = QRectF(tx, ty - 14, 8 + 7 * len(lab), 15)
+                        p.fillRect(r, col)
                         p.setPen(QColor("#111"))
-                        p.drawText(r, Qt.AlignCenter, str(fid))
-                        p.setPen(pen)
+                        p.drawText(r, Qt.AlignCenter, lab)
             p.restore()
 
 
 # ------------------------------------------------------------ 시간 막대
 class TimeBar(QWidget):
-    """위: 검출 상태 줄(6px) · 아래: 소스 바(24px) + 재생 위치(빨간 선). 클릭·드래그 = 이동."""
+    """위: 검출 상태 줄(6px) · 아래: 소스 바(24px) + 재생 위치(빨간 선) + 선택 타원의 키(◆).
+    클릭·드래그 = 이동, ◆ 우클릭 = 키 삭제."""
     seek = Signal(int)
+    del_key = Signal(int)
 
     COLORS = {0: QColor("#555"), 1: QColor("#3d9a8b"), 2: QColor("#d9822b")}
 
@@ -283,7 +391,18 @@ class TimeBar(QWidget):
         self.cov = None          # np.int8 per frame: 0 없음, 1 검출, 2 메움, -1 분석 전
         self.progress = None     # 분석 진행 0~1
         self.error = ""
+        self.keys = []
         self.setMouseTracking(True)
+
+    def set_keys(self, keys):
+        self.keys = list(keys)
+        self.update()
+
+    def _key_at(self, x):
+        for k in self.keys:
+            if abs(self._x(k) - x) <= 6:
+                return k
+        return None
 
     def set_data(self, n, cov=None, progress=None, error=""):
         self.n, self.cov, self.progress, self.error = n, cov, progress, error
@@ -298,6 +417,14 @@ class TimeBar(QWidget):
         return (i + 0.5) / max(1, self.n) * self.width()
 
     def mousePressEvent(self, e):
+        k = self._key_at(e.position().x())
+        if e.button() == Qt.RightButton:
+            if k is not None:
+                self.del_key.emit(k)
+            return
+        if k is not None:
+            self.seek.emit(k)
+            return
         self._go(e.position().x())
 
     def mouseMoveEvent(self, e):
@@ -327,5 +454,11 @@ class TimeBar(QWidget):
         bar = QColor("#a03030") if self.error else QColor("#5b7fa6")
         p.fillRect(0, 8, w, 24, bar)
         if self.n:
+            p.setRenderHint(QPainter.Antialiasing)
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor("#ffffff"))
+            for k in self.keys:
+                kx = self._x(k)
+                p.drawPolygon([QPointF(kx, 11), QPointF(kx + 5, 16), QPointF(kx, 21), QPointF(kx - 5, 16)])
             x = self._x(self.cur)
             p.fillRect(QRectF(x - 1, 8, 2, 24), QColor("#e5484d"))

@@ -6,7 +6,7 @@ import json
 
 from PySide6.QtCore import QObject, Signal
 
-from . import analyze, ff, jobs
+from . import analyze, edits, ff, jobs
 from .project import Project, Settings, Source
 
 UNDO_MAX = 80
@@ -30,6 +30,8 @@ class AppState(QObject):
         self.errors: dict[str, str] = {}
         self.an: dict = {}             # (path, mode) -> {"z", "p", "state", "err", "job"}
         self._tracks = {}
+        self._res = {}
+        self.sel = None                # 선택한 타원 key
 
     # ------------------------------------------------------------ 소스
     def source(self) -> Source | None:
@@ -131,11 +133,15 @@ class AppState(QObject):
         if not self.undo_stack:
             return False
         snap, cur = self.undo_stack.pop()
+        before = ([s.path for s in self.project.sources], self.cur)
         self.project.restore(snap)
         self.cur = min(cur, len(self.project.sources) - 1)
         self.dirty = True
+        for s in self.project.sources:
+            self.ensure_analysis(s)
         self.changed.emit()
-        self.current_changed.emit()
+        if before != ([s.path for s in self.project.sources], self.cur):
+            self.current_changed.emit()       # 소스 목록·선택이 바뀐 경우만 화면 다시 읽기
         self.params_changed.emit()
         return True
 
@@ -239,6 +245,137 @@ class AppState(QObject):
                 self._tracks.clear()
             self._tracks[k] = t
         return t
+
+    # ------------------------------------------------------------ 타원 수정
+    def resolver(self, s):
+        tr = self.track(s)
+        p = s.params()
+        sig = json.dumps([edits.get(s), p.get("margin"), p.get("size"), p.get("neck")], sort_keys=True)
+        k = (s.path, s.mode, id(tr), sig)
+        r = self._res.get(k)
+        if r is None:
+            if len(self._res) > 8:
+                self._res.clear()
+            r = edits.Resolver(s, tr)
+            self._res[k] = r
+        return r
+
+    def _item(self, s, key, frame):
+        for it in self.resolver(s).items(frame):
+            if it.key == key:
+                return it
+        return None
+
+    def _edited(self):
+        s = self.source()
+        s.custom = True
+        self.dirty = True
+        self.params_changed.emit()
+        self.changed.emit()
+
+    def _group_for(self, key, frame, create=True):
+        s = self.source()
+        if s is None or key is None:
+            return None, None
+        it = self._item(s, key, frame)
+        if it is None and key[0] == "g":
+            g = next((g for g in edits.get(s)["groups"] if g["gid"] == key[1]), None)
+            return s, g
+        if it is None:
+            return s, None
+        if not create and it.gid is None:
+            return s, None
+        g = edits.ensure_group(s, it, frame)
+        return s, g
+
+    def edit_ellipse(self, key, frame, ell):
+        """모니터에서 옮기거나 크기를 바꾼 타원(타원별 크기 % 를 뺀 값으로 저장) → 현재 프레임 키."""
+        self.push_undo()
+        s, g = self._group_for(key, frame)
+        if g is None:
+            self.undo_stack.pop()
+            return
+        sz = g.get("ov", {}).get("size", 100) / 100
+        edits.set_key(g, frame, (ell[0], ell[1], ell[2] / sz, ell[3] / sz))
+        self.sel = ("g", g["gid"])
+        self._edited()
+
+    def add_ellipse(self, frame, x, y, size):
+        s = self.source()
+        if s is None:
+            return
+        self.push_undo()
+        w = size
+        g = edits.add_manual(s, frame, (x, y, w, w * 1.25))
+        self.sel = ("g", g["gid"])
+        self._edited()
+
+    def delete_key(self, frame):
+        s, g = self._group_for(self.sel, frame, create=False)
+        if g is None or str(int(frame)) not in g.get("keys", {}):
+            return False
+        self.push_undo()
+        edits.del_key(g, frame)
+        if g.get("manual") and not g["keys"]:
+            edits.remove_group(s, g["gid"])
+            self.sel = None
+        self._edited()
+        return True
+
+    def off(self, how, frame, n):
+        self.push_undo()
+        s, g = self._group_for(self.sel, frame)
+        if g is None:
+            self.undo_stack.pop()
+            return
+        if how == "from":
+            edits.off_range(g, frame, n - 1)
+        elif how == "to":
+            edits.off_range(g, 0, frame)
+        elif how == "all":
+            g["off_all"] = True
+        elif how == "on":
+            edits.on_all(g)
+        elif how == "remove" and g.get("manual"):
+            edits.remove_group(s, g["gid"])
+            self.sel = None
+        self.sel = ("g", g["gid"]) if self.sel is not None and how != "remove" else self.sel
+        self._edited()
+
+    def merge(self, key_a, anchor_a, key_b, frame_b):
+        s = self.source()
+        it = self._item(s, key_b, frame_b) if s else None
+        if s is None or it is None or anchor_a is None:
+            return False
+        self.push_undo()
+        edits.add_merge(s, anchor_a, (frame_b, it.ell[0], it.ell[1]))
+        self._edited()
+        return True
+
+    def anchor_of(self, key, frame):
+        s = self.source()
+        it = self._item(s, key, frame) if s else None
+        return (int(frame), float(it.ell[0]), float(it.ell[1])) if it else None
+
+    def set_ov(self, key, frame, k, v, *, undo=True):
+        if undo:
+            self.push_undo()
+        s, g = self._group_for(key, frame)
+        if g is None:
+            if undo:
+                self.undo_stack.pop()
+            return
+        if v is None:
+            g.setdefault("ov", {}).pop(k, None)
+        else:
+            g.setdefault("ov", {})[k] = v
+        self.sel = ("g", g["gid"])
+        self._edited()
+
+    def ov_of(self, key, frame):
+        s = self.source()
+        it = self._item(s, key, frame) if s and key else None
+        return dict(it.ov) if it else None
 
     def cancel_all(self):
         for a in self.an.values():

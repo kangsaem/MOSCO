@@ -7,3 +7,10 @@ face_landmark.onnx              — MediaPipe Face Mesh (468 랜드마크)
 - 받은 곳: PyPI 패키지 face-detection-tflite 0.6.0 (MIT, Patrick Levin) 에 들어 있는 .tflite
 - 변환: tf2onnx 1.17 (opset 13), 구조·가중치 변경 없음
 - 상업 사용: Apache 2.0 은 상업 사용·재배포 허용(이 고지 유지 조건)
+
+mtcnn_pnet/rnet/onet.onnx       — MTCNN (작은 얼굴). PyPI mtcnn 1.0.0 (MIT, Iván de Paz Centeno) 가중치를 tf2onnx 로 변환
+                                  원 학습 데이터: WIDER FACE · CelebA (비상업 연구용) → 이 모델은 비상업 용도로만 사용
+nanodet_m.onnx                  — NanoDet-m (사람 검출, COCO). npm @vladmandic/human-models 3.0.4 (MIT) 의 TFJS 를 tf2onnx 로 변환
+                                  원 모델: RangiLyu/nanodet (Apache 2.0)
+
+※ 사용자 확인(2026-11-05): 상업용으로 쓰지 않음 → 비상업 데이터셋으로 학습된 모델 사용

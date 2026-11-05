@@ -11,9 +11,17 @@ from .ui_widgets import BTN, Section, Seg, SliderRow, Toggle, btn, set_on
 KEYS = [("off", "끔"), ("final", "최종 키"), ("skin", "피부 키"), ("alpha", "타원 알파")]
 
 
+OV_SLIDERS = [("size", "크기", 50, 250, "%"), ("feather", "페더", 0, 50, "%"), ("strength", "강도", 0, 100, "")]
+
+
 class ControlPanel(QWidget):
     view_changed = Signal()          # 보정/원본/반반·타원·키·ID
     pick_skin = Signal(bool)
+    tool = Signal(object)            # None | "add" | "merge"
+    del_key = Signal()
+    off = Signal(str)                # from | to | all | on | remove
+    ov_pressed = Signal()
+    ov_changed = Signal(str, object)
 
     def __init__(self, state):
         super().__init__()
@@ -74,6 +82,7 @@ class ControlPanel(QWidget):
 
         sc = QScrollArea()
         sc.setWidgetResizable(True)
+        sc.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         sc.setFrameShape(QScrollArea.NoFrame)
         sc.setStyleSheet("QScrollArea{background:#202020}")
         body = QWidget()
@@ -112,7 +121,63 @@ class ControlPanel(QWidget):
         self._rows(self.sec_xell, "blur", P.BLUR_ELLIPSE)
         self.sec_det = Section("검출")
         self._rows(self.sec_det, "blur", P.BLUR_DETECT)
-        for s in (self.sec_beauty, self.sec_bell, self.sec_blur, self.sec_xell, self.sec_det):
+        self.t_body = Toggle("몸으로 머리 찾기", w=130, tip="뒤통수·옆얼굴: 사람 몸에서 머리 위치 추정")
+        self.t_body.toggled2.connect(lambda v: self.state.set_param("body", v, undo=True))
+        rb = QHBoxLayout()
+        rb.addStretch(1)
+        rb.addWidget(self.t_body)
+        wb = QWidget()
+        wb.setLayout(rb)
+        self.sec_det.add(wb)
+        # 뷰티: 눈·입 제외
+        self.t_feat = Toggle("눈·입 제외", w=88, tip="눈·눈썹·입은 보정하지 않음")
+        self.t_feat.toggled2.connect(lambda v: self.state.set_param("features", v, undo=True))
+        rr2 = QHBoxLayout()
+        rr2.addStretch(1)
+        rr2.addWidget(self.t_feat)
+        wf = QWidget()
+        wf.setLayout(rr2)
+        self.sec_beauty.add(wf)
+        # 타원 편집(공통)
+        self.sec_edit = Section("타원 편집")
+        r1 = QHBoxLayout()
+        r1.setSpacing(4)
+        self.b_add = Toggle("타원 추가", w=72, tip="모니터를 클릭해 새 타원 (A)")
+        self.b_merge = Toggle("합치기", w=54, tip="선택한 타원과 같은 사람: 다른 프레임의 타원을 클릭")
+        self.b_add.toggled2.connect(lambda v: self._tool("add", v))
+        self.b_merge.toggled2.connect(lambda v: self._tool("merge", v))
+        self.b_delkey = btn("키 삭제", "현재 프레임의 키 삭제 (Del: 모니터)", w=58, on_click=self.del_key.emit)
+        self.b_off = QToolButton()
+        self.b_off.setText("끄기 ▾")
+        self.b_off.setFixedSize(56, 26)
+        self.b_off.setPopupMode(QToolButton.InstantPopup)
+        self.b_off.setFocusPolicy(Qt.NoFocus)
+        m = QMenu(self)
+        for k, t in (("from", "여기부터 끄기"), ("to", "여기까지 끄기"), ("all", "전체 끄기"), ("on", "다시 켜기"),
+                     ("remove", "추가 타원 삭제")):
+            m.addAction(t, lambda k=k: self.off.emit(k))
+        self.b_off.setMenu(m)
+        for w in (self.b_add, self.b_merge, self.b_delkey, self.b_off):
+            r1.addWidget(w)
+        r1.addStretch(1)
+        w1 = QWidget()
+        w1.setLayout(r1)
+        self.sec_edit.add(w1)
+        self.ov_rows = {}
+        for key, label, lo, hi, unit in OV_SLIDERS:
+            row = SliderRow(key, label, lo, hi, unit)
+            row.pressed.connect(lambda k: self.ov_pressed.emit())
+            row.changed.connect(lambda k, v: self.ov_changed.emit(k, v))
+            self.sec_edit.add(row)
+            self.ov_rows[key] = row
+        r2 = QHBoxLayout()
+        r2.addStretch(1)
+        r2.addWidget(btn("값 초기화", "선택한 타원의 크기·페더·강도를 전체 값으로", w=76,
+                         on_click=lambda: self.ov_changed.emit("reset", None)))
+        w2 = QWidget()
+        w2.setLayout(r2)
+        self.sec_edit.add(w2)
+        for s in (self.sec_beauty, self.sec_bell, self.sec_blur, self.sec_xell, self.sec_det, self.sec_edit):
             self.bl.addWidget(s)
         self.bl.addStretch(1)
 
@@ -154,6 +219,39 @@ class ControlPanel(QWidget):
     def stop_pick(self):
         if self.b_pick.isChecked():
             self.b_pick.setChecked(False)
+        self.stop_tool()
+
+    def _tool(self, name, v):
+        other = self.b_merge if name == "add" else self.b_add
+        if v and other.isChecked():
+            other.blockSignals(True)
+            other.setChecked(False)
+            set_on(other, False)
+            other.blockSignals(False)
+        self.tool.emit(name if v else None)
+
+    def stop_tool(self):
+        for b in (self.b_add, self.b_merge):
+            if b.isChecked():
+                b.blockSignals(True)
+                b.setChecked(False)
+                set_on(b, False)
+                b.blockSignals(False)
+        self.tool.emit(None)
+
+    def show_selection(self, ov, p):
+        """선택한 타원의 값(없으면 전체 값으로 표시, 비활성)."""
+        en = ov is not None
+        for k, row in self.ov_rows.items():
+            row.setEnabled(en)
+            if k == "size":
+                v = (ov or {}).get("size", 100)
+            else:
+                v = (ov or {}).get(k, p.get(k, 0) if p else 0)
+            row.set(v)
+        self.b_delkey.setEnabled(en)
+        self.b_off.setEnabled(en)
+        self.b_merge.setEnabled(en or self.b_merge.isChecked())
 
     # ------------------------------------------------------------ 갱신
     def refresh(self):
@@ -180,6 +278,12 @@ class ControlPanel(QWidget):
             for (m, k), row in self.rows.items():
                 row.set((s.beauty if m == "beauty" else s.blur)[k])
             self.kind.set(s.blur["kind"])
+            for t, v in ((self.t_body, s.blur.get("body", True)), (self.t_feat, s.beauty.get("features", True))):
+                t.blockSignals(True)
+                t.setChecked(bool(v))
+                set_on(t, bool(v))
+                t.blockSignals(False)
+        self.sec_edit.setEnabled(en)
         self._sync_preset(s)
 
     def _sync_preset(self, s):

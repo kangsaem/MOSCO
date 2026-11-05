@@ -13,7 +13,7 @@ from PySide6.QtGui import QAction, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QToolBar, QVBoxLayout,
                                QWidget)
 
-from . import __version__, analyze, ff, fx, jobs, paths
+from . import __version__, analyze, edits, ff, fx, jobs, paths
 from .project import Project
 from .render import render as do_render
 from .state import AppState
@@ -36,51 +36,68 @@ def gray8(m):
 
 
 # ------------------------------------------------------------ 미리보기 계산(작업 스레드)
-def compute_preview(src, frame16, track, i):
+def temp_items(src, rgb8):
+    """분석이 끝나기 전: 이 프레임만 바로 검출."""
+    p = src.params()
+    out = []
+    if src.mode == "beauty":
+        pts, _ = analyze.beauty_frame(rgb8, None)
+        if pts is not None:
+            out.append(edits.Item(("t", 1), 1, analyze.head_ellipse(pts, p["size"], p["neck"]), pts))
+    else:
+        thr = analyze.score_thr(p["sensitivity"])
+        k = 0
+        for r in analyze.blur_frame(rgb8, body=p.get("body", True)):
+            x0, y0, x1, y1, sc = r[:5]
+            if sc >= thr and (y1 - y0) >= p["min_size"]:
+                k += 1
+                out.append(edits.Item(("t", k), k, analyze.face_to_head((x0 + x1) / 2, (y0 + y1) / 2, x1 - x0,
+                                                                         y1 - y0, p["margin"])))
+    return out
+
+
+def entries(ells):
+    """[(item, 실제 적용 타원)] → 모니터 표시용."""
+    out = []
+    for it, ell in ells:
+        lab = str(it.tid) if it.tid is not None else ("+" if it.manual else None)
+        out.append({"key": it.key, "label": lab, "ell": tuple(float(v) for v in ell), "manual": it.manual,
+                    "keyed": it.keyed})
+    return out
+
+
+def item_entries(items, p):
+    return entries([(it, fx._item_ell(it, p)) for it in items])
+
+
+def compute_preview(src, frame16, resolver, has_track, i):
     """한 프레임: 원본·보정·키 3종·타원."""
     H, W = frame16.shape[:2]
     out = {"orig": to8(frame16)}
     p = src.params()
+    items = resolver.items(i)
+    if not has_track:
+        items = temp_items(src, out["orig"]) + items
     if src.mode == "beauty":
-        if track is not None:
-            pts, pres = track.at(i)
-        else:
-            pts, _ = analyze.beauty_frame(out["orig"], None)
-            pres = 1.0 if pts is not None else 0.0
-        r = fx.beauty(frame16, pts, pres, p, i)
+        r = fx.beauty(frame16, items, p, i, want_keys=True)
         out["fx"] = to8(r.out)
-        out["ells"] = [(None, r.ell)] if r.ell is not None else []
-        out["focus"] = r.ell
-        fin = np.zeros((H, W), np.float32)
-        alp = np.zeros((H, W), np.float32)
-        ref = tuple(p["skin_ref"]) if p.get("skin_ref") else None
-        if r.roi is not None:
-            x0, y0, x1, y1 = r.roi
-            fin[y0:y1, x0:x1] = r.region
-            alp[y0:y1, x0:x1] = r.alpha
-            if ref is None and pts is not None:
-                ref = fx.skin_ref_auto(frame16[y0:y1, x0:x1].astype(np.float32) * fx.K, pts, x0, y0)
-        out["final"] = gray8(fin)
-        out["alpha"] = gray8(alp)
+        out["ells"] = entries(r.ells)
+        focus = next((e for it, e in r.ells if not it.manual), r.ells[0][1] if r.ells else None)
+        out["focus"] = focus
+        out["final"] = gray8(r.region)
+        out["alpha"] = gray8(r.alpha)
+        pts = next((it.pts for it in items if it.pts is not None), None)
         fw = float(np.ptp(pts[:, 0])) if pts is not None else 300.0
-        out["skin"] = gray8(fx.skin_key_full(frame16, p, ref, fw))
-        out["faces"] = 1 if pts is not None else 0
+        out["skin"] = gray8(fx.skin_key_full(frame16, p, r.ref, fw))
+        out["faces"] = len(items)
     else:
-        if track is not None:
-            faces = track.at(i)
-        else:
-            thr = analyze.score_thr(p["sensitivity"])
-            faces = []
-            for k, (x0, y0, x1, y1, sc) in enumerate(analyze.blur_frame(out["orig"])):
-                if sc >= thr and (x1 - x0) >= p["min_size"]:
-                    faces.append((k + 1, (x0 + x1) / 2, (y0 + y1) / 2, x1 - x0, y1 - y0, True))
-        o, a, ells = fx.blur(frame16, faces, p, True)
+        o, a, ells = fx.blur(frame16, items, p, True)
         out["fx"] = to8(o)
-        out["ells"] = ells
+        out["ells"] = entries(ells)
         out["focus"] = None
         out["alpha"] = out["final"] = gray8(a)
         out["skin"] = out["alpha"]
-        out["faces"] = len(faces)
+        out["faces"] = len(items)
     return out
 
 
@@ -264,6 +281,17 @@ class MainWindow(QMainWindow):
         self.panel.pick_skin.connect(self.mon.set_picking)
         self.mon.picked.connect(self.on_pick)
         self.bar.seek.connect(self.seek)
+        self.bar.del_key.connect(lambda k: self.state.delete_key(k))
+        self.panel.tool.connect(self.on_tool)
+        self.mon.add_at.connect(self.on_add)
+        self.mon.selected.connect(self.on_select)
+        self.mon.edited.connect(lambda key, ell: self.state.edit_ellipse(key, self.f, ell))
+        self.mon.merge_with.connect(self.on_merge)
+        self.panel.del_key.connect(lambda: self.state.delete_key(self.f) or self.flash("이 프레임에 키가 없습니다"))
+        self.panel.off.connect(lambda how: self.state.off(how, self.f, self._n()))
+        self.panel.ov_pressed.connect(self.state.push_undo)
+        self.panel.ov_changed.connect(self.on_ov)
+        self._merge_anchor = None
 
         self._full_t = QTimer(self, singleShot=True, interval=350, timeout=self.request_full)
         self._param_t = QTimer(self, singleShot=True, interval=120, timeout=self.request_full)
@@ -295,7 +323,67 @@ class MainWindow(QMainWindow):
         sc(Qt.Key_B, self._toggle_orig)
         sc(QKeySequence(Qt.CTRL | Qt.Key_R), self.render_selected)
         sc(Qt.Key_Delete, self._delete_key)
-        sc(Qt.Key_Escape, self.panel.stop_pick)
+        sc(Qt.Key_A, lambda: self.panel.b_add.toggle())
+        sc(Qt.Key_Escape, self._esc)
+
+    # ------------------------------------------------------------ 타원 편집
+    def _n(self):
+        info = self._info()
+        return info.frames if info else 0
+
+    def on_tool(self, t):
+        self.mon.set_tool(t)
+        if t == "merge":
+            self._merge_anchor = self.state.anchor_of(self.state.sel, self.f) if self.state.sel else None
+            if self._merge_anchor is None:
+                self.flash("먼저 타원을 선택하세요")
+                self.panel.stop_tool()
+
+    def on_add(self, x, y):
+        info = self._info()
+        s = self.state.source()
+        if not info or not s:
+            return
+        size = info.h * (0.3 if s.mode == "beauty" else 0.09)
+        self.state.add_ellipse(self.f, x, y, size)
+        self.panel.stop_tool()
+
+    def on_merge(self, key_b):
+        if self.state.merge(self.state.sel, self._merge_anchor, key_b, self.f):
+            self.flash("같은 사람으로 합쳤습니다")
+        self.panel.stop_tool()
+
+    def on_select(self, key):
+        self.state.sel = key
+        self._sel_refresh()
+
+    def on_ov(self, k, v):
+        if k == "reset":
+            self.state.push_undo()
+            for kk in ("size", "feather", "strength"):
+                self.state.set_ov(self.state.sel, self.f, kk, None, undo=False)
+            return
+        self.state.set_ov(self.state.sel, self.f, k, v, undo=False)
+
+    def _sel_refresh(self):
+        s = self.state.source()
+        if s is None:
+            self.bar.set_keys([])
+            self.panel.show_selection(None, None)
+            return
+        sel = self.state.sel
+        if sel is not None and sel[0] == "g" and not any(g["gid"] == sel[1] for g in edits.get(s)["groups"]):
+            sel = self.state.sel = None          # 실행취소 등으로 없어진 타원
+        self.mon.set_selected(sel)
+        r = self.state.resolver(s)
+        self.bar.set_keys(r.keys_of(sel))
+        self.panel.show_selection(self.state.ov_of(sel, self.f) if sel else None, s.params())
+
+    def _esc(self):
+        self.panel.stop_pick()
+        if self.state.sel is not None:
+            self.state.sel = None
+            self._sel_refresh()
 
     def _toggle_orig(self):
         v = self.panel.view_mode()
@@ -307,6 +395,8 @@ class MainWindow(QMainWindow):
             self.rpanel.remove_rows(sorted(self.rpanel.list.row(i) for i in self.rpanel.list.selectedItems()))
         elif self.sources.hasFocus():
             self.remove_sources()
+        elif self.state.sel is not None:
+            self.state.delete_key(self.f)
 
     def _sec(self):
         info = self._info()
@@ -356,6 +446,9 @@ class MainWindow(QMainWindow):
             return
         self.mon.clear(loading=True)
         self.mon.reset_view()
+        self.state.sel = None
+        self.panel.stop_tool()
+        self._sel_refresh()
         info = self.state.info(s.path)
         self._bar()
         if info is None:
@@ -396,6 +489,8 @@ class MainWindow(QMainWindow):
 
     def on_params(self):
         self._bar()
+        self._sel_refresh()
+        self._overlay_from_track(self.f)
         self._param_t.start()
 
     # ------------------------------------------------------------ 이동
@@ -412,6 +507,8 @@ class MainWindow(QMainWindow):
         self.f = i
         self.pos[info.path] = i
         self.bar.set_cur(i)
+        if self.state.sel is not None:
+            self.panel.show_selection(self.state.ov_of(self.state.sel, i), self.state.source().params())
         self.tc.setText(ff.frames_to_tc(ff.tc_to_frames(info.timecode, info.fps) + i, info.fps))
         self._quick(i)
         self._full_t.start()
@@ -445,15 +542,9 @@ class MainWindow(QMainWindow):
 
     def _overlay_from_track(self, i):
         s = self.state.source()
-        tr = self.state.track(s) if s else None
         ells = []
-        if tr is not None:
-            if s.mode == "beauty":
-                pts, _ = tr.at(i)
-                if pts is not None:
-                    ells = [(None, analyze.head_ellipse(pts, s.beauty["size"], s.beauty["neck"]))]
-            else:
-                ells = [(f[0], analyze.face_to_head(*f[1:5], s.blur["margin"])) for f in tr.at(i)]
+        if s is not None and self.state.track(s) is not None:
+            ells = item_entries(self.state.resolver(s).items(i), s.params())
         self.mon.set_overlay(ells, self.panel.t_ell.isChecked(), s is not None and s.mode == "blur" and
                              self.panel.t_id.isChecked())
 
@@ -468,11 +559,12 @@ class MainWindow(QMainWindow):
         import copy
         src = copy.deepcopy(s)
         track = self.state.track(s)
+        res_ = edits.Resolver(src, track)
         fc = self.frame_cache if (self.frame_cache and self.frame_cache[:2] == (info.path, i)) else None
 
         def fn():
             fr = fc[2] if fc else ff.grab(info, i, 16)
-            res = compute_preview(src, fr, track, i)
+            res = compute_preview(src, fr, res_, track is not None, i)
             res["frame16"] = fr
             res["i"] = i
             return res

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import analyze, ff, fx
+from . import analyze, edits, ff, fx
 from .project import Source
 
 
@@ -39,15 +39,13 @@ def make_track(src: Source, z, rs=None):
     return analyze.blur_track(z, src.blur, rs.get("two_pass", True))
 
 
-def process(src: Source, track, frame16, i, want_alpha=False):
-    """프레임 1장 처리 → (out16, alpha 또는 None, 검수용 타원 [(id, ell)])."""
+def process(src: Source, resolver, frame16, i, want_alpha=False):
+    """프레임 1장 처리 → (out16, alpha 또는 None, 검수용 타원 [(item, ell)])."""
+    items = resolver.items(i)
     if src.mode == "beauty":
-        pts, pres = track.at(i)
-        r = fx.beauty(frame16, pts, pres, src.beauty, i)
-        return r.out, None, ([(None, r.ell)] if r.ell is not None else [])
-    faces = track.at(i)
-    out, a, ells = fx.blur(frame16, faces, src.blur, want_alpha)
-    return out, a, ells
+        r = fx.beauty(frame16, items, src.beauty, i)
+        return r.out, None, r.ells
+    return fx.blur(frame16, items, src.blur, want_alpha)
 
 
 def render(src: Source, rs: dict, out_dir: str, progress=None, cancel=None, workers=None):
@@ -60,6 +58,7 @@ def render(src: Source, rs: dict, out_dir: str, progress=None, cancel=None, work
             progress(v * w_an)
     z = analyze.analyze(info, src.mode, p_an, cancel, hw)
     track = make_track(src, z, rs)
+    resolver = edits.Resolver(src, track)
     names = out_names(src, rs, out_dir)
     writers = {}
     try:
@@ -103,7 +102,7 @@ def render(src: Source, rs: dict, out_dir: str, progress=None, cancel=None, work
                 fr = reader.read()
                 if fr is None:
                     break
-                q.append(pool.submit(process, src, track, fr, i, want_a))
+                q.append(pool.submit(process, src, resolver, fr, i, want_a))
                 i += 1
                 while len(q) >= workers * 2:
                     emit(q.popleft())

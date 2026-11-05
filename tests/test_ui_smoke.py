@@ -7,6 +7,7 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 
+from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from mosco.ui_main import MainWindow  # noqa: E402
@@ -63,6 +64,47 @@ def main():
     assert pump(app, 10, lambda: w.result is not None and w.result.get("i") == 40 and w.state.source().beauty["strength"] == 90)
     assert w.state.undo(), "실행취소 실패"
     assert w.state.source().beauty["strength"] == 50, "실행취소 값 복원 실패"
+    # 타원 편집: 모니터에서 끌어 옮기기 → 키, 타원 추가, 타원별 값, 키 삭제, 실행취소
+    from PySide6.QtCore import QPoint
+    from PySide6.QtTest import QTest
+    w.panel.view.set("fx")
+    w.show_result()
+    w.mon.reset_view()
+    assert pump(app, 20, lambda: w.result is not None and w.result.get("ells")), "미리보기 타원 없음"
+    w.show_result()
+    pump(app, 0.3)
+    ents = w.result["ells"]
+    if ents:
+        ent = ents[0]
+        pane = w.mon.panes()[0]
+        s, c = w.mon.xform(pane)
+        cx, cy = ent["ell"][:2]
+        p0 = QPoint(int(pane.center().x() + (cx - c.x()) * s), int(pane.center().y() + (cy - c.y()) * s))
+        QTest.mousePress(w.mon, Qt.LeftButton, Qt.NoModifier, p0)
+        QTest.mouseMove(w.mon, p0 + QPoint(30, 10))
+        QTest.mouseRelease(w.mon, Qt.LeftButton, Qt.NoModifier, p0 + QPoint(30, 10))
+        pump(app, 0.5)
+        src = w.state.source()
+        gs = src.edits.get(src.mode, {}).get("groups", [])
+        assert gs and str(w.f) in gs[0]["keys"], f"드래그로 키가 안 생김 {gs}"
+        assert w.bar.keys == [w.f], w.bar.keys
+        w.panel.ov_rows["strength"].s.setValue(80)
+        pump(app, 0.3)
+        assert gs[0]["ov"].get("strength") == 80
+        assert w.state.delete_key(w.f)
+        print("edit drag OK")
+    w.panel.b_add.toggle()
+    pump(app, 0.1)
+    QTest.mouseClick(w.mon, Qt.LeftButton, Qt.NoModifier, QPoint(w.mon.width() // 3, w.mon.height() // 2))
+    pump(app, 0.5)
+    src = w.state.source()
+    assert any(g.get("manual") for g in src.edits[src.mode]["groups"]), "타원 추가 안 됨"
+    assert not w.panel.b_add.isChecked()
+    assert w.state.undo()
+    assert not any(g.get("manual") for g in w.state.source().edits[src.mode]["groups"]), "추가 실행취소 안 됨"
+    print("edit add OK")
+    pump(app, 1.0)
+    w.grab().save(str(out / "8_edit.png"))
     # 재생
     f0 = w.f
     w.toggle_play()

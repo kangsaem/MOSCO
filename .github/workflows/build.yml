@@ -52,6 +52,8 @@ jobs:
           $env:PYTHONIOENCODING = "utf-8"
           python tests/test_engine.py engine_test
           if ($LASTEXITCODE -ne 0) { exit 1 }
+          python tests/test_edits.py
+          if ($LASTEXITCODE -ne 0) { exit 1 }
 
       - name: UI test (오프스크린)
         shell: pwsh

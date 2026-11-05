@@ -10,11 +10,11 @@ from . import paths
 
 BEAUTY_DEFAULT = {
     "strength": 50, "texture": 35, "grain": 15, "skin_range": 50, "unify": 20,
-    "size": 145, "feather": 8, "neck": 0, "stabilize": 50, "skin_ref": None,
+    "size": 150, "feather": 20, "neck": 0, "stabilize": 50, "skin_ref": None, "features": True,
 }
 BLUR_DEFAULT = {
     "kind": "blur", "strength": 70, "margin": 160, "feather": 10, "stabilize": 50,
-    "sensitivity": 75, "min_size": 16, "hold": 15,
+    "sensitivity": 75, "min_size": 12, "hold": 15, "link": 90, "body": True,
 }
 # 슬라이더 정의: 키, 이름, 최소, 최대, 표시 단위
 BEAUTY_SLIDERS = [
@@ -27,7 +27,8 @@ BEAUTY_ELLIPSE = [
 ]
 BLUR_SLIDERS = [("strength", "강도", 0, 100, "")]
 BLUR_ELLIPSE = [("margin", "여유", 100, 250, "%"), ("feather", "페더", 0, 30, "%"), ("stabilize", "떨림 보정", 0, 100, "")]
-BLUR_DETECT = [("sensitivity", "민감도", 0, 100, ""), ("min_size", "최소 크기", 8, 100, "px"), ("hold", "놓침 유지", 0, 60, "f")]
+BLUR_DETECT = [("sensitivity", "민감도", 0, 100, ""), ("min_size", "최소 크기", 8, 100, "px"), ("hold", "놓침 유지", 0, 60, "f"),
+               ("link", "다시 잇기", 0, 300, "f")]
 
 RENDER_DEFAULT = {
     "out_dir": "", "name": "", "main": True, "prores": "422 HQ", "overlay": True, "review": False,
@@ -42,6 +43,7 @@ class Source:
     beauty: dict = field(default_factory=lambda: dict(BEAUTY_DEFAULT))
     blur: dict = field(default_factory=lambda: dict(BLUR_DEFAULT))
     custom: bool = False                     # 기본값에서 바뀜(C)
+    edits: dict = field(default_factory=dict)   # 모드별 타원 수정(edits.py)
 
     @property
     def name(self) -> str:
@@ -56,6 +58,7 @@ class Source:
         s.beauty.update(d.get("beauty", {}))
         s.blur.update(d.get("blur", {}))
         s.custom = d.get("custom", False)
+        s.edits = d.get("edits", {}) or {}
         return s
 
 

@@ -14,7 +14,7 @@ import numpy as np
 
 from . import ff, models, paths
 
-VERSION = 2
+VERSION = 3
 LOW_SCORE = 0.3          # 분석 때 낮게 저장 → 민감도로 후처리
 
 
@@ -96,17 +96,63 @@ def analyze_beauty(info: ff.Info, progress=None, cancel=None, hw=False):
 
 
 # ------------------------------------------------------------ 군중(블러): 프레임별 검출
-def blur_frame(rgb):
-    """검출 + 오검출 거르기: 점수가 애매한(0.7 미만) 것은 얼굴 랜드마크 모델로 한 번 더 확인.
-    (실측: 진짜 얼굴은 23px 도 확인값 1.0, 무늬 오검출은 0.001 이하)"""
-    dets = models.detector().detect(rgb, LOW_SCORE, tiles=True, min_size=6)
-    out = []
-    for d in dets:
-        if d.score < 0.7:
+KIND_FACE, KIND_SMALL, KIND_BODY = 0, 1, 2
+HIST = 16          # 옷 색(색상4×채도4) — 끊긴 트랙 다시 잇기용
+
+
+def _hist(hsv, x0, y0, x1, y1):
+    H, W = hsv.shape[:2]
+    x0, y0 = int(max(0, x0)), int(max(0, y0))
+    x1, y1 = int(min(W, x1)), int(min(H, y1))
+    if x1 - x0 < 2 or y1 - y0 < 2:
+        return np.zeros(HIST, np.float32)
+    h = cv2.calcHist([hsv[y0:y1, x0:x1]], [0, 1], None, [4, 4], [0, 180, 0, 256]).flatten()
+    return (h / max(1.0, h.sum())).astype(np.float32)
+
+
+def _nms_rows(rows, thr=0.4):
+    """rows: [x0,y0,x1,y1,score,kind] — 겹치면 점수 높은 것(같은 점수대면 얼굴 우선)."""
+    if not rows:
+        return []
+    b = np.array([r[:4] for r in rows], np.float32)
+    s = np.array([r[4] + (0.2 if r[5] == KIND_FACE else 0) for r in rows], np.float32)
+    keep = models._nms_xyxy(b, s, thr, "min")
+    return [rows[i] for i in keep]
+
+
+def blur_frame(rgb, small=True, body=True):
+    """한 프레임: 얼굴(BlazeFace 타일) + 작은 얼굴(MTCNN) + 몸→머리(NanoDet).
+    반환 행: x0,y0,x1,y1,score,kind,hist(16)  — 상자는 '얼굴 상자' 기준(몸에서 추정한 머리도 같은 기준으로 환산)."""
+    H, W = rgb.shape[:2]
+    rows = []
+    for d in models.detector().detect(rgb, LOW_SCORE, tiles=True, min_size=6):
+        if d.score < 0.7:       # 애매한 것은 랜드마크 모델로 재확인(무늬 오검출 제거)
             _, conf = models.mesh().run(rgb, *models.roi_from_det(d))
             if conf < 0.05:
                 continue
-        out.append((*d.box, d.score))
+        rows.append([*d.box, d.score, KIND_FACE])
+    if small:
+        for x0, y0, x1, y1, sc in models.small_detector().detect(rgb, 12, 64):
+            rows.append([x0, y0, x1, y1, sc * 0.9, KIND_SMALL])
+    rows = _nms_rows(rows)
+    if body:
+        faces = [(((r[0] + r[2]) / 2), ((r[1] + r[3]) / 2)) for r in rows]
+        for x0, y0, x1, y1, sc in models.person_detector().detect(rgb, 0.4):
+            bw, bh = x1 - x0, y1 - y0
+            if bw < 12 or bh < 24:
+                continue
+            # 이 사람 상자 위쪽에 얼굴이 이미 있으면 건너뜀(얼굴이 더 정확)
+            if any(x0 <= fx <= x1 and y0 - bh * 0.05 <= fy <= y0 + bh * 0.45 for fx, fy in faces):
+                continue
+            cx, cy, fw, fh = models.head_from_person(x0, y0, x1, y1, cut_bottom=y1 >= H - 3)
+            rows.append([cx - fw / 2, cy - fh / 2, cx + fw / 2, cy + fh / 2, sc, KIND_BODY])
+    hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
+    out = []
+    for r in rows:
+        w, h = r[2] - r[0], r[3] - r[1]
+        cx = (r[0] + r[2]) / 2
+        hist = _hist(hsv, cx - w * 0.9, r[3] + h * 0.4, cx + w * 0.9, r[3] + h * 2.2)   # 얼굴 아래 = 옷
+        out.append(np.r_[np.array(r[:6], np.float32), hist])
     return out
 
 
@@ -145,7 +191,7 @@ def analyze_blur(info: ff.Info, progress=None, cancel=None, hw=False, workers=No
         pool.shutdown(cancel_futures=True)
     if i == 0:
         raise RuntimeError("프레임을 읽지 못했습니다")
-    return {"det": np.array(rows, np.float32).reshape(-1, 6), "n": np.array(i)}
+    return {"det": np.array(rows, np.float32).reshape(-1, 7 + HIST), "n": np.array(i)}
 
 
 def analyze(info: ff.Info, mode: str, progress=None, cancel=None, hw=False):
@@ -172,9 +218,13 @@ def _smooth_series(x: np.ndarray, valid: np.ndarray, sigma: float):
     shp = x.shape
     flat = np.where(valid[:, None], x.reshape(shp[0], -1), 0).astype(np.float32)
     w = valid.astype(np.float32)
-    num = np.apply_along_axis(lambda c: np.convolve(c, k, "same"), 0, flat) if flat.shape[1] < 64 else \
+    N = shp[0]
+
+    def conv(c):          # 길이 유지(커널이 신호보다 길어도)
+        return np.convolve(c, k, "full")[r:r + N]
+    num = np.apply_along_axis(conv, 0, flat) if flat.shape[1] < 64 else \
         cv2.filter2D(flat, -1, k[:, None], borderType=cv2.BORDER_CONSTANT)
-    den = np.convolve(w, k, "same")
+    den = conv(w)
     out = num / np.maximum(den, 1e-6)[:, None]
     return out.reshape(shp)
 
@@ -248,6 +298,7 @@ class BlurTrack:
     frames: list          # frame -> list of (id, cx, cy, w, h, 관측여부)  (얼굴 상자 기준, 여유 전)
     n: int
     ids: int
+    tracks: dict          # id -> {"f0": 시작 프레임, "box": (L,4) cx,cy,w,h, "obs": (L,) bool}
 
     def at(self, i):
         if 0 <= i < self.n:
@@ -259,23 +310,8 @@ def score_thr(sens):
     return 0.75 - float(sens) / 100 * 0.45       # 민감도 0→0.75, 100→0.30
 
 
-def blur_track(z, params, two_pass=True) -> BlurTrack:
-    det = z["det"]
-    n = int(z["n"])
-    thr = score_thr(params.get("sensitivity", 75))
-    mins = float(params.get("min_size", 16))
-    hold = int(params.get("hold", 15))
-    keep = (det[:, 5] >= thr) & ((det[:, 3] - det[:, 1]) >= mins) if len(det) else np.zeros(0, bool)
-    det = det[keep]
-    per = [[] for _ in range(n)]
-    for row in det:
-        f = int(row[0])
-        if f < n:
-            x0, y0, x1, y1, sc = row[1:]
-            per[f].append(np.array([(x0 + x1) / 2, (y0 + y1) / 2, x1 - x0, y1 - y0, sc], np.float32))
-    # 탐욕 매칭 트래커(등속 예측)
-    tracks = []    # dict: id, last(frame), state(cx,cy,w,h), vel, obs{frame: box}
-    nid = 0
+def _greedy_tracks(per, n, hold):
+    tracks = []
     for f in range(n):
         obs = per[f]
         live = [t for t in tracks if f - t["last"] <= hold + 1]
@@ -287,8 +323,9 @@ def blur_track(z, params, two_pass=True) -> BlurTrack:
                 size = max(t["state"][2], o[2])
                 dist = np.hypot(*(o[:2] - p)) / size
                 ratio = max(o[2], t["state"][2]) / max(1e-3, min(o[2], t["state"][2]))
-                if dist < 1.0 + 0.15 * dt and ratio < 1.8:
-                    pairs.append((dist, ti, oi))
+                body = o[5] == KIND_BODY or t.get("kind") == KIND_BODY
+                if dist < (1.8 if body else 1.0) + 0.15 * dt and ratio < (2.5 if body else 1.8):
+                    pairs.append((dist + (0.3 if body else 0), ti, oi))
         pairs.sort()
         used_t, used_o = set(), set()
         for dist, ti, oi in pairs:
@@ -298,45 +335,175 @@ def blur_track(z, params, two_pass=True) -> BlurTrack:
             t = live[ti]; o = obs[oi]
             dt = f - t["last"]
             v = (o[:2] - t["state"][:2]) / dt
-            t["vel"] = t["vel"] * 0.6 + v * 0.4
-            t["state"] = o[:4].copy(); t["last"] = f; t["obs"][f] = o
+            if o[5] == KIND_BODY:      # 몸 상자는 프레임마다 흔들림 → 속도는 아주 천천히, 크기 대비 제한
+                t["vel"] = t["vel"] * 0.9 + v * 0.1
+                lim = 0.15 * o[2]
+                sp = float(np.hypot(*t["vel"]))
+                if sp > lim:
+                    t["vel"] *= lim / sp
+            else:
+                t["vel"] = t["vel"] * 0.6 + v * 0.4
+            t["state"] = o[:4].copy(); t["last"] = f; t["obs"][f] = o; t["kind"] = o[5]
         for oi, o in enumerate(obs):
             if oi not in used_o:
-                tracks.append({"id": nid, "last": f, "state": o[:4].copy(), "vel": np.zeros(2, np.float32),
-                               "obs": {f: o}})
-                nid += 1
-    frames = [[] for _ in range(n)]
-    sig = stab_sigma(params.get("stabilize", 50))
-    out_id = 0
+                tracks.append({"last": f, "state": o[:4].copy(), "vel": np.zeros(2, np.float32), "obs": {f: o},
+                               "kind": o[5]})
+    return tracks
+
+
+def _link(tracks, hold, link_max):
+    """끊긴 트랙 다시 잇기: A 끝 → B 시작 사이가 hold~link_max 프레임이고 위치(등속 예측)·크기·옷 색이 맞으면 같은 사람."""
+    info = []
     for t in tracks:
         fs = sorted(t["obs"])
-        best = max(o[4] for o in t["obs"].values())
-        if len(fs) < 3 and best < 0.6:
-            continue        # 잠깐 나온 약한 검출 = 오검출로 봄
+        a, b = fs[0], fs[-1]
+        oa, ob = t["obs"][a], t["obs"][b]
+        # 끝 속도(마지막 10프레임)
+        back = [f for f in fs if f >= b - 10]
+        v = (ob[:2] - t["obs"][back[0]][:2]) / max(1, b - back[0])
+        hist_end = np.mean([t["obs"][f][6:] for f in fs[-10:]], 0)
+        hist_start = np.mean([t["obs"][f][6:] for f in fs[:10]], 0)
+        info.append({"a": a, "b": b, "oa": oa, "ob": ob, "v": v, "he": hist_end, "hs": hist_start, "next": None,
+                     "prev": None})
+    cand = []
+    for i, A in enumerate(info):
+        for j, B in enumerate(info):
+            g = B["a"] - A["b"]
+            if i == j or g <= 0 or g > link_max:
+                continue
+            p = A["ob"][:2] + A["v"] * min(g, 30)
+            size = max(A["ob"][2], B["oa"][2])
+            dist = np.hypot(*(B["oa"][:2] - p)) / size
+            ratio = max(A["ob"][2], B["oa"][2]) / max(1e-3, min(A["ob"][2], B["oa"][2]))
+            hd = float(np.abs(A["he"] - B["hs"]).sum()) / 2          # 0(같음)~1
+            lim = 1.2 + 0.04 * g
+            if dist < lim and ratio < 1.7 and hd < 0.45:
+                cand.append((dist / lim + hd + g / link_max * 0.3, i, j))
+    cand.sort()
+    for _, i, j in cand:
+        if info[i]["next"] is None and info[j]["prev"] is None:
+            # 순환 방지
+            k = i
+            while info[k]["prev"] is not None:
+                k = info[k]["prev"]
+            if k == j:
+                continue
+            info[i]["next"] = j
+            info[j]["prev"] = i
+    chains = []
+    for i, I in enumerate(info):
+        if I["prev"] is None:
+            ch = [i]
+            while info[ch[-1]]["next"] is not None:
+                ch.append(info[ch[-1]]["next"])
+            chains.append(ch)
+    out = []
+    for ch in chains:
+        obs = {}
+        for k in ch:
+            obs.update(tracks[k]["obs"])
+        out.append({"obs": obs, "linked": [(info[ch[x]]["b"], info[ch[x + 1]]["a"]) for x in range(len(ch) - 1)]})
+    return out
+
+
+def _dedupe(tracks):
+    """같은 사람이 트랙 여러 개로 갈린 경우(몸 상자가 프레임마다 머리를 넣었다 뺐다 함) 하나로.
+    같은 프레임에 함께 있는 시간의 절반 이상 가까이 붙어 있으면 합침. 둘 다 있으면 얼굴 검출 쪽을 씀."""
+    tracks = sorted(tracks, key=lambda t: -len(t["obs"]))
+    out = []
+    for t in tracks:
+        merged = False
+        for u in out:
+            pairs = []
+            for f in t["obs"]:          # 같은 프레임 또는 앞뒤 2프레임 안의 상대 관측
+                for d in (0, -1, 1, -2, 2):
+                    if f + d in u["obs"]:
+                        pairs.append((t["obs"][f], u["obs"][f + d]))
+                        break
+            if len(pairs) < 3:
+                continue
+            near = 0
+            for a, b in pairs:
+                size = max(a[2], b[2])
+                dx, dy = abs(a[0] - b[0]) / size, abs(a[1] - b[1]) / size
+                if a[5] == KIND_BODY and b[5] == KIND_BODY:      # 몸 상자 둘: 가로는 같고 세로만 어긋남
+                    ok = dx < 0.6 and dy < 2.6
+                elif a[5] == KIND_BODY or b[5] == KIND_BODY:
+                    ok = np.hypot(dx, dy) < 1.6
+                else:
+                    ok = np.hypot(dx, dy) < 0.6
+                near += ok
+            common = pairs
+            if near >= 0.5 * len(common):
+                for f, o in t["obs"].items():
+                    cur = u["obs"].get(f)
+                    if cur is None or (cur[5] == KIND_BODY and o[5] != KIND_BODY) or \
+                            (cur[5] == KIND_BODY and o[5] == KIND_BODY and o[2] > cur[2]):
+                        u["obs"][f] = o          # 몸 상자 둘이면 큰 쪽(머리까지 들어간 상자)
+                u["linked"] = u.get("linked", []) + t.get("linked", [])
+                merged = True
+                break
+        if not merged:
+            out.append(t)
+    return out
+
+
+def blur_track(z, params, two_pass=True) -> BlurTrack:
+    det = z["det"]
+    n = int(z["n"])
+    thr = score_thr(params.get("sensitivity", 75))
+    mins = float(params.get("min_size", 16))
+    hold = int(params.get("hold", 15))
+    link_max = int(params.get("link", 90))
+    if len(det):
+        body = det[:, 6] == KIND_BODY
+        # 몸 검출은 점수 척도가 달라 기준을 낮춤(검출기 자체 기준 0.4)
+        sthr = np.where(body, min(thr, 0.4 + (thr - 0.3) * 0.5), thr)
+        keep = (det[:, 5] >= sthr) & ((det[:, 3] - det[:, 1]) >= mins)
+        if not params.get("body", True):
+            keep &= det[:, 6] != KIND_BODY
+        det = det[keep]
+    per = [[] for _ in range(n)]
+    for row in det:
+        f = int(row[0])
+        if f < n:
+            x0, y0, x1, y1, sc = row[1:6]
+            per[f].append(np.r_[np.array([(x0 + x1) / 2, (y0 + y1) / 2, x1 - x0, y1 - y0, sc], np.float32),
+                                row[6:7], row[7:]])
+    raw = _greedy_tracks(per, n, hold)
+    raw = [t for t in raw if len(t["obs"]) >= 3 or max(o[4] for o in t["obs"].values()) >= 0.6]
+    linked = _link(raw, hold, link_max) if link_max > hold else [{"obs": t["obs"], "linked": []} for t in raw]
+    linked = _dedupe(linked)
+    frames = [[] for _ in range(n)]
+    tracks = {}
+    sig = stab_sigma(params.get("stabilize", 50))
+    out_id = 0
+    for t in sorted(linked, key=lambda t: min(t["obs"])):
+        fs = sorted(t["obs"])
         a, b = fs[0], fs[-1]
         pre = hold if two_pass else 0
-        post = hold
-        a2, b2 = max(0, a - pre), min(n - 1, b + post)
+        a2, b2 = max(0, a - pre), min(n - 1, b + hold)
         L = b2 - a2 + 1
         arr = np.zeros((L, 4), np.float32); val = np.zeros(L, bool)
         for f in fs:
             arr[f - a2] = t["obs"][f][:4]; val[f - a2] = True
-        # 공백 보간(관측 사이) + 앞뒤 연장(끝 값 유지)
         idx = np.where(val)[0]
         for c in range(4):
             arr[:, c] = np.interp(np.arange(L), idx, arr[idx, c])
-        # 관측 사이 공백이 hold 보다 길면 그 구간은 비움
         okm = np.ones(L, bool)
+        bridged = {(p - a2, q - a2) for p, q in t["linked"]}
         for p, q in zip(idx[:-1], idx[1:]):
-            if q - p - 1 > hold:
+            if q - p - 1 > hold and (p, q) not in bridged:
                 okm[p + 1:q] = False
-        arr = _smooth_series(arr, okm, sig)
-        obsm = np.zeros(L, bool); obsm[idx] = True
+        nb = sum(1 for f in fs if t["obs"][f][5] == KIND_BODY)
+        sg = max(sig * 3, 3.0) if nb > len(fs) / 2 else sig     # 몸 위주 트랙은 더 부드럽게
+        arr = _smooth_series(arr, okm, sg)
+        out_id += 1
+        tracks[out_id] = {"f0": a2, "box": arr, "obs": val, "ok": okm}
         for k in range(L):
             if okm[k]:
-                frames[a2 + k].append((out_id + 1, *arr[k], bool(obsm[k])))
-        out_id += 1
-    return BlurTrack(frames, n, out_id)
+                frames[a2 + k].append((out_id, *arr[k], bool(val[k])))
+    return BlurTrack(frames, n, out_id, tracks)
 
 
 def face_to_head(cx, cy, w, h, margin=160):
