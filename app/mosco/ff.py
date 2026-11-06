@@ -36,6 +36,10 @@ def _win_job():
     if _job_ready:
         return _job
     _job_ready = True
+    # 기본 꺼짐: CI(윈도우 러너)·일부 환경에서 러너의 기존 Job 과 충돌해 자식이 죽는 사례가 있어
+    # 실기 검증 전까지 옵트인(MOSCO_JOB=1). 정상 종료 정리는 WeakSet+atexit(kill_all)로 충분.
+    if os.environ.get("MOSCO_JOB") != "1":
+        return None
     if os.name != "nt":
         return None
     try:
