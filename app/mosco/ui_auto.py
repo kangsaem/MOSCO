@@ -529,8 +529,12 @@ class AutoDialog(QDialog):
         if self.after == "render":
             mw.render_auto([a[0] for a in assigns], out_dir, self.name)
         else:
+            # 개별 보정: 적용값으로 분석(트래킹)을 돌려 타원이 생기게 한다
+            for idx, _, _ in assigns:
+                if 0 <= idx < len(mw.state.project.sources):
+                    mw.state.analyze_now(mw.state.project.sources[idx])
             mw.state.select(assigns[0][0] if assigns else 0)
-            mw.flash("AUTO 적용 완료 — 개별 보정")
+            mw.flash("AUTO 적용 완료 — 분석 시작(타원 생성)")
 
     def _sample(self):
         inc = [c for c in self.clips if c["inc"]]

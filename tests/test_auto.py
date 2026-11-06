@@ -68,6 +68,17 @@ def main():
     print("apply OK")
     dlg.reject()
 
+    # AUTO(개별 보정) → 적용 뒤 분석(트래킹)이 시작돼야 타원이 생긴다
+    w.state.settings.render["out_dir"] = str(work)
+    dlg2 = AutoDialog(w, w.state)
+    assert pump(app, 90, dlg2._all_detected), "측정이 끝나지 않음"
+    dlg2.after = "each"
+    dlg2.keep_existing = False       # 두 클립 모두 이미 custom → 재적용해야 분석이 돈다
+    dlg2._start()
+    assert pump(app, 30, lambda: w.state.analysis(w.state.project.sources[0]) is not None), \
+        "AUTO 개별 보정인데 분석이 시작되지 않음"
+    print("auto->analyze OK")
+
     # 샘플 창: 실제 PNG 6장
     import copy
     srcs = [copy.deepcopy(w.state.project.sources[1])]

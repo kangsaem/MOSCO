@@ -34,6 +34,20 @@ def _face_rect(items, W, H, pad=1.9):
     return int(round(x0)), int(round(y0)), int(round(x0 + side)), int(round(y0 + side))
 
 
+def _full(out16, size_w, p16):
+    """블러 샘플: 전체 보정본(크롭·반반 없음). BGR 저장용."""
+    h, w = out16.shape[:2]
+    if p16:
+        bgr = np.ascontiguousarray(out16[..., ::-1])
+    else:
+        bgr = np.ascontiguousarray((out16 >> 8).astype(np.uint8)[..., ::-1])
+    sw = size_w or w
+    if sw != w:
+        nh = round(h * sw / w)
+        bgr = cv2.resize(bgr, (sw, nh), interpolation=cv2.INTER_AREA if sw < w else cv2.INTER_CUBIC)
+    return bgr
+
+
 def _compose_crop(orig16, out16, rect, size_w, p16):
     """얼굴 크롭을 확대해 왼쪽 원본 | 오른쪽 보정본 반반(가운데 흰 선). BGR 저장용."""
     x0, y0, x1, y1 = rect
@@ -117,17 +131,18 @@ def render_samples(src, info: ff.Info, opts: dict, progress=None, cancel=None):
             # 분석 전: 그 프레임만 검출
             from .ui_main import temp_items     # 지연 import(순환 방지)
             items = temp_items(src, (fr >> 8).astype(np.uint8)) + items
-        if src.mode == "beauty":
-            r = fx.beauty(fr, items, src.beauty, i)
-            out = r.out
-            ell_items = [it for it, _ in r.ells]
-        else:
-            out, _, ells = fx.blur(fr, items, src.blur, True)
-            ell_items = [it for it, _ in ells]
-        rect = _face_rect(ell_items or items, info.w, info.h)
-        path = unique(out_dir / filename(src, opts, k + 1))
         sw = opts.get("size") or 0
-        bgr = _compose_crop(fr, out, rect, sw, p16)
+        if src.mode == "beauty":
+            # 뷰티: 얼굴 확대 반반(왼쪽 원본 / 오른쪽 보정본)
+            r = fx.beauty(fr, items, src.beauty, i)
+            ell_items = [it for it, _ in r.ells]
+            rect = _face_rect(ell_items or items, info.w, info.h)
+            bgr = _compose_crop(fr, r.out, rect, sw, p16)
+        else:
+            # 블러: 전체 블러 보정본만(크롭·반반 없음)
+            out, _, _ = fx.blur(fr, items, src.blur, False)
+            bgr = _full(out, sw, p16)
+        path = unique(out_dir / filename(src, opts, k + 1))
         q = [cv2.IMWRITE_JPEG_QUALITY, 95] if opts.get("fmt") == "jpg" else []
         imwrite(path, bgr, q)
         saved.append(str(path))
