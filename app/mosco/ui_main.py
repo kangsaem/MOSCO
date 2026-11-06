@@ -27,6 +27,16 @@ VID_FILTER = "영상 (" + " ".join("*" + e for e in sorted(VIDEO_EXT)) + ")"
 PLAY_SIZE = (960, 540)
 
 
+def find_videos(folder):
+    """폴더 안(하위 폴더 포함) 영상 파일. 숨김·MOSCO 출력 파일은 뺌, 이름순."""
+    out = []
+    for x in sorted(Path(folder).rglob("*"), key=lambda p: str(p).lower()):
+        if x.is_file() and x.suffix.lower() in VIDEO_EXT and not x.name.startswith(".") \
+                and not any(t in x.stem for t in ("_MOSCO", "_BLUR4444", "_CHECK")):
+            out.append(str(x))
+    return out
+
+
 def to8(a16):
     return (a16 >> 8).astype(np.uint8)
 
@@ -251,7 +261,12 @@ class MainWindow(QMainWindow):
         rv.addWidget(self.sources, 1)
         r = QHBoxLayout()
         r.setSpacing(4)
-        b1 = btn("영상 추가", on_click=self.add_dialog)
+        b1 = btn("영상 추가", "파일 또는 폴더(하위 폴더 포함)")
+        from PySide6.QtWidgets import QMenu
+        m = QMenu(b1)
+        m.addAction("파일…", self.add_dialog)
+        m.addAction("폴더…", self.add_folder)
+        b1.setMenu(m)
         b2 = btn("삭제", "선택한 소스 삭제 (Del)", on_click=self.remove_sources)
         b1.setFixedWidth(106)
         b2.setFixedWidth(106)
@@ -666,6 +681,20 @@ class MainWindow(QMainWindow):
             self.state.settings.save()
             self.state.add_files(files)
 
+    def add_folder(self):
+        start = self.state.settings.d.get("last_folder", "")
+        d = QFileDialog.getExistingDirectory(self, "폴더 추가(하위 폴더 포함)", start)
+        if not d:
+            return
+        vids = find_videos(d)
+        self.state.settings.d["last_folder"] = d
+        self.state.settings.save()
+        if vids:
+            self.state.add_files(vids)
+            self.flash(f"{len(vids)}개 추가")
+        else:
+            self.flash("이 폴더에 영상이 없습니다")
+
     def remove_sources(self):
         rows = self.sources.selected() or ([self.state.cur] if self.state.cur >= 0 else [])
         if rows:
@@ -822,7 +851,7 @@ class MainWindow(QMainWindow):
         for f in files:
             pth = Path(f)
             if pth.is_dir():
-                vids += [str(x) for x in sorted(pth.iterdir()) if x.suffix.lower() in VIDEO_EXT]
+                vids += find_videos(pth)
             elif pth.suffix.lower() in VIDEO_EXT:
                 vids.append(f)
         projs = [f for f in files if f.endswith(".json")]
