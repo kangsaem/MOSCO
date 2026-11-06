@@ -322,8 +322,9 @@ def _track_one(lm_k, stabilize, hold):
     v2 = ~np.isnan(filled[:, 0, 0])
     sm = _smooth_series(np.nan_to_num(filled), v2, stab_sigma(stabilize))
     sm[~v2] = np.nan
-    ker = np.ones(7, np.float32) / 7
-    pres = np.clip(np.convolve(v2.astype(np.float32), ker, "same"), 0, 1) * v2
+    # 페이드 없음: 얼굴이 있는(보간 포함) 프레임은 100% 강도. 끝 프레임도 약해지지 않음.
+    # 전환부(얼굴이 들어오고 나가는 지점)는 사용자가 키프레임·강도로 직접 조절.
+    pres = v2.astype(np.float32)
     return sm, pres
 
 

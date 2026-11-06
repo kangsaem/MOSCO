@@ -10,8 +10,8 @@ from pathlib import Path
 import numpy as np
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QKeySequence, QShortcut
-from PySide6.QtWidgets import (QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QToolBar, QVBoxLayout,
-                               QWidget)
+from PySide6.QtWidgets import (QDialog, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QToolBar,
+                               QVBoxLayout, QWidget)
 
 from . import __version__, analyze, decoder, edits, ff, fx, jobs, paths
 from .project import Project
@@ -21,6 +21,33 @@ from .ui_monitor import Monitor, TimeBar
 from .ui_panel import ControlPanel
 from .ui_side import VIDEO_EXT, RenderItem, RenderPanel, RenderSettings, SourceList
 from .ui_widgets import BTN_MAIN, QSS, btn
+
+
+def confirm_save(parent, text="변경 내용을 저장할까요?") -> str:
+    """닫기/새 프로젝트 전 저장 확인 — MOSCO 다크 테마 통일(프레임리스). 반환 save|discard|cancel."""
+    dlg = QDialog(parent)
+    dlg.setWindowFlag(Qt.FramelessWindowHint)
+    dlg.setModal(True)
+    dlg.setStyleSheet("QDialog{background:#262626;border:1px solid #555;border-radius:6px}"
+                      "QLabel{color:#e6e6e6;font-size:13px}")
+    lay = QVBoxLayout(dlg)
+    lay.setContentsMargins(24, 22, 24, 18)
+    lay.setSpacing(20)
+    lay.addWidget(QLabel(text))
+    row = QHBoxLayout()
+    row.setSpacing(8)
+    row.addStretch(1)
+    res = {"v": "cancel"}
+
+    def pick(v):
+        res["v"] = v
+        dlg.accept()
+    row.addWidget(btn("취소", w=72, on_click=lambda: pick("cancel")))
+    row.addWidget(btn("저장 안 함", w=92, on_click=lambda: pick("discard")))
+    row.addWidget(btn("저장", w=80, red=True, on_click=lambda: pick("save")))
+    lay.addLayout(row)
+    dlg.exec()
+    return res["v"]
 
 PROJ_FILTER = "MOSCO 프로젝트 (*.mosco.json *.json)"
 VID_FILTER = "영상 (" + " ".join("*" + e for e in sorted(VIDEO_EXT)) + ")"
@@ -907,11 +934,10 @@ class MainWindow(QMainWindow):
     def _confirm_discard(self) -> bool:
         if not self.state.dirty:
             return True
-        r = QMessageBox.question(self, "저장", "변경 내용을 저장할까요?",
-                                 QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel)
-        if r == QMessageBox.Save:
+        r = confirm_save(self)
+        if r == "save":
             return self.save_project()
-        return r == QMessageBox.Discard
+        return r == "discard"
 
     def new_project(self):
         if self._confirm_discard():
