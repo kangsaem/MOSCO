@@ -248,12 +248,14 @@ def analyze_blur(info: ff.Info, progress=None, cancel=None, hw=False, workers=No
     return {"det": np.array(rows, np.float32).reshape(-1, 7 + HIST), "n": np.array(i)}
 
 
-def analyze(info: ff.Info, mode: str, progress=None, cancel=None, hw=False):
+def analyze(info: ff.Info, mode: str, progress=None, cancel=None, hw=False, workers=None):
     z = load(info, mode)
     if z is not None:
         return z
-    fn = analyze_beauty if mode == "beauty" else analyze_blur
-    z = fn(info, progress, cancel, hw)
+    if mode == "beauty":
+        z = analyze_beauty(info, progress, cancel, hw)       # 추적이라 순차(작업자 수 무관)
+    else:
+        z = analyze_blur(info, progress, cancel, hw, workers)
     f = cache_file(info, mode)
     import threading
     tmp = f.with_name(f"{f.stem}.{os.getpid()}.{threading.get_ident()}.tmp.npz")

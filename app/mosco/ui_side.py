@@ -7,7 +7,7 @@ from pathlib import Path
 from PySide6.QtCore import QRect, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout,
-                               QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMenu, QStyle,
+                               QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMenu, QSpinBox, QStyle,
                                QStyledItemDelegate, QVBoxLayout, QWidget)
 
 from . import ff
@@ -143,6 +143,7 @@ class RenderItem:
         self.p = 0.0
         self.err = ""
         self.outs = {}
+        self.stats = {}           # 렌더 끝나면 프레임·fps·작업자 수(render.render 가 채움)
         self.job = None
 
 
@@ -227,6 +228,8 @@ class RenderPanel(QWidget):
             tip = it.src.path
             if it.outs:
                 tip += "\n→ " + "\n→ ".join(it.outs.values())
+            if it.stats:
+                tip += "\n" + stat_line(it.stats)
             if it.err:
                 tip += "\n" + it.err
             li.setToolTip(tip)
@@ -261,6 +264,13 @@ class RenderPanel(QWidget):
             self.remove_rows(sorted(self.list.row(i) for i in self.list.selectedItems()))
             return
         super().keyPressEvent(e)
+
+
+def stat_line(st: dict) -> str:
+    a = st.get("분석fps")
+    an = f" · 분석 {a}fps" if a not in (None, "", "캐시") else ""
+    return (f"{st.get('프레임', 0)}f · 렌더 {st.get('렌더fps', 0)}fps{an}"
+            f" · 작업자 {st.get('작업자', '?')}/{st.get('코어', '?')}코어")
 
 
 class RenderSettings(DragMove, QDialog):
@@ -324,6 +334,18 @@ class RenderSettings(DragMove, QDialog):
         self.gpu.setEnabled(gname is not None)
         self.gpu.setToolTip("얼굴·사람 검출을 GPU 로. 분석·AUTO 가 빨라짐" + ("" if gname else " (이 PC에 쓸 수 있는 GPU 가속기가 없음)"))
         f.addRow("검출 장치", self.gpu)
+        import os
+        from .render import auto_workers
+        self.workers = QSpinBox()
+        self.workers.setRange(0, os.cpu_count() or 64)
+        self.workers.setSpecialValueText(f"자동 ({auto_workers()})")
+        self.workers.setValue(int(rs.get("workers") or 0))
+        self.workers.setToolTip(f"렌더 동시 처리 프레임 수(스레드). 0 = 자동. 이 PC {os.cpu_count()}코어\n"
+                                "속도 기록: logs/render_log.csv")
+        r = QHBoxLayout()
+        r.addWidget(self.workers)
+        r.addStretch(1)
+        f.addRow("렌더 작업자", r)
         r = QHBoxLayout()
         r.addStretch(1)
         r.addWidget(btn("취소", on_click=self.reject))
@@ -340,4 +362,4 @@ class RenderSettings(DragMove, QDialog):
                 "prores": self.prores.currentText(), "overlay": self.overlay.isChecked(),
                 "review": self.review.isChecked(), "audio": self.audio.isChecked(),
                 "hw": self.hw.currentIndex() == 1, "two_pass": self.two.currentIndex() == 0,
-                "gpu": self.gpu.currentIndex() == 1}
+                "gpu": self.gpu.currentIndex() == 1, "workers": self.workers.value()}

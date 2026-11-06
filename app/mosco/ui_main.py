@@ -19,7 +19,7 @@ from .render import render as do_render
 from .state import AppState
 from .ui_monitor import EllipseLanes, Monitor, TimeBar, TimeRuler
 from .ui_panel import ControlPanel
-from .ui_side import VIDEO_EXT, RenderItem, RenderPanel, RenderSettings, SourceList
+from .ui_side import VIDEO_EXT, RenderItem, RenderPanel, RenderSettings, SourceList, stat_line
 from .ui_widgets import BTN_MAIN, QSS, arrow_icon, btn
 
 
@@ -953,7 +953,8 @@ class MainWindow(QMainWindow):
 
     def _start_render(self, it: RenderItem):
         def fn(prog, cancel):
-            return do_render(it.src, it.rs, it.out_dir, prog, cancel)
+            it.stats = {}
+            return do_render(it.src, it.rs, it.out_dir, prog, cancel, stats=it.stats)
         j = jobs.Job(fn, with_progress=True)
         it.job = j
 
@@ -970,7 +971,7 @@ class MainWindow(QMainWindow):
     def _render_done(self, it, outs):
         it.state, it.p, it.outs = "완료", 1.0, outs
         self.rpanel.refresh()
-        self.flash(f"렌더 완료: {it.src.name}")
+        self.flash(f"렌더 완료: {it.src.name}" + (f" — {stat_line(it.stats)}" if it.stats else ""))
 
     def _render_err(self, it, e):
         it.state = "취소" if e == "취소됨" else "오류"

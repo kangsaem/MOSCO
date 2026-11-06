@@ -33,6 +33,10 @@ def preset_dir() -> Path:
     return _mk("presets")
 
 
+def log_dir() -> Path:
+    return _mk("logs")
+
+
 def settings_path() -> Path:
     return app_dir() / "settings.json"
 

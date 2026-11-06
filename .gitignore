@@ -9,3 +9,4 @@ dist/
 engine_test/
 auto_test*/
 ui_shots/
+logs/
