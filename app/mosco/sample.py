@@ -24,6 +24,20 @@ def _compose(orig16, out16, size_w):
     return img
 
 
+def imwrite(path: Path, img, params=None):
+    """유니코드(한글) 경로 안전 저장.
+
+    cv2.imwrite 는 윈도우에서 비ASCII 경로에 조용히 실패(False 반환, 파일 생성 안 됨, 예외 없음)한다.
+    → cv2.imencode 로 메모리에 인코딩한 뒤 numpy.tofile 로 쓰면 유니코드 경로도 정상 저장된다.
+    """
+    ok, buf = cv2.imencode(path.suffix, img, params or [])
+    if not ok:
+        raise RuntimeError(f"이미지 인코딩 실패: {path.name}")
+    buf.tofile(str(path))
+    if not path.exists() or path.stat().st_size == 0:
+        raise RuntimeError(f"샘플 저장 실패(경로 확인): {path}")
+
+
 def unique(path: Path) -> Path:
     if not path.exists():
         return path
@@ -86,11 +100,11 @@ def render_samples(src, info: ff.Info, opts: dict, progress=None, cancel=None):
             if sw != fr.shape[1]:
                 nh = round(fr.shape[0] * sw / fr.shape[1])
                 bgr = cv2.resize(bgr, (sw, nh), interpolation=cv2.INTER_AREA if sw < fr.shape[1] else cv2.INTER_CUBIC)
-            cv2.imwrite(str(path), bgr)
+            imwrite(path, bgr)
         else:
             img = _compose(fr, out, sw)
             q = [cv2.IMWRITE_JPEG_QUALITY, 95] if opts.get("fmt") == "jpg" else []
-            cv2.imwrite(str(path), img, q)
+            imwrite(path, img, q)
         saved.append(str(path))
         if progress:
             progress((k + 1) / count)

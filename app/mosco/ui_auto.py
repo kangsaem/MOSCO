@@ -170,6 +170,7 @@ class AutoDialog(QDialog):
         self.selected = {0} if self.clips else set()
         self.rows = []
         self._jobs = {}
+        self._closed = False
         self._build()
         self._refresh()
         self._start_detect()
@@ -438,8 +439,24 @@ class AutoDialog(QDialog):
             j.signals.progress.connect(lambda v, i=idx: self._det_prog(i, v))
             j.signals.done.connect(lambda r, i=idx: self._det_done(i, r))
             j.signals.error.connect(lambda e, i=idx: self._det_err(i, e))
-            jobs.submit(jobs.PREVIEW_POOL, j, 2)
+            jobs.submit(jobs.DETECT_POOL, j, 2)
         self._refresh()
+
+    def _cancel_detect(self):
+        """진행 중인 장면인식 작업을 모두 취소(창을 닫을 때). 안 하면 닫은 뒤에도 CPU 를 계속 쓴다."""
+        for j in list(self._jobs.values()):
+            try:
+                j.cancel.set()                    # 실행 중이면 루프 다음 회차에 중단
+                jobs.DETECT_POOL.tryTake(j)       # 큐에만 있던 건 아예 실행 안 함
+            except Exception:  # noqa: BLE001
+                pass
+        self._jobs.clear()
+
+    def done(self, r):
+        # QDialog.accept()/reject() 가 모두 거쳐 가는 지점 → 어떤 식으로 닫히든 취소 보장
+        self._closed = True
+        self._cancel_detect()
+        super().done(r)
 
     def _clip(self, idx):
         for c in self.clips:
@@ -448,6 +465,8 @@ class AutoDialog(QDialog):
         return None
 
     def _det_prog(self, idx, v):
+        if self._closed:
+            return
         c = self._clip(idx)
         if c:
             c["prog"] = v
@@ -455,6 +474,8 @@ class AutoDialog(QDialog):
             self._refresh()
 
     def _det_done(self, idx, res):
+        if self._closed:
+            return
         c = self._clip(idx)
         if c:
             c["detected"], c["stats"] = res
@@ -463,6 +484,8 @@ class AutoDialog(QDialog):
             self._refresh()
 
     def _det_err(self, idx, e):
+        if self._closed:
+            return
         c = self._clip(idx)
         if c:
             c["prog"] = None

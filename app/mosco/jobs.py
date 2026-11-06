@@ -78,4 +78,6 @@ ANALYZE_POOL = make_pool(1)   # 분석(내부에서 여러 스레드)
 
 PREVIEW_POOL = make_pool(4)
 
+DETECT_POOL = make_pool(2)    # AUTO 장면인식(프리뷰와 분리 → 프리뷰가 밀리지 않음)
+
 RENDER_POOL = make_pool(1)

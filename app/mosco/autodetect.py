@@ -1,6 +1,6 @@
 """AUTO: 클립 몇 장을 보고 장면 속성(작업·장소·인원·각도·카메라)을 추정하고, 속성 → 보정값으로 바꾼다.
 
-전체 분석이 아니라 고르게 뽑은 10여 장만 본다(가볍다). 결과는 '출발점'일 뿐 — 사용자가 고치거나 렌더에서 다듬는다.
+전체 분석이 아니라 고르게 뽑은 8장만 본다(가볍다). 결과는 '출발점'일 뿐 — 사용자가 고치거나 렌더에서 다듬는다.
 """
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ def scene_label(scene, detected=None):
 
 
 # ------------------------------------------------------------ 인식
-def _sample_indices(n, k=12):
+def _sample_indices(n, k=8):
     if n <= k:
         return list(range(n))
     return [int(round(i * (n - 1) / (k - 1))) for i in range(k)]
@@ -53,7 +53,7 @@ def _sample_indices(n, k=12):
 
 def detect_scene(info: ff.Info, cancel=None, progress=None):
     """고르게 뽑은 프레임으로 속성 추정. 반환: detected dict + 간단한 통계."""
-    idxs = _sample_indices(info.frames, 12)
+    idxs = _sample_indices(info.frames, 8)
     face_counts, person_counts = [], []
     face_frac, side_frac, backish = [], [], []
     prev = None

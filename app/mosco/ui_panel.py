@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import (QComboBox, QHBoxLayout, QInputDialog, QMenu, QMessageBox, QScrollArea, QToolButton,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QComboBox, QDialog, QFrame, QGridLayout, QHBoxLayout, QInputDialog, QLabel, QMenu,
+                               QMessageBox, QScrollArea, QToolButton, QVBoxLayout, QWidget)
 
+from . import autodetect as ad
 from . import project as P
 from .ui_widgets import BTN, Section, Seg, SliderRow, Toggle, btn, set_on
 
@@ -49,7 +50,8 @@ class ControlPanel(QWidget):
         self.preset.customContextMenuRequested.connect(self._preset_menu)
         self.preset.activated.connect(self._preset_apply)
         r.addWidget(self.preset, 1)
-        r.addWidget(btn("저장…", "현재 값을 프리셋으로", w=60, on_click=self._preset_save))
+        r.addWidget(btn("⊞", "장면 프리셋 격자(시장·거리·실내·정면·고정 …)", w=28, on_click=self._open_grid))
+        r.addWidget(btn("저장…", "현재 값을 프리셋으로", w=56, on_click=self._preset_save))
         outer.addLayout(r)
 
         self.mode = Seg([("beauty", "뷰티"), ("blur", "블러")])
@@ -384,9 +386,115 @@ class ControlPanel(QWidget):
             P.delete_preset(name)
             self.refresh_presets()
 
+    def _open_grid(self):
+        s = self.state.source()
+        if not s:
+            self.state.message.emit("클립을 먼저 불러오세요")
+            return
+        dlg = PresetGridPopup(self, s.mode)
+        if dlg.exec() == QDialog.Accepted and dlg.result is not None:
+            mode, params = dlg.result
+            sel = [self.state.cur] + list(getattr(self, "extra_selected", lambda: [])())
+            cur = self.state.cur
+            for idx in dict.fromkeys(sel):
+                self.state.cur = idx
+                self.state.set_params(mode, params)
+            self.state.cur = cur
+            self.state.current_changed.emit()
+            self.state.message.emit(f"프리셋 적용: {ad.scene_label(dlg.scene)}")
+
     # ------------------------------------------------------------ 상태 읽기
     def view_mode(self):
         return self.view.value() or "fx"
+
+
+class PresetGridPopup(QDialog):
+    """장면 프리셋 격자. 작업·장소·인원·각도·카메라를 골라 즉시 보정값으로 변환해 적용.
+
+    AUTO 창과 같은 틀이지만 클립 인식 없이 '고정 조합'을 바로 적용한다(현재 클립에).
+    """
+
+    def __init__(self, parent, mode):
+        super().__init__(parent)
+        self.result = None
+        self.scene = ad.default_scene()
+        self.scene["work"] = mode          # 현재 클립 모드로 시작
+        self.strength = "mid"
+        self.setWindowFlag(Qt.FramelessWindowHint)
+        self.setModal(True)
+        self.setStyleSheet("PresetGridPopup{background:#262626;border:1px solid #555;border-radius:6px}"
+                           "QLabel{color:#ccc;font-size:12px}")
+        self.setFixedWidth(430)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(16, 14, 16, 14)
+        root.setSpacing(10)
+        head = QLabel("장면 프리셋")
+        head.setStyleSheet("color:#fff;font-size:13px;font-weight:bold")
+        root.addWidget(head)
+
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(8)
+        self.segs = {}
+        for row, (key, label, opts) in enumerate(ad.ROWS):
+            lb = QLabel(label)
+            lb.setFixedWidth(44)
+            grid.addWidget(lb, row, 0)
+            seg = Seg([(o, ad.LABEL.get(o, o)) for o in opts])
+            seg.set(self.scene.get(key) if self.scene.get(key) in opts else opts[0])
+            if self.scene.get(key) not in opts:
+                self.scene[key] = opts[0]
+            seg.changed.connect(lambda v, k=key: self.scene.__setitem__(k, v))
+            self.segs[key] = seg
+            grid.addWidget(seg, row, 1)
+        root.addLayout(grid)
+
+        div = QFrame()
+        div.setFrameShape(QFrame.HLine)
+        div.setStyleSheet("color:#3a3a3a")
+        root.addWidget(div)
+
+        sr = QHBoxLayout()
+        sr.setSpacing(8)
+        slb = QLabel("강도")
+        slb.setFixedWidth(44)
+        sr.addWidget(slb)
+        self.sseg = Seg([("weak", "약"), ("mid", "중"), ("strong", "강")])
+        self.sseg.set(self.strength)
+        self.sseg.changed.connect(lambda v: setattr(self, "strength", v))
+        sr.addWidget(self.sseg, 1)
+        root.addLayout(sr)
+
+        # 저장된 프리셋(바로 적용)
+        names = P.list_presets()
+        if names:
+            root.addWidget(QLabel("저장된 프리셋"))
+            wrap = QGridLayout()
+            wrap.setHorizontalSpacing(6)
+            wrap.setVerticalSpacing(6)
+            for i, n in enumerate(names):
+                wrap.addWidget(btn(n, f"'{n}' 적용", w=128, on_click=lambda n=n: self._use_named(n)), i // 3, i % 3)
+            root.addLayout(wrap)
+
+        br = QHBoxLayout()
+        br.addStretch(1)
+        br.addWidget(btn("취소", "", w=64, on_click=self.reject))
+        br.addWidget(btn("적용", "현재 클립에 적용", w=84, red=True, on_click=self._apply))
+        root.addLayout(br)
+
+    def _apply(self):
+        self.result = ad.to_params(self.scene, {}, self.strength)
+        self.accept()
+
+    def _use_named(self, name):
+        try:
+            d = P.load_preset(name)
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.warning(self, "프리셋", str(e))
+            return
+        self.result = (d.get("mode", "beauty"), d.get("params", {}))
+        self.scene = {"work": d.get("mode", "beauty")}
+        self.accept()
 
 
 _ = BTN

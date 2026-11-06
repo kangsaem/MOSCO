@@ -22,9 +22,93 @@ _procs: "weakref.WeakSet" = weakref.WeakSet()
 _procs_lock = threading.Lock()
 
 
+# ------------------------------------------------------------ 윈도우 Job Object
+# 정상 종료(창 닫기·atexit)는 아래 kill_all 로 처리되지만, 크래시·강제 종료(작업 관리자
+# "작업 끝내기", 전원 차단 외 프로세스 kill)에는 atexit 가 돌지 않아 ffmpeg 가 고아로 남는다.
+# → MOSCO 를 Job Object 에 넣고 KILL_ON_JOB_CLOSE 를 주면, MOSCO 프로세스가 어떻게 끝나든
+#   OS 가 Job 핸들을 닫으면서 그 안의 자식 ffmpeg 를 전부 정리한다. (실패하면 조용히 폴백)
+_job = None          # Job 핸들(살아 있어야 함 → 모듈 전역으로 유지)
+_job_ready = False    # True 면 생성 시도 완료(성공/실패 무관)
+
+
+def _win_job():
+    global _job, _job_ready
+    if _job_ready:
+        return _job
+    _job_ready = True
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+        class _BASIC(ctypes.Structure):
+            _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64),
+                        ("PerJobUserTimeLimit", ctypes.c_int64),
+                        ("LimitFlags", wintypes.DWORD),
+                        ("MinimumWorkingSetSize", ctypes.c_size_t),
+                        ("MaximumWorkingSetSize", ctypes.c_size_t),
+                        ("ActiveProcessLimit", wintypes.DWORD),
+                        ("Affinity", ctypes.c_size_t),
+                        ("PriorityClass", wintypes.DWORD),
+                        ("SchedulingClass", wintypes.DWORD)]
+
+        class _IO(ctypes.Structure):
+            _fields_ = [(n, ctypes.c_uint64) for n in
+                        ("Read", "Write", "Other", "ReadT", "WriteT", "OtherT")]
+
+        class _EXT(ctypes.Structure):
+            _fields_ = [("BasicLimitInformation", _BASIC), ("IoInfo", _IO),
+                        ("ProcessMemoryLimit", ctypes.c_size_t),
+                        ("JobMemoryLimit", ctypes.c_size_t),
+                        ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                        ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+        k32.CreateJobObjectW.restype = wintypes.HANDLE
+        k32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
+        k32.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int,
+                                                wintypes.LPVOID, wintypes.DWORD]
+
+        h = k32.CreateJobObjectW(None, None)
+        if not h:
+            return None
+        info = _EXT()
+        info.BasicLimitInformation.LimitFlags = 0x2000   # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if not k32.SetInformationJobObject(h, 9, ctypes.byref(info), ctypes.sizeof(info)):
+            k32.CloseHandle(h)
+            return None
+        _job = (k32, h)
+        return _job
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _assign_job(p):
+    """자식 프로세스를 Job 에 편입(윈도우). 실패해도 WeakSet 폴백이 있으므로 조용히 무시."""
+    job = _win_job()
+    if not job or p.pid is None:
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+        k32, h = job
+        k32.OpenProcess.restype = wintypes.HANDLE
+        k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        k32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+        hp = k32.OpenProcess(0x0001 | 0x0100, False, p.pid)   # TERMINATE | SET_QUOTA
+        if hp:
+            k32.AssignProcessToJobObject(h, hp)
+            k32.CloseHandle(hp)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _track(p):
     with _procs_lock:
         _procs.add(p)
+    _assign_job(p)
     return p
 
 
