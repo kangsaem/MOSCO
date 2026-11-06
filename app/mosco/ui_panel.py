@@ -27,7 +27,7 @@ class ControlPanel(QWidget):
     def __init__(self, state):
         super().__init__()
         self.state = state
-        self.setFixedWidth(300)
+        self.setMinimumWidth(340)          # DTME 보정 패널 폭에 맞춤(이전 300은 내용이 잘림)
         self.setStyleSheet("ControlPanel{background:#202020}")
         self.setAttribute(Qt.WA_StyledBackground, True)
         outer = QVBoxLayout(self)

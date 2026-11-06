@@ -260,8 +260,6 @@ class MainWindow(QMainWindow):
         h.setSpacing(4)
         self.panel = ControlPanel(self.state)
         self.panel.extra_selected = lambda: self.sources.selected()
-        self.panel.setMinimumWidth(240)
-        self.panel.setMaximumWidth(16777215)       # 고정폭 해제 → 스플리터로 조절
 
         mid = QVBoxLayout()
         mid.setSpacing(4)
@@ -314,7 +312,7 @@ class MainWindow(QMainWindow):
         midw.setMinimumWidth(360)
 
         right = QWidget()
-        right.setMinimumWidth(190)
+        right.setMinimumWidth(260)
         rv = QVBoxLayout(right)
         rv.setContentsMargins(0, 0, 0, 0)
         rv.setSpacing(3)
@@ -362,16 +360,16 @@ class MainWindow(QMainWindow):
         self.rpanel.on_rerender = self.rerender
         rv.addWidget(self.rpanel)
         split = QSplitter(Qt.Horizontal)
-        split.setHandleWidth(6)
+        split.setHandleWidth(4)
         split.setChildrenCollapsible(False)
-        split.setStyleSheet("QSplitter::handle{background:#2a2a2a;border-radius:2px}"
-                            "QSplitter::handle:hover{background:#3a6f9a}")
+        split.setStyleSheet("QSplitter::handle{background:#2b2b2b}"
+                            "QSplitter::handle:hover{background:#4a4a4a}")
         for wdg in (self.panel, midw, right):
             split.addWidget(wdg)
         split.setStretchFactor(0, 0)
         split.setStretchFactor(1, 1)       # 모니터가 남는 공간을 차지
         split.setStretchFactor(2, 0)
-        split.setSizes([300, 1100, 220])
+        split.setSizes([350, 1250, 300])    # 1920 기준: 보정 350 · 모니터 · 소스/렌더 300
         h.addWidget(split)
         self.setCentralWidget(root)
 
