@@ -289,8 +289,10 @@ class MainWindow(QMainWindow):
         arow.addStretch(1)
         self.b_auto = btn("AUTO", "여러 클립을 장면 인식해 한 번에 보정 (AUTO)", size=BTN_MAIN, red=True, w=88,
                           on_click=self.open_auto)
-        self.b_auto.setStyleSheet("QPushButton{background:#c0392b;border:1px solid #d64535;color:#fff;font-weight:700;"
-                                  "border-radius:3px;letter-spacing:1px}QPushButton:hover{background:#d64535}")
+        self.b_auto.setStyleSheet(
+            "QPushButton{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #cf4535,stop:1 #b3321f);"
+            "border:none;color:#fff;font-weight:700;border-radius:3px;letter-spacing:1px}"
+            "QPushButton:hover{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #e05345,stop:1 #c53a28)}")
         arow.addWidget(self.b_auto)
         arow.addStretch(1)
         rv.addLayout(arow)

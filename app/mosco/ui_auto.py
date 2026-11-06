@@ -12,12 +12,17 @@ from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QDialog, QFileDialog, QF
 
 from . import autodetect as ad
 from . import ff, jobs
-from .ui_widgets import btn
+from .ui_widgets import add_shadow, btn
 
-RED = "background:#c0392b;border-color:#d64535;color:#fff;font-weight:700"
-ORANGE = "background:#d9822b;border-color:#e8964a;color:#fff;font-weight:700"
-GREY = "background:#c8c8c8;border-color:#b0b0b0;color:#222;font-weight:700"
-ON = "background:#2f4f78;border-color:#4a8fe0;color:#fff"
+# 볼록 그라데이션(위 밝고 아래 어두움) — 일반 버튼의 Fusion 베벨과 톤 맞춤
+RED = ("background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #cf4535,stop:1 #b3321f);"
+       "border:none;color:#fff;font-weight:700")
+ORANGE = ("background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #e49440,stop:1 #cf7620);"
+          "border:none;color:#fff;font-weight:700")
+GREY = ("background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #d6d6d6,stop:1 #bababa);"
+        "border:none;color:#222;font-weight:700")
+ON = ("background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #3a5f8c,stop:1 #284a72);"
+      "border:none;color:#fff")
 AUTO_ON = "border:1px solid #f2c94c;color:#f2c94c;background:#3a3420"
 AUTO_OFF = "border:1px dashed #666;color:#bbb;background:#2e2e2e"
 
@@ -34,6 +39,7 @@ def _b(text, w=0, h=28, style="", tip="", on=None):
         b.setToolTip(tip)
     if on:
         b.clicked.connect(on)
+    add_shadow(b)                 # 모든 버튼에 약한 볼록 그림자(DTME 통일)
     return b
 
 

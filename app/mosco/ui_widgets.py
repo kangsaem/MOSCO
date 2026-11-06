@@ -11,15 +11,13 @@ BTN_MAIN = (88, 32)
 
 QSS = """
 QWidget { font-family: 'Malgun Gothic', 'Noto Sans CJK KR', sans-serif; font-size: 12px; color: #e6e6e6; }
-QPushButton, QToolButton { background: #2e2e2e; border: 1px solid #555; border-radius: 3px; padding: 0 6px; }
-QPushButton:hover, QToolButton:hover { background: #3a3a3a; }
-QPushButton:pressed, QToolButton:pressed { background: #262626; }
-QPushButton:disabled { color: #777; background: #262626; }
-QPushButton[on="true"], QToolButton[on="true"] { background: #5a4a1a; border-color: #f2c94c; color: #f2c94c; }
-QPushButton[red="true"] { background: #c0392b; border: none; color: #fff; font-weight: 700; }
-QPushButton[red="true"]:hover { background: #d64535; }
+/* 일반 버튼은 Fusion 기본 렌더(위 밝고 아래 어두운 볼록 베벨)를 그대로 쓴다 — 배경을 덮지 않음.
+   특수 버튼(켬/빨강/세그)만 QSS 로 칠한다. */
+QPushButton[on="true"], QToolButton[on="true"] { background: #5a4a1a; border: 1px solid #f2c94c; border-radius: 3px; color: #f2c94c; }
+QPushButton[red="true"] { background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 #cf4535, stop:1 #b3321f); border: none; border-radius: 3px; color: #fff; font-weight: 700; }
+QPushButton[red="true"]:hover { background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 #e05345, stop:1 #c53a28); }
 QPushButton[red="true"]:disabled { background: #7a2a22; color: #ddd; }
-QPushButton[seg="true"] { background: #2a2a2a; border-radius: 0; }
+QPushButton[seg="true"] { background: #2a2a2a; border: none; border-radius: 0; }
 QPushButton[seg="true"]:checked { background: #2f4f78; color: #fff; }
 QToolButton::menu-indicator { image: none; }
 QComboBox { background: #2a2a2a; border: 1px solid #4a4a4a; border-radius: 3px; padding: 2px 8px; min-height: 20px; }
