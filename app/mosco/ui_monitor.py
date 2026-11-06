@@ -631,3 +631,65 @@ class EllipseLanes(QWidget):
             p.drawText(QRectF(4, y0, 40, y1 - y0), Qt.AlignVCenter | Qt.AlignLeft, d["label"])
         x = self._x(self.cur + 0.5)
         p.fillRect(QRectF(x - 1, 0, 2, self.height()), QColor("#e5484d"))
+
+
+# ------------------------------------------------------------ 타임라인 눈금(초)
+class TimeRuler(QWidget):
+    """소스 바 아래 시간 눈금(0s·2s·…). 타임바와 같은 x 매핑, 클릭/드래그로 이동."""
+    seek = Signal(int)
+
+    def __init__(self):
+        super().__init__()
+        self.setFixedHeight(18)
+        self.n = 0
+        self.fps = 30.0
+        self.cur = 0
+
+    def set_data(self, n, fps):
+        self.n = int(n)
+        self.fps = float(fps) or 30.0
+        self.update()
+
+    def set_cur(self, i):
+        self.cur = i
+        self.update()
+
+    def _x(self, i):
+        return i / max(1, self.n) * self.width()
+
+    def mousePressEvent(self, e):
+        if self.n:
+            self.seek.emit(int(max(0, min(self.n - 1, e.position().x() / max(1, self.width()) * self.n))))
+
+    def mouseMoveEvent(self, e):
+        if self.n and (e.buttons() & Qt.LeftButton):
+            self.seek.emit(int(max(0, min(self.n - 1, e.position().x() / max(1, self.width()) * self.n))))
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.fillRect(self.rect(), QColor("#141414"))
+        if not self.n:
+            return
+        total = self.n / self.fps                    # 전체 초
+        # 라벨이 ~10개쯤 되도록 보기 좋은 간격(초) 선택
+        for step in (1, 2, 5, 10, 15, 30, 60, 120, 300, 600):
+            if total / step <= 12:
+                break
+        f = QFont(p.font())
+        f.setPointSize(8)
+        p.setFont(f)
+        t = 0.0
+        while t <= total + 1e-6:
+            x = self._x(int(round(t * self.fps)))
+            p.setPen(QColor("#4a4a4a"))
+            p.drawLine(int(x), 2, int(x), 7)
+            p.setPen(QColor("#8a8a8a"))
+            lbl = f"{int(t)}s" if t < 60 else f"{int(t) // 60}:{int(t) % 60:02d}"
+            p.drawText(QRectF(x + 2, 2, 60, 14), Qt.AlignVCenter | Qt.AlignLeft, lbl)
+            # 보조 눈금(절반)
+            xh = self._x(int(round((t + step / 2) * self.fps)))
+            p.setPen(QColor("#333"))
+            p.drawLine(int(xh), 4, int(xh), 7)
+            t += step
+        x = self._x(self.cur)
+        p.fillRect(QRectF(x - 1, 0, 2, self.height()), QColor("#e5484d"))

@@ -48,6 +48,14 @@ jobs:
           Copy-Item README.md dist/MOSCO/사용법.md
           & dist/MOSCO/bin/ffmpeg.exe -hide_banner -version | Select-Object -First 1
 
+      - name: Read version
+        id: ver
+        shell: pwsh
+        run: |
+          $v = python -c "import sys; sys.path.insert(0,'app'); import mosco; print(mosco.__version__)"
+          "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "MOSCO version $v"
+
       - name: Engine test (합성 FHD 29.97 ProRes)
         shell: pwsh
         run: |
@@ -85,7 +93,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: MOSCO-windows
+          name: MOSCO-${{ steps.ver.outputs.version }}-windows
           path: dist/MOSCO
           retention-days: 30
 

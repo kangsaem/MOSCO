@@ -10,14 +10,14 @@ from pathlib import Path
 import numpy as np
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QKeySequence, QShortcut
-from PySide6.QtWidgets import (QDialog, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QToolBar,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QDialog, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QSplitter,
+                               QToolBar, QVBoxLayout, QWidget)
 
 from . import __version__, analyze, decoder, edits, ff, fx, jobs, paths
 from .project import Project
 from .render import render as do_render
 from .state import AppState
-from .ui_monitor import EllipseLanes, Monitor, TimeBar
+from .ui_monitor import EllipseLanes, Monitor, TimeBar, TimeRuler
 from .ui_panel import ControlPanel
 from .ui_side import VIDEO_EXT, RenderItem, RenderPanel, RenderSettings, SourceList
 from .ui_widgets import BTN_MAIN, QSS, btn
@@ -260,7 +260,8 @@ class MainWindow(QMainWindow):
         h.setSpacing(4)
         self.panel = ControlPanel(self.state)
         self.panel.extra_selected = lambda: self.sources.selected()
-        h.addWidget(self.panel)
+        self.panel.setMinimumWidth(240)
+        self.panel.setMaximumWidth(16777215)       # 고정폭 해제 → 스플리터로 조절
 
         mid = QVBoxLayout()
         mid.setSpacing(4)
@@ -270,6 +271,8 @@ class MainWindow(QMainWindow):
         mid.addWidget(self.bar)
         self.lanes = EllipseLanes()
         mid.addWidget(self.lanes)
+        self.ruler = TimeRuler()
+        mid.addWidget(self.ruler)
         tr = QHBoxLayout()
         tr.setSpacing(4)
         tr.addStretch(1)
@@ -310,10 +313,12 @@ class MainWindow(QMainWindow):
         self.status.setFixedHeight(20)
         self.status.setStyleSheet("background:#1c1c1c;border-radius:3px;color:#7fd18b;padding-left:8px")
         mid.addWidget(self.status)
-        h.addLayout(mid, 1)
+        midw = QWidget()
+        midw.setLayout(mid)
+        midw.setMinimumWidth(360)
 
         right = QWidget()
-        right.setFixedWidth(220)
+        right.setMinimumWidth(190)
         rv = QVBoxLayout(right)
         rv.setContentsMargins(0, 0, 0, 0)
         rv.setSpacing(3)
@@ -360,7 +365,18 @@ class MainWindow(QMainWindow):
         self.rpanel.render_clicked.connect(self.render_all)
         self.rpanel.on_rerender = self.rerender
         rv.addWidget(self.rpanel)
-        h.addWidget(right)
+        split = QSplitter(Qt.Horizontal)
+        split.setHandleWidth(6)
+        split.setChildrenCollapsible(False)
+        split.setStyleSheet("QSplitter::handle{background:#2a2a2a;border-radius:2px}"
+                            "QSplitter::handle:hover{background:#3a6f9a}")
+        for wdg in (self.panel, midw, right):
+            split.addWidget(wdg)
+        split.setStretchFactor(0, 0)
+        split.setStretchFactor(1, 1)       # 모니터가 남는 공간을 차지
+        split.setStretchFactor(2, 0)
+        split.setSizes([300, 1100, 220])
+        h.addWidget(split)
         self.setCentralWidget(root)
 
         # 신호
@@ -376,6 +392,7 @@ class MainWindow(QMainWindow):
         self.bar.del_key.connect(lambda k: self.state.delete_key(k))
         self.lanes.select.connect(self.on_select)
         self.lanes.span_changed.connect(self._on_span)
+        self.ruler.seek.connect(self.seek)
         self.panel.tool.connect(self.on_tool)
         self.mon.add_at.connect(self.on_add)
         self.mon.drawn.connect(self.on_draw)
@@ -624,6 +641,8 @@ class MainWindow(QMainWindow):
             prog = a["p"]
         self.bar.set_data(n, cov, prog, self.state.errors.get(s.path, ""))
         self.bar.set_cur(self.f)
+        self.ruler.set_data(n, float(info.fps))
+        self.ruler.set_cur(self.f)
         self._refresh_lanes()
 
     def _refresh_lanes(self):
@@ -667,6 +686,7 @@ class MainWindow(QMainWindow):
         self.pos[info.path] = i
         self.bar.set_cur(i)
         self.lanes.set_cur(i)
+        self.ruler.set_cur(i)
         if self.state.sel is not None:
             self.panel.show_selection(self.state.ov_of(self.state.sel, i), self.state.source().params())
         self.tc.setText(ff.frames_to_tc(ff.tc_to_frames(info.timecode, info.fps) + i, info.fps))
@@ -808,6 +828,7 @@ class MainWindow(QMainWindow):
         self.f = i
         self.bar.set_cur(i)
         self.lanes.set_cur(i)
+        self.ruler.set_cur(i)
         self.tc.setText(ff.frames_to_tc(ff.tc_to_frames(info.timecode, info.fps) + i, info.fps))
         self.mon.set_images([fr], self._vsize(info))
         self._overlay_from_track(i)
