@@ -271,8 +271,8 @@ class AutoDialog(QDialog):
         self.pbar.setStyleSheet("background:#2a2a2a;border-radius:3px")
         root.addWidget(self.pbar)
         btmrow = QHBoxLayout()
+        btmrow.addStretch(1)                       # 취소도 오른쪽 그룹에(DTME: 취소·샘플·보정만·보정+렌더)
         btmrow.addWidget(_b("취소", w=88, h=32, on=self.reject))
-        btmrow.addStretch(1)
         btmrow.addWidget(_b("샘플", w=88, h=32, style=ORANGE, tip="렌더 없이 샘플 PNG 만", on=self._sample))
         self.b_correct = _b("보정만", w=96, h=32, style=GREY,
                             tip="적용 + 분석(타원 생성). 렌더는 안 함 — 개별 보정 이어서", on=lambda: self._go("each"))
