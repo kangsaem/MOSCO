@@ -91,12 +91,12 @@ class Project:
 class Settings:
     def __init__(self):
         self.d = {"render": dict(RENDER_DEFAULT), "beauty": dict(BEAUTY_DEFAULT), "blur": dict(BLUR_DEFAULT),
-                  "last_folder": "", "default_mode": "beauty"}
+                  "last_folder": "", "default_mode": "beauty", "view_scale": 0.5}
         try:
             j = json.loads(paths.settings_path().read_text(encoding="utf-8"))
             for k in ("render", "beauty", "blur"):
                 self.d[k].update(j.get(k, {}))
-            for k in ("last_folder", "default_mode"):
+            for k in ("last_folder", "default_mode", "view_scale"):
                 self.d[k] = j.get(k, self.d[k])
         except Exception:  # noqa: BLE001
             pass

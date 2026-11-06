@@ -32,6 +32,20 @@ class AppState(QObject):
         self._tracks = {}
         self._res = {}
         self.sel = None                # 선택한 타원 key
+        self.view_scale = float(self.settings.d.get("view_scale", 0.5))   # 보기 화질 1 / 0.5 / 0.25
+
+    def set_view_scale(self, v):
+        self.view_scale = v
+        self.settings.d["view_scale"] = v
+        self.settings.save()
+        self.params_changed.emit()
+
+    def analyze_now(self, s: Source = None):
+        """명시적으로 분석 시작(없으면 현재 소스). 이미 하는 중/끝났으면 그대로."""
+        s = s or self.source()
+        if s is not None:
+            self.ensure_analysis(s)
+        return s is not None and self.analysis(s) is not None
 
     # ------------------------------------------------------------ 소스
     def source(self) -> Source | None:
@@ -106,7 +120,6 @@ class AppState(QObject):
         self.push_undo()
         s.mode = mode
         self.dirty = True
-        self.ensure_analysis(s)
         self.changed.emit()
         self.params_changed.emit()
 
@@ -119,7 +132,6 @@ class AppState(QObject):
         (s.beauty if mode == "beauty" else s.blur).update(copy.deepcopy(params))
         s.custom = custom
         self.dirty = True
-        self.ensure_analysis(s)
         self.changed.emit()
         self.params_changed.emit()
 
@@ -137,8 +149,6 @@ class AppState(QObject):
         self.project.restore(snap)
         self.cur = min(cur, len(self.project.sources) - 1)
         self.dirty = True
-        for s in self.project.sources:
-            self.ensure_analysis(s)
         self.changed.emit()
         if before != ([s.path for s in self.project.sources], self.cur):
             self.current_changed.emit()       # 소스 목록·선택이 바뀐 경우만 화면 다시 읽기
@@ -160,9 +170,7 @@ class AppState(QObject):
     def _probed(self, path, info):
         self.infos[path] = info
         self.errors.pop(path, None)
-        for s in self.project.sources:
-            if s.path == path:
-                self.ensure_analysis(s)
+        # 불러올 때 자동 분석하지 않음. 분석은 [분석] 버튼·재생 전·렌더 때만.
         self.changed.emit()
         if self.source() and self.source().path == path:
             self.current_changed.emit()

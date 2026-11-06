@@ -90,6 +90,8 @@ def analyze_beauty(info: ff.Info, progress=None, cancel=None, hw=False):
                 progress(min(1.0, i / max(1, info.frames)))
     finally:
         r.close()
+    if cancel is not None and cancel.is_set():       # 종료 중 ffmpeg 강제 종료 → 부분 결과 저장 안 함
+        raise Cancelled()
     if i == 0:
         raise RuntimeError("프레임을 읽지 못했습니다")
     return {"lm": lm[:i].astype(np.float16), "n": np.array(i)}
@@ -189,6 +191,8 @@ def analyze_blur(info: ff.Info, progress=None, cancel=None, hw=False, workers=No
     finally:
         r.close()
         pool.shutdown(cancel_futures=True)
+    if cancel is not None and cancel.is_set():       # 종료 중 강제 종료 → 부분 결과 저장 안 함
+        raise Cancelled()
     if i == 0:
         raise RuntimeError("프레임을 읽지 못했습니다")
     return {"det": np.array(rows, np.float32).reshape(-1, 7 + HIST), "n": np.array(i)}

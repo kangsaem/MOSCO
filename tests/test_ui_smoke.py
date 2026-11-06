@@ -33,12 +33,19 @@ def main():
     w.show()
     w.state.add_files(vids)
     st = w.state
-    ok = pump(app, 120, lambda: all(st.analysis(s) and st.analysis(s)["state"] == "done" for s in st.project.sources))
+    # 불러온 직후에는 자동 분석을 하지 않아야 함
+    pump(app, 2)
+    assert all(st.analysis(s) is None for s in st.project.sources), "불러오자마자 분석이 돌고 있음"
+    # 명시적으로 분석(이 테스트는 트랙 기반 동작도 확인)
+    for s in st.project.sources:
+        st.analyze_now(s)
+    ok = pump(app, 180, lambda: all(st.analysis(s) and st.analysis(s)["state"] == "done" for s in st.project.sources))
     assert ok, "분석이 끝나지 않음"
     if len(vids) > 1:
         st.select(1)
         st.set_mode("blur")
-        pump(app, 120, lambda: st.analysis(st.source())["state"] == "done")
+        st.analyze_now(st.source())
+        pump(app, 120, lambda: (st.analysis(st.source()) or {}).get("state") == "done")
         st.select(0)
     pump(app, 3, lambda: w.result is not None)
     w.seek(40)

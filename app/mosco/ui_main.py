@@ -46,8 +46,10 @@ def gray8(m):
 
 
 # ------------------------------------------------------------ 미리보기 계산(작업 스레드)
-def temp_items(src, rgb8):
-    """분석이 끝나기 전: 이 프레임만 바로 검출."""
+def temp_items(src, rgb8, scale=1.0):
+    """분석 전: 이 프레임만 빠르게 검출(가볍게). 좌표는 rgb8(=보기 화질) 기준.
+    블러는 기본 얼굴 검출만(작은 얼굴·몸·타일 제외) — 정확한 건 [분석]·렌더 때.
+    min_size 는 원본 px 기준이므로 scale 을 곱해 비교."""
     p = src.params()
     out = []
     if src.mode == "beauty":
@@ -55,14 +57,29 @@ def temp_items(src, rgb8):
         if pts is not None:
             out.append(edits.Item(("t", 1), 1, analyze.head_ellipse(pts, p["size"], p["neck"]), pts))
     else:
+        from . import models
         thr = analyze.score_thr(p["sensitivity"])
         k = 0
-        for r in analyze.blur_frame(rgb8, body=p.get("body", True)):
-            x0, y0, x1, y1, sc = r[:5]
-            if sc >= thr and (y1 - y0) >= p["min_size"]:
+        for d in models.detector().detect(rgb8, max(0.3, thr), tiles=False, min_size=p["min_size"] * scale):
+            x0, y0, x1, y1 = d.box
+            if d.score >= thr:
                 k += 1
                 out.append(edits.Item(("t", k), k, analyze.face_to_head((x0 + x1) / 2, (y0 + y1) / 2, x1 - x0,
                                                                          y1 - y0, p["margin"])))
+    return out
+
+
+def _scale_items(items, scale):
+    """트랙(원본 좌표) 아이템을 보기 화질 좌표로 축소."""
+    if scale == 1.0:
+        return items
+    out = []
+    for it in items:
+        cx, cy, w, h, ang = it.ell
+        ni = edits.Item(it.key, it.tid, (cx * scale, cy * scale, w * scale, h * scale, ang),
+                        it.pts * scale if it.pts is not None else None, it.presence, dict(it.ov), it.manual,
+                        it.gid, it.keyed)
+        out.append(ni)
     return out
 
 
@@ -80,14 +97,14 @@ def item_entries(items, p):
     return entries([(it, fx._item_ell(it, p)) for it in items])
 
 
-def compute_preview(src, frame16, resolver, has_track, i):
-    """한 프레임: 원본·보정·키 3종·타원."""
+def compute_preview(src, frame16, resolver, has_track, i, scale=1.0):
+    """한 프레임: 원본·보정·키 3종·타원. frame16 은 보기 화질 크기, 좌표계도 그에 맞춤."""
     H, W = frame16.shape[:2]
     out = {"orig": to8(frame16)}
     p = src.params()
-    items = resolver.items(i)
+    items = _scale_items(resolver.items(i), scale)      # 트랙·수정값은 원본 좌표 → 보기 좌표로
     if not has_track:
-        items = temp_items(src, out["orig"]) + items
+        items = temp_items(src, out["orig"], scale) + items
     if src.mode == "beauty":
         r = fx.beauty(frame16, items, p, i, want_keys=True)
         out["fx"] = to8(r.out)
@@ -112,11 +129,12 @@ def compute_preview(src, frame16, resolver, has_track, i):
 
 
 class Player:
-    """재생: ffmpeg 파이프(960×540) → 큐 → 타이머로 표시. 소리 없음."""
+    """재생: ffmpeg 파이프(보기 화질) → 큐 → 타이머로 표시. 보정 없이 원본만, 소리 없음."""
 
-    def __init__(self, info, start, on_frame, on_end):
+    def __init__(self, info, start, on_frame, on_end, size):
         self.info = info
         self.i = start
+        self.size = size
         self.q = queue.Queue(maxsize=12)
         self.stop_ev = threading.Event()
         self.on_frame, self.on_end = on_frame, on_end
@@ -129,7 +147,7 @@ class Player:
         self.timer.start(max(5, int(500 / info.fps_f)))
 
     def _run(self):
-        r = ff.Reader(self.info, self.i, 8, size=PLAY_SIZE)
+        r = ff.Reader(self.info, self.i, 8, size=self.size)
         try:
             while not self.stop_ev.is_set():
                 fr = r.read()
@@ -244,6 +262,17 @@ class MainWindow(QMainWindow):
                               "border-radius:2px;margin-left:10px")
         tr.addWidget(self.tc)
         tr.addStretch(1)
+        self.b_analyze = btn("분석", "이 클립을 분석(얼굴·트래킹). 누르면 타원·검수가 정확해지고 재생 결과도 정확해집니다",
+                             w=60, on_click=self.analyze_current)
+        tr.addWidget(self.b_analyze)
+        from .ui_widgets import Seg
+        qlabel = QLabel("화질")
+        qlabel.setStyleSheet("color:#999;margin-left:8px")
+        tr.addWidget(qlabel)
+        self.quality = Seg([("1", "전체"), ("0.5", "½"), ("0.25", "¼")])
+        self.quality.set({1.0: "1", 0.5: "0.5", 0.25: "0.25"}.get(self.state.view_scale, "0.5"))
+        self.quality.changed.connect(lambda k: self.state.set_view_scale(float(k)))
+        tr.addWidget(self.quality)
         mid.addLayout(tr)
         self.status = QLabel("")
         self.status.setFixedHeight(20)
@@ -300,7 +329,7 @@ class MainWindow(QMainWindow):
         self.panel.tool.connect(self.on_tool)
         self.mon.add_at.connect(self.on_add)
         self.mon.selected.connect(self.on_select)
-        self.mon.edited.connect(lambda key, ell: self.state.edit_ellipse(key, self.f, ell))
+        self.mon.edited.connect(lambda key, ell: self.state.edit_ellipse(key, self.f, self._to_full(ell)))
         self.mon.merge_with.connect(self.on_merge)
         self.panel.del_key.connect(lambda: self.state.delete_key(self.f) or self.flash("이 프레임에 키가 없습니다"))
         self.panel.off.connect(lambda how: self.state.off(how, self.f, self._n()))
@@ -359,8 +388,9 @@ class MainWindow(QMainWindow):
         s = self.state.source()
         if not info or not s:
             return
-        size = info.h * (0.3 if s.mode == "beauty" else 0.09)
-        self.state.add_ellipse(self.f, x, y, size)
+        sc = self._vscale()
+        size = info.h * (0.3 if s.mode == "beauty" else 0.09)       # 원본 좌표
+        self.state.add_ellipse(self.f, x / sc, y / sc, size)        # 클릭은 보기 좌표 → 원본
         self.panel.stop_tool()
 
     def on_merge(self, key_b):
@@ -464,12 +494,37 @@ class MainWindow(QMainWindow):
         self.state.sel = None
         self.panel.stop_tool()
         self._sel_refresh()
+        self._refresh_analyze_btn()
         info = self.state.info(s.path)
         self._bar()
         if info is None:
             self.update_status()
             return
         self.seek(self.pos.get(s.path, 0), force=True)
+
+    def analyze_current(self):
+        s = self.state.source()
+        if s is None:
+            return
+        self.state.analyze_now(s)
+        self._refresh_analyze_btn()
+        self.flash("분석을 시작합니다")
+
+    def _refresh_analyze_btn(self):
+        s = self.state.source()
+        a = self.state.analysis(s) if s else None
+        if a is None:
+            self.b_analyze.setText("분석")
+            self.b_analyze.setEnabled(s is not None)
+        elif a["state"] == "run":
+            self.b_analyze.setText(f"{int(a['p'] * 100)}%")
+            self.b_analyze.setEnabled(False)
+        elif a["state"] == "done":
+            self.b_analyze.setText("분석됨")
+            self.b_analyze.setEnabled(False)
+        else:
+            self.b_analyze.setText("분석")
+            self.b_analyze.setEnabled(True)
 
     def _bar(self):
         s = self.state.source()
@@ -500,6 +555,7 @@ class MainWindow(QMainWindow):
         s = self.state.source()
         if s and s.path == path:
             self._bar()
+            self._refresh_analyze_btn()
             self.update_status()
 
     def on_params(self):
@@ -531,6 +587,20 @@ class MainWindow(QMainWindow):
     def step(self, d):
         self.seek(self.f + d)
 
+    # ------------------------------------------------------------ 보기 화질(좌표계)
+    def _vscale(self):
+        return self.state.view_scale
+
+    def _vsize(self, info):
+        sc = self._vscale()
+        return (max(16, round(info.w * sc)), max(16, round(info.h * sc)))
+
+    def _to_full(self, ell):
+        """모니터(보기 좌표)에서 받은 타원 → 원본 좌표(편집 저장·렌더용)."""
+        sc = self._vscale()
+        cx, cy, w, h = ell[:4]
+        return (cx / sc, cy / sc, w / sc, h / sc, ell[4] if len(ell) > 4 else 0.0)
+
     def _quick(self, i):
         """즉시: 작은 원본 프레임 + 타원(트랙이 있으면)."""
         s = self.state.source()
@@ -538,9 +608,10 @@ class MainWindow(QMainWindow):
         self.gen += 1
         g = self.gen
         path = info.path
+        sz = self._vsize(info)
 
         def fn():
-            return ff.grab(info, i, 8, PLAY_SIZE)
+            return ff.grab(info, i, 8, sz)
         j = jobs.Job(fn)
         j.signals.done.connect(lambda a: self._quick_done(g, path, i, a))
         jobs.submit(jobs.PREVIEW_POOL, j, 5)
@@ -552,14 +623,15 @@ class MainWindow(QMainWindow):
         info = self._info()
         if not info or info.path != path:
             return
-        self.mon.set_images([a], (info.w, info.h))
+        self.mon.set_images([a], self._vsize(info))
         self._overlay_from_track(i)
 
     def _overlay_from_track(self, i):
         s = self.state.source()
         ells = []
         if s is not None and self.state.track(s) is not None:
-            ells = item_entries(self.state.resolver(s).items(i), s.params())
+            items = _scale_items(self.state.resolver(s).items(i), self._vscale())
+            ells = item_entries(items, s.params())
         self.mon.set_overlay(ells, self.panel.t_ell.isChecked(), s is not None and s.mode == "blur" and
                              self.panel.t_id.isChecked())
 
@@ -575,11 +647,13 @@ class MainWindow(QMainWindow):
         src = copy.deepcopy(s)
         track = self.state.track(s)
         res_ = edits.Resolver(src, track)
-        fc = self.frame_cache if (self.frame_cache and self.frame_cache[:2] == (info.path, i)) else None
+        sc = self._vscale()
+        sz = self._vsize(info)
+        fc = self.frame_cache if (self.frame_cache and self.frame_cache[:3] == (info.path, i, sc)) else None
 
         def fn():
-            fr = fc[2] if fc else ff.grab(info, i, 16)
-            res = compute_preview(src, fr, res_, track is not None, i)
+            fr = fc[3] if fc else ff.grab(info, i, 16, sz)
+            res = compute_preview(src, fr, res_, track is not None, i, sc)
             res["frame16"] = fr
             res["i"] = i
             return res
@@ -592,7 +666,7 @@ class MainWindow(QMainWindow):
         info = self._info()
         if g != self.gen or not info or info.path != path:
             return
-        self.frame_cache = (path, r["i"], r.pop("frame16"))
+        self.frame_cache = (path, r["i"], self._vscale(), r.pop("frame16"))
         self.result = r
         self.show_result()
         self.update_status()
@@ -616,7 +690,7 @@ class MainWindow(QMainWindow):
             imgs = [main]
         self.mon.set_default("face" if (v == "split" and s.mode == "beauty") else "fit")
         self.mon.set_focus_ellipse(r.get("focus"))
-        self.mon.set_images(imgs, (info.w, info.h))
+        self.mon.set_images(imgs, self._vsize(info))
         self.mon.set_overlay(r["ells"], self.panel.t_ell.isChecked(),
                              s.mode == "blur" and self.panel.t_id.isChecked())
 
@@ -634,7 +708,7 @@ class MainWindow(QMainWindow):
         self.result = None
         self.gen += 1
         self.mon.set_default("fit")
-        self.player = Player(info, self.f, self._play_frame, self._play_end)
+        self.player = Player(info, self.f, self._play_frame, self._play_end, self._vsize(info))
         self.b_play.setProperty("on", True)
         self.b_play.style().polish(self.b_play)
 
@@ -645,7 +719,7 @@ class MainWindow(QMainWindow):
         self.f = i
         self.bar.set_cur(i)
         self.tc.setText(ff.frames_to_tc(ff.tc_to_frames(info.timecode, info.fps) + i, info.fps))
-        self.mon.set_images([fr], (info.w, info.h))
+        self.mon.set_images([fr], self._vsize(info))
         self._overlay_from_track(i)
 
     def _play_end(self):
@@ -836,6 +910,7 @@ class MainWindow(QMainWindow):
             for it in self.rpanel.items:
                 if it.job is not None:
                     it.job.cancel.set()
+            ff.kill_all()        # 남은 ffmpeg 프로세스 강제 종료(종료 후 버벅임 방지)
             e.accept()
         else:
             e.ignore()

@@ -1,9 +1,12 @@
 """FFmpeg: 정보 읽기, 프레임 읽기(파이프), ProRes 쓰기, 타임코드."""
 from __future__ import annotations
 
+import atexit
 import json
 import os
 import subprocess
+import threading
+import weakref
 from dataclasses import dataclass, field
 from fractions import Fraction
 
@@ -12,6 +15,37 @@ import numpy as np
 from . import paths
 
 NOWIN = 0x08000000 if os.name == "nt" else 0   # CREATE_NO_WINDOW
+
+# 살아있는 ffmpeg 자식 프로세스 등록부 → 프로그램 종료 시 모두 강제 종료
+# (안 하면 분석·재생용 ffmpeg 가 창을 닫아도 남아서 CPU/GPU 를 계속 씀)
+_procs: "weakref.WeakSet" = weakref.WeakSet()
+_procs_lock = threading.Lock()
+
+
+def _track(p):
+    with _procs_lock:
+        _procs.add(p)
+    return p
+
+
+def kill_all():
+    """남아있는 ffmpeg 프로세스를 모두 종료. 창을 닫을 때·프로그램 끝날 때 호출."""
+    with _procs_lock:
+        procs = list(_procs)
+    for p in procs:
+        try:
+            if p.poll() is None:
+                p.kill()
+        except Exception:  # noqa: BLE001
+            pass
+    for p in procs:
+        try:
+            p.wait(1)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+atexit.register(kill_all)
 
 
 def _run(args, **kw):
@@ -95,8 +129,8 @@ class Reader:
             args += ["-frames:v", str(count)]
         args += ["-f", "rawvideo", "-pix_fmt", fmt, "-"]
         self.nbytes = self.w * self.h * 3 * (2 if depth == 16 else 1)
-        self.p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=NOWIN,
-                                  bufsize=self.nbytes * 2)
+        self.p = _track(subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=NOWIN,
+                                         bufsize=self.nbytes * 2))
 
     def read(self):
         buf = self.p.stdout.read(self.nbytes)
@@ -181,7 +215,7 @@ class Writer:
             args += ["-timecode", info.timecode]
         args += [out]
         self.out = out
-        self.p = subprocess.Popen(args, stdin=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=NOWIN)
+        self.p = _track(subprocess.Popen(args, stdin=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=NOWIN))
 
     def write(self, frame: np.ndarray):
         if self.depth8:
