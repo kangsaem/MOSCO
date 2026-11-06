@@ -222,10 +222,6 @@ class AutoDialog(QDialog):
         self.seg_work, self.set_work = _seg([("beauty", "뷰티"), ("blur", "블러")], "beauty",
                                             self._on_work, label="작업")
         right.addWidget(self.seg_work)
-        wl = QLabel("선택한 클립의 작업을 정합니다. 장면 자동판정은 쓰지 않습니다(부정확).")
-        wl.setStyleSheet("color:#8a8a8a;font-size:11px")
-        wl.setWordWrap(True)
-        right.addWidget(wl)
         div = QFrame()
         div.setFrameShape(QFrame.HLine)
         div.setStyleSheet("color:#3a3a3a")
@@ -256,9 +252,10 @@ class AutoDialog(QDialog):
         right.addWidget(nw)
         right.addStretch(1)
         self.detail = QLabel("")
-        self.detail.setWordWrap(True)
-        self.detail.setStyleSheet("background:#1c1c1c;border:1px solid #333;border-radius:3px;padding:8px 12px;color:#ddd")
-        self.detail.setFixedWidth(470)
+        self.detail.setTextFormat(Qt.RichText)
+        self.detail.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        self.detail.setStyleSheet("background:#1c1c1c;border:1px solid #333;border-radius:3px;padding:12px 16px;color:#ddd")
+        self.detail.setFixedSize(470, 150)         # DTME 설정값 박스 크기·비례
         right.addWidget(self.detail)
         rw = QWidget()
         rw.setFixedWidth(470)
@@ -381,8 +378,18 @@ class AutoDialog(QDialog):
                     ("페더", f"{params['feather']}%"), ("놓침 유지", f"{params['hold']}f"),
                     ("다시 잇기", f"{params['link']}f"), ("블러 강도", params["strength"]),
                     ("떨림 보정", params["stabilize"]), ("모자이크", "켬" if params["kind"] == "mosaic" else "끔")]
-        rows = "   ".join(f"{k} {v}" for k, v in keys)
-        return f"● {title}\n{rows}"
+        # DTME식 2열 표
+        cells = ""
+        for i in range(0, len(keys), 2):
+            lk, lv = keys[i]
+            rk, rv = keys[i + 1] if i + 1 < len(keys) else ("", "")
+            cells += (f"<tr>"
+                      f"<td style='color:#9aa0a6;padding:2px 6px 2px 0'>{lk}</td>"
+                      f"<td style='color:#eee;padding:2px 28px 2px 0'>{lv}</td>"
+                      f"<td style='color:#9aa0a6;padding:2px 6px 2px 0'>{rk}</td>"
+                      f"<td style='color:#eee;padding:2px 0'>{rv}</td></tr>")
+        return (f"<div style='color:#fff;font-weight:bold;margin-bottom:6px'>● {title}</div>"
+                f"<table cellspacing='0'>{cells}</table>")
 
     # ------------------------------------------------------------ 측정(백그라운드)
     def _start_detect(self):
