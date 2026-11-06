@@ -13,7 +13,7 @@ from PySide6.QtGui import QAction, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QToolBar, QVBoxLayout,
                                QWidget)
 
-from . import __version__, analyze, edits, ff, fx, jobs, paths
+from . import __version__, analyze, decoder, edits, ff, fx, jobs, paths
 from .project import Project
 from .render import render as do_render
 from .state import AppState
@@ -625,7 +625,7 @@ class MainWindow(QMainWindow):
         sz = self._vsize(info)
 
         def fn():
-            return ff.grab(info, i, 8, sz)
+            return decoder.grab(info, i, 8, sz)
         j = jobs.Job(fn)
         j.signals.done.connect(lambda a: self._quick_done(g, path, i, a))
         jobs.submit(jobs.PREVIEW_POOL, j, 5)
@@ -666,7 +666,7 @@ class MainWindow(QMainWindow):
         fc = self.frame_cache if (self.frame_cache and self.frame_cache[:3] == (info.path, i, sc)) else None
 
         def fn():
-            fr = fc[3] if fc else ff.grab(info, i, 16, sz)
+            fr = fc[3] if fc else decoder.grab(info, i, 16, sz)
             res = compute_preview(src, fr, res_, track is not None, i, sc)
             res["frame16"] = fr
             res["i"] = i
@@ -949,6 +949,7 @@ class MainWindow(QMainWindow):
             for it in self.rpanel.items:
                 if it.job is not None:
                     it.job.cancel.set()
+            decoder.close_all()  # 상주 디코더 닫기
             ff.kill_all()        # 남은 ffmpeg 프로세스 강제 종료(종료 후 버벅임 방지)
             e.accept()
         else:

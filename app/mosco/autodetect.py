@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from . import ff, models
+from . import decoder, ff, models
 from .project import BEAUTY_DEFAULT, BLUR_DEFAULT
 
 # 속성 후보(순서 = 화면 버튼 순서, 맨 앞은 '자동' 자리라 뺌)
@@ -62,7 +62,7 @@ def detect_scene(info: ff.Info, cancel=None, progress=None):
         if cancel is not None and cancel.is_set():
             from .analyze import Cancelled
             raise Cancelled()
-        fr = ff.grab(info, i, 8, (960, 540))
+        fr = decoder.grab(info, i, 8, (960, 540))
         faces = models.detector().detect(fr, 0.5, tiles=True, min_size=10)
         persons = models.person_detector().detect(fr, 0.4)
         face_counts.append(len(faces))

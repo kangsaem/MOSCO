@@ -6,7 +6,7 @@ import json
 
 from PySide6.QtCore import QObject, Signal
 
-from . import analyze, edits, ff, jobs
+from . import analyze, decoder, edits, ff, jobs
 from .project import Project, Settings, Source
 
 UNDO_MAX = 80
@@ -78,6 +78,7 @@ class AppState(QObject):
         return self.infos.get(path)
 
     def set_project(self, p: Project):
+        decoder.keep_only([s.path for s in p.sources])
         self.project = p
         self.cur = 0 if p.sources else -1
         self.undo_stack.clear()
@@ -113,6 +114,7 @@ class AppState(QObject):
             self.project.sources.pop(i)
         self.cur = min(self.cur, len(self.project.sources) - 1)
         self.dirty = True
+        decoder.keep_only([s.path for s in self.project.sources])
         self.changed.emit()
         self.current_changed.emit()
 

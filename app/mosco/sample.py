@@ -6,7 +6,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from . import analyze, edits, ff, fx
+from . import analyze, decoder, edits, ff, fx
 from .render import make_track
 
 
@@ -65,7 +65,7 @@ def render_samples(src, info: ff.Info, opts: dict, progress=None, cancel=None):
     for k, i in enumerate(idxs):
         if cancel is not None and cancel.is_set():
             raise analyze.Cancelled()
-        fr = ff.grab(info, i, 16)
+        fr = decoder.grab(info, i, 16)
         items = resolver.items(i)
         if track is None:
             # 분석 전: 그 프레임만 검출

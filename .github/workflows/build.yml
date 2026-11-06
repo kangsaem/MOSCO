@@ -27,7 +27,7 @@ jobs:
       - name: Build exe (PyInstaller, onedir)
         run: |
           pyinstaller --noconfirm --windowed --name MOSCO --paths app `
-            --collect-submodules mosco --collect-all onnxruntime `
+            --collect-submodules mosco --collect-all onnxruntime --collect-all av `
             --exclude-module PySide6.QtWebEngineCore --exclude-module PySide6.QtWebEngineWidgets `
             --exclude-module PySide6.QtQuick --exclude-module PySide6.QtQml --exclude-module PySide6.Qt3DCore `
             --exclude-module PySide6.QtMultimedia --exclude-module tkinter `
