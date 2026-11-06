@@ -16,6 +16,7 @@ from .ui_widgets import btn
 
 RED = "background:#c0392b;border-color:#d64535;color:#fff;font-weight:700"
 ORANGE = "background:#d9822b;border-color:#e8964a;color:#fff;font-weight:700"
+GREY = "background:#c8c8c8;border-color:#b0b0b0;color:#222;font-weight:700"
 ON = "background:#2f4f78;border-color:#4a8fe0;color:#fff"
 AUTO_ON = "border:1px solid #f2c94c;color:#f2c94c;background:#3a3420"
 AUTO_OFF = "border:1px dashed #666;color:#bbb;background:#2e2e2e"
@@ -270,18 +271,15 @@ class AutoDialog(QDialog):
         exw.setLayout(exrow)
         root.addWidget(exw)
         btmrow = QHBoxLayout()
-        aflb = QLabel("이후")
-        aflb.setFixedWidth(52)
-        aflb.setAlignment(Qt.AlignRight)
-        btmrow.addWidget(aflb)
-        w3, self.set_after = _seg([("render", "자동 보정 후 바로 렌더"), ("each", "자동 보정 후 개별 보정")],
-                                  self.after, self._on_after, label="")
-        btmrow.addWidget(w3)
-        btmrow.addStretch(1)
         btmrow.addWidget(_b("취소", w=88, h=32, on=self.reject))
-        btmrow.addWidget(_b("샘플", w=88, h=32, style=ORANGE, tip="렌더 없이 반반 PNG 만", on=self._sample))
-        self.b_start = _b("시작", w=88, h=32, style=RED, on=self._start)
-        btmrow.addWidget(self.b_start)
+        btmrow.addStretch(1)
+        btmrow.addWidget(_b("샘플", w=88, h=32, style=ORANGE, tip="렌더 없이 샘플 PNG 만", on=self._sample))
+        self.b_correct = _b("보정만", w=96, h=32, style=GREY,
+                            tip="적용 + 분석(타원 생성). 렌더는 안 함 — 개별 보정 이어서", on=lambda: self._go("each"))
+        self.b_render = _b("보정+렌더", w=110, h=32, style=RED,
+                           tip="적용하고 바로 렌더 시작", on=lambda: self._go("render"))
+        btmrow.addWidget(self.b_correct)
+        btmrow.addWidget(self.b_render)
         bw = QWidget()
         bw.setLayout(btmrow)
         root.addWidget(bw)
@@ -335,8 +333,6 @@ class AutoDialog(QDialog):
     def _on_keepk(self, k):
         self.keep_keys = k == "keys"
 
-    def _on_after(self, k):
-        self.after = k
 
     # ------------------------------------------------------------ 표시
     def _primary(self):
@@ -498,16 +494,21 @@ class AutoDialog(QDialog):
             self.state.settings.render["name"] = self.name
         self.state.settings.save()
 
-    def _start(self):
+    def _go(self, after):
+        """보정만(each) / 보정+렌더(render). 렌더만 저장폴더가 필요하다."""
         if not any(c["inc"] for c in self.clips):
             return
-        out_dir = self.parent()._out_dir()
-        if not out_dir:
-            return
+        out_dir = None
+        if after == "render":
+            out_dir = self.parent()._out_dir()
+            if not out_dir:
+                return
+        self.after = after
         self._persist_settings()
-        self.b_start.setEnabled(False)
-        self.b_start.setText("분석 대기…")
-        # 분석(장면 인식)이 끝날 때까지 기다렸다가 적용
+        for b in (self.b_correct, self.b_render):
+            b.setEnabled(False)
+        (self.b_render if after == "render" else self.b_correct).setText("측정 대기…")
+        # 측정이 끝날 때까지 기다렸다가 적용
         if self._all_detected():
             self._apply_and_close(out_dir)
         else:
