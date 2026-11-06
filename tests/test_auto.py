@@ -7,6 +7,12 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr.reconfigure(line_buffering=True)
+except Exception:  # noqa: BLE001
+    pass
+
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from mosco import autodetect as ad  # noqa: E402
@@ -77,10 +83,22 @@ def main():
     print("sample OK:", pngs[:3], "...", len(pngs), "장")
 
     w.state.dirty = False
+    print("AUTO TEST OK")
+    sys.stdout.flush()
+    sys.stderr.flush()
     from mosco import ff
     ff.kill_all()
     os._exit(0)
 
 
 if __name__ == "__main__":
-    main()
+    import traceback
+    try:
+        main()
+    except SystemExit:
+        raise
+    except BaseException:
+        traceback.print_exc()
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(1)

@@ -708,10 +708,11 @@ class SampleDialog(QDialog):
 
     def _finished(self, paths):
         self.status.setText(f"{len(paths)}장 저장 완료")
-        from PySide6.QtCore import QUrl
-        from PySide6.QtGui import QDesktopServices
-        if paths:
+        import os
+        if paths and os.environ.get("QT_QPA_PLATFORM") != "offscreen":
             from pathlib import Path
+            from PySide6.QtCore import QUrl
+            from PySide6.QtGui import QDesktopServices
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(paths[0]).parent)))
         self.accept()
 

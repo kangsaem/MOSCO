@@ -53,6 +53,7 @@ jobs:
         run: |
           $env:PATH = "$PWD/dist/MOSCO/bin;$env:PATH"
           $env:PYTHONIOENCODING = "utf-8"
+          $env:PYTHONUNBUFFERED = "1"
           python tests/test_engine.py engine_test
           if ($LASTEXITCODE -ne 0) { exit 1 }
           python tests/test_edits.py
