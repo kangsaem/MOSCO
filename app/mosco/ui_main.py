@@ -300,6 +300,9 @@ class MainWindow(QMainWindow):
         self.quality.set({1.0: "1", 0.5: "0.5", 0.25: "0.25"}.get(self.state.view_scale, "0.5"))
         self.quality.changed.connect(lambda k: self.state.set_view_scale(float(k)))
         tr.addWidget(self.quality)
+        self.b_toqueue = btn("➜", "렌더 목록으로 보내기 (현재/선택 소스). 실제 렌더는 오른쪽 [렌더] 버튼",
+                             w=46, red=True, on_click=self.queue_to_render)
+        tr.addWidget(self.b_toqueue)
         mid.addLayout(tr)
         self.status = QLabel("")
         self.status.setFixedHeight(20)
@@ -352,7 +355,7 @@ class MainWindow(QMainWindow):
         self.rpanel = RenderPanel()
         self.rpanel.setFixedHeight(300)
         self.rpanel.settings_clicked.connect(self.render_settings)
-        self.rpanel.render_clicked.connect(self.render_selected)
+        self.rpanel.render_clicked.connect(self.render_all)
         self.rpanel.on_rerender = self.rerender
         rv.addWidget(self.rpanel)
         h.addWidget(right)
@@ -410,7 +413,7 @@ class MainWindow(QMainWindow):
         sc(Qt.Key_0, self.mon.reset_view)
         sc(Qt.Key_W, lambda: self.panel.b_pick.toggle())
         sc(Qt.Key_B, self._toggle_orig)
-        sc(QKeySequence(Qt.CTRL | Qt.Key_R), self.render_selected)
+        sc(QKeySequence(Qt.CTRL | Qt.Key_R), self.render_all)
         sc(Qt.Key_Delete, self._delete_key)
         sc(Qt.Key_A, lambda: self.panel.b_add.toggle())
         sc(Qt.Key_Escape, self._esc)
@@ -854,17 +857,29 @@ class MainWindow(QMainWindow):
         self.state.settings.save()
         return d
 
-    def render_selected(self):
+    def queue_to_render(self):
+        """➜ : 현재/선택 소스를 렌더 '목록'에 추가(대기). 렌더는 시작하지 않음."""
         rows = self.sources.selected() or ([self.state.cur] if self.state.cur >= 0 else [])
         if not rows:
+            self.flash("보낼 소스를 선택하세요")
             return
         out = self._out_dir()
         if not out:
             return
         for r in rows:
             s = self.state.project.sources[r]
-            it = RenderItem(s, self.state.settings.render, out)
-            self.rpanel.add(it)
+            self.rpanel.add(RenderItem(s, self.state.settings.render, out))   # 기본 상태 '대기'
+        self.rpanel.refresh()
+        self.flash(f"렌더 목록에 {len(rows)}개 추가 — [렌더]로 실행")
+
+    def render_all(self):
+        """[렌더] : 렌더 목록의 '대기' 항목을 모두 렌더(소스 선택이 아니라 목록 기준)."""
+        waiting = [it for it in self.rpanel.items if it.state in ("대기", "취소")]
+        if not waiting:
+            self.flash("렌더 목록이 비어 있습니다 — ➜ 로 먼저 보내세요")
+            return
+        for it in waiting:
+            it.state, it.p, it.err = "대기", 0.0, ""
             self._start_render(it)
 
     # ------------------------------------------------------------ AUTO

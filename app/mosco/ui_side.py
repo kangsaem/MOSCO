@@ -199,7 +199,7 @@ class RenderPanel(QWidget):
         r = QHBoxLayout()
         r.setSpacing(4)
         self.b_set = btn("⚙", "렌더 설정", size=BTN_MAIN, w=40, on_click=self.settings_clicked.emit)
-        self.b_render = btn("렌더", "선택한 소스를 렌더 (Ctrl+R)", size=BTN_MAIN, red=True, on_click=self.render_clicked.emit)
+        self.b_render = btn("렌더", "렌더 목록(대기)을 모두 렌더 (Ctrl+R). ➜ 로 목록에 보낸 뒤 사용", size=BTN_MAIN, red=True, on_click=self.render_clicked.emit)
         r.addWidget(self.b_set)
         r.addStretch(1)
         r.addWidget(self.b_render)
