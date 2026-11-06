@@ -497,3 +497,137 @@ class TimeBar(QWidget):
                 p.drawPolygon([QPointF(kx, 11), QPointF(kx + 5, 16), QPointF(kx, 21), QPointF(kx - 5, 16)])
             x = self._x(self.cur)
             p.fillRect(QRectF(x - 1, 8, 2, 24), QColor("#e5484d"))
+
+
+# ------------------------------------------------------------ 타원별 레인(타임라인)
+class EllipseLanes(QWidget):
+    """타원마다 가는 레인: 존재 구간 바 + 키 ◆ + 재생선. 양 끝 핸들 드래그로 in/out(처음/끝까지).
+    레인(바 가운데) 클릭 = 그 타원 선택."""
+    select = Signal(object)                 # 타원 key
+    span_changed = Signal(object, int, int)  # key, f_in, f_out
+
+    LANE_H = 16
+    PAD = 3
+
+    def __init__(self):
+        super().__init__()
+        self.spans = []          # [{key,label,intervals,keys,n}]
+        self.n = 0
+        self.cur = 0
+        self.sel = None
+        self.setMouseTracking(True)
+        self._drag = None        # (lane_idx, "in"|"out")
+        self._preview = None     # (key, f_in, f_out) 드래그 중 미리보기
+        self._fit()
+
+    def _fit(self):
+        h = self.PAD * 2 + max(1, len(self.spans)) * self.LANE_H
+        self.setFixedHeight(min(h, self.PAD * 2 + 8 * self.LANE_H))
+
+    def set_data(self, spans, n, cur, sel):
+        self.spans, self.n, self.cur, self.sel = spans or [], n, cur, sel
+        self._preview = None
+        self._fit()
+        self.update()
+
+    def set_cur(self, i):
+        self.cur = i
+        self.update()
+
+    def _x(self, i):
+        return i / max(1, self.n) * self.width()
+
+    def _frame(self, x):
+        return int(max(0, min(self.n - 1, x / max(1, self.width()) * self.n)))
+
+    def _span_of(self, d):
+        ints = d["intervals"]
+        return ints[0][0], ints[-1][1]
+
+    def _lane_rect(self, idx):
+        y = self.PAD + idx * self.LANE_H
+        return y, y + self.LANE_H - 3
+
+    def _hit(self, pos):
+        idx = int((pos.y() - self.PAD) // self.LANE_H)
+        if not (0 <= idx < len(self.spans)):
+            return None, None
+        d = self.spans[idx]
+        f0, f1 = self._span_of(d)
+        x0, x1 = self._x(f0), self._x(f1 + 1)
+        if abs(pos.x() - x0) <= 7:
+            return idx, "in"
+        if abs(pos.x() - x1) <= 7:
+            return idx, "out"
+        return idx, "mid"
+
+    def mousePressEvent(self, e):
+        idx, where = self._hit(e.position())
+        if idx is None:
+            return
+        d = self.spans[idx]
+        if where in ("in", "out"):
+            self._drag = (idx, where)
+        else:
+            self.sel = d["key"]
+            self.select.emit(d["key"])
+            self.update()
+
+    def mouseMoveEvent(self, e):
+        if self._drag is None:
+            return
+        idx, where = self._drag
+        d = self.spans[idx]
+        f0, f1 = self._span_of(d)
+        f = self._frame(e.position().x())
+        f_in, f_out = (min(f, f1), f1) if where == "in" else (f0, max(f, f0))
+        self._preview = (d["key"], f_in, f_out)
+        self.update()
+
+    def mouseReleaseEvent(self, e):
+        if self._drag is not None and self._preview is not None:
+            key, f_in, f_out = self._preview
+            self.span_changed.emit(key, f_in, f_out)
+        self._drag = None
+        self._preview = None
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.fillRect(self.rect(), QColor("#1a1a1a"))
+        if not self.spans or not self.n:
+            return
+        p.setRenderHint(QPainter.Antialiasing)
+        f = QFont(p.font())
+        f.setPointSize(8)
+        p.setFont(f)
+        for idx, d in enumerate(self.spans):
+            y0, y1 = self._lane_rect(idx)
+            sel = d["key"] == self.sel
+            p.fillRect(QRectF(0, y0 - 1, self.width(), self.LANE_H - 1), QColor("#242424" if idx % 2 else "#202020"))
+            pv = self._preview if (self._preview and self._preview[0] == d["key"]) else None
+            for (a, b) in d["intervals"]:
+                xa, xb = self._x(a), self._x(b + 1)
+                p.fillRect(QRectF(xa, y0, max(2, xb - xa), y1 - y0),
+                           QColor("#4a8fe0") if sel else QColor("#3d6690"))
+            if pv:                                  # 드래그 미리보기(연장 구간)
+                xa, xb = self._x(pv[1]), self._x(pv[2] + 1)
+                p.setPen(QPen(QColor("#f2c94c"), 1, Qt.DashLine))
+                p.setBrush(Qt.NoBrush)
+                p.drawRect(QRectF(xa, y0, max(2, xb - xa), y1 - y0 - 1))
+            # in/out 핸들
+            f0, f1 = self._span_of(d)
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor("#cfe0f0") if sel else QColor("#8aa6c4"))
+            for fx in (self._x(f0), self._x(f1 + 1)):
+                p.drawRect(QRectF(fx - 2, y0, 4, y1 - y0))
+            # 키 ◆
+            p.setBrush(QColor("#ffffff"))
+            for k in d["keys"]:
+                kx = self._x(k + 0.5)
+                cy = (y0 + y1) / 2
+                p.drawPolygon([QPointF(kx, cy - 4), QPointF(kx + 4, cy), QPointF(kx, cy + 4), QPointF(kx - 4, cy)])
+            # 라벨
+            p.setPen(QColor("#e6e6e6") if sel else QColor("#9aa0a6"))
+            p.drawText(QRectF(4, y0, 40, y1 - y0), Qt.AlignVCenter | Qt.AlignLeft, d["label"])
+        x = self._x(self.cur + 0.5)
+        p.fillRect(QRectF(x - 1, 0, 2, self.height()), QColor("#e5484d"))

@@ -17,7 +17,7 @@ from . import __version__, analyze, decoder, edits, ff, fx, jobs, paths
 from .project import Project
 from .render import render as do_render
 from .state import AppState
-from .ui_monitor import Monitor, TimeBar
+from .ui_monitor import EllipseLanes, Monitor, TimeBar
 from .ui_panel import ControlPanel
 from .ui_side import VIDEO_EXT, RenderItem, RenderPanel, RenderSettings, SourceList
 from .ui_widgets import BTN_MAIN, QSS, btn
@@ -268,6 +268,8 @@ class MainWindow(QMainWindow):
         mid.addWidget(self.mon, 1)
         self.bar = TimeBar()
         mid.addWidget(self.bar)
+        self.lanes = EllipseLanes()
+        mid.addWidget(self.lanes)
         tr = QHBoxLayout()
         tr.setSpacing(4)
         tr.addStretch(1)
@@ -372,6 +374,8 @@ class MainWindow(QMainWindow):
         self.mon.picked.connect(self.on_pick)
         self.bar.seek.connect(self.seek)
         self.bar.del_key.connect(lambda k: self.state.delete_key(k))
+        self.lanes.select.connect(self.on_select)
+        self.lanes.span_changed.connect(self._on_span)
         self.panel.tool.connect(self.on_tool)
         self.mon.add_at.connect(self.on_add)
         self.mon.drawn.connect(self.on_draw)
@@ -414,7 +418,8 @@ class MainWindow(QMainWindow):
         sc(Qt.Key_W, lambda: self.panel.b_pick.toggle())
         sc(Qt.Key_B, self._toggle_orig)
         sc(QKeySequence(Qt.CTRL | Qt.Key_R), self.render_all)
-        sc(Qt.Key_Delete, self._delete_key)
+        sc(Qt.Key_Delete, self._del)
+        sc(QKeySequence(Qt.SHIFT | Qt.Key_Delete), self._delete_keyframe)
         sc(Qt.Key_A, lambda: self.panel.b_add.toggle())
         sc(Qt.Key_Escape, self._esc)
 
@@ -481,6 +486,8 @@ class MainWindow(QMainWindow):
         self.mon.set_selected(sel)
         r = self.state.resolver(s)
         self.bar.set_keys(r.keys_of(sel))
+        self.lanes.sel = sel
+        self.lanes.update()
         self.panel.show_selection(self.state.ov_of(sel, self.f) if sel else None, s.params())
 
     def _esc(self):
@@ -494,13 +501,19 @@ class MainWindow(QMainWindow):
         self.panel.view.set("orig" if v != "orig" else "fx")
         self.show_result()
 
-    def _delete_key(self):
+    def _del(self):
+        """Del: 목록 포커스면 목록 항목 삭제, 아니면 선택한 '타원'을 삭제."""
         if self.rpanel.list.hasFocus():
             self.rpanel.remove_rows(sorted(self.rpanel.list.row(i) for i in self.rpanel.list.selectedItems()))
         elif self.sources.hasFocus():
             self.remove_sources()
         elif self.state.sel is not None:
-            self.state.delete_key(self.f)
+            self.state.delete_ellipse(self.state.sel, self.f)
+
+    def _delete_keyframe(self):
+        """Shift+Del: 현재 프레임의 키 삭제(타원 삭제와 분리)."""
+        if self.state.sel is not None and not self.state.delete_key(self.f):
+            self.flash("이 프레임에 키가 없습니다")
 
     def _sec(self):
         info = self._info()
@@ -611,6 +624,20 @@ class MainWindow(QMainWindow):
             prog = a["p"]
         self.bar.set_data(n, cov, prog, self.state.errors.get(s.path, ""))
         self.bar.set_cur(self.f)
+        self._refresh_lanes()
+
+    def _refresh_lanes(self):
+        s = self.state.source()
+        a = self.state.analysis(s) if s else None
+        if s is None or not (a and a["state"] == "done"):
+            self.lanes.set_data([], 0, self.f, self.state.sel)
+            return
+        self.lanes.set_data(self.state.ellipse_spans(s), self.state.track(s).n, self.f, self.state.sel)
+
+    def _on_span(self, key, f_in, f_out):
+        self.state.set_span(key, f_in, f_out)
+        self._bar()
+        self._sel_refresh()
 
     def on_analysis(self, path):
         s = self.state.source()
@@ -639,6 +666,7 @@ class MainWindow(QMainWindow):
         self.f = i
         self.pos[info.path] = i
         self.bar.set_cur(i)
+        self.lanes.set_cur(i)
         if self.state.sel is not None:
             self.panel.show_selection(self.state.ov_of(self.state.sel, i), self.state.source().params())
         self.tc.setText(ff.frames_to_tc(ff.tc_to_frames(info.timecode, info.fps) + i, info.fps))
@@ -779,6 +807,7 @@ class MainWindow(QMainWindow):
             return
         self.f = i
         self.bar.set_cur(i)
+        self.lanes.set_cur(i)
         self.tc.setText(ff.frames_to_tc(ff.tc_to_frames(info.timecode, info.fps) + i, info.fps))
         self.mon.set_images([fr], self._vsize(info))
         self._overlay_from_track(i)

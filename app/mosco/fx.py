@@ -186,13 +186,21 @@ def beauty(frame16, items, p, frame_no=0, want_keys=False) -> BeautyResult:
             continue
         res_img = img
         if st > 0:
-            base = _smooth_img(img, face_w)
-            fine = img - cv2.GaussianBlur(img, (0, 0), max(0.8, face_w / 400))
-            sm = base + (p["texture"] / 100) * fine
+            # 3-band 주파수 분리: 저(구조)·중(주름)·고(모공)
+            #  - 저주파(코·광대·턱선 음영)는 항상 보존
+            #  - 중주파(주름)만 '강도'로 제거
+            #  - 고주파(모공·질감)는 '질감 보존'으로 유지
+            sig_s = max(2.0, face_w / 12.0)     # 구조/주름 경계
+            sig_f = max(0.8, face_w / 200.0)    # 주름/모공 경계
+            low = cv2.GaussianBlur(img, (0, 0), sig_s)
+            blur_f = cv2.GaussianBlur(img, (0, 0), sig_f)
+            high = img - blur_f                  # 모공·미세 질감
+            mid = blur_f - low                   # 주름 대역
+            target = low + (1.0 - st) * mid + (p["texture"] / 100) * high
             if p["grain"] > 0:
                 rng = np.random.default_rng(frame_no * 131 + x0)
-                sm = sm + rng.normal(0, p["grain"] / 100 * 0.03, img.shape[:2]).astype(np.float32)[..., None]
-            res_img = img + (sm - img) * (region * st)[..., None]
+                target = target + rng.normal(0, p["grain"] / 100 * 0.03, img.shape[:2]).astype(np.float32)[..., None]
+            res_img = img + (target - img) * region[..., None]
         if p["unify"] > 0:
             y, cb, cr = _ycc(res_img)
             u = region * (p["unify"] / 100 * 0.6)

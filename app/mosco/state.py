@@ -411,6 +411,82 @@ class AppState(QObject):
         it = self._item(s, key, frame) if s else None
         return (int(frame), float(it.ell[0]), float(it.ell[1])) if it else None
 
+    # ------------------------------------------------------------ 타원별 타임라인(레인)
+    def _present_ell(self, s, key, near, n):
+        """key 타원이 near 근처에서 실제로 존재하는 ell 과 그 프레임(없으면 None)."""
+        res = self.resolver(s)
+        order = [near] + [f for d in range(1, n) for f in (near - d, near + d) if 0 <= f < n]
+        for f in order:
+            it = next((it for it in res.items(f) if it.key == key), None)
+            if it is not None:
+                return tuple(it.ell[:4]), f
+        return None, None
+
+    def ellipse_spans(self, s):
+        """현재 소스의 타원별 {key,label,intervals,keys,n}. 리졸버 바뀌면 다시 계산(캐시)."""
+        tr = self.track(s)
+        if tr is None:
+            return []
+        n = tr.n
+        res = self.resolver(s)
+        sig = (s.path, s.mode, id(res), n)
+        if getattr(self, "_spans_cache", (None,))[0] == sig:
+            return self._spans_cache[1]
+        step = max(1, n // 800)
+        seen, order = {}, []
+        for i in range(0, n, step):
+            for it in res.items(i):
+                k = it.key
+                if k not in seen:
+                    lbl = str(it.tid) if it.tid is not None else ("+" if it.manual else "·")
+                    seen[k] = {"label": lbl, "frames": []}
+                    order.append(k)
+                seen[k]["frames"].append(i)
+        out = []
+        groups = {g["gid"]: g for g in edits.get(s)["groups"]}
+        for k in order:
+            fr = seen[k]["frames"]
+            intervals, a, prev = [], fr[0], fr[0]
+            for f in fr[1:]:
+                if f - prev > step * 2:
+                    intervals.append((a, prev))
+                    a = f
+                prev = f
+            intervals.append((a, prev))
+            keys = sorted(int(x) for x in groups[k[1]].get("keys", {})) if k[0] == "g" and k[1] in groups else []
+            out.append({"key": k, "label": seen[k]["label"], "intervals": intervals, "keys": keys, "n": n})
+        self._spans_cache = (sig, out)
+        return out
+
+    def set_span(self, key, f_in, f_out):
+        """타원을 [f_in, f_out] 구간에만 존재하게(양 끝 위치 홀드 + 바깥은 끄기). 처음·끝까지 연장 포함."""
+        s = self.source()
+        tr = self.track(s)
+        if s is None or tr is None or key is None:
+            return
+        n = tr.n
+        f_in = max(0, min(int(f_in), n - 1))
+        f_out = max(f_in, min(int(f_out), n - 1))
+        e_in, af = self._present_ell(s, key, f_in, n)
+        if e_in is None:
+            return
+        e_out, _ = self._present_ell(s, key, f_out, n)
+        self.push_undo()
+        _, g = self._group_for(key, af)        # 존재하는 프레임에서 그룹 확보
+        if g is None:
+            self.undo_stack.pop()
+            return
+        edits.set_key(g, f_in, e_in)
+        edits.set_key(g, f_out, e_out or e_in)
+        g["off_all"] = False
+        g["off"] = []
+        if f_in > 0:
+            edits.off_range(g, 0, f_in - 1)
+        if f_out < n - 1:
+            edits.off_range(g, f_out + 1, n - 1)
+        self.sel = ("g", g["gid"])
+        self._edited()
+
     def set_ov(self, key, frame, k, v, *, undo=True):
         if undo:
             self.push_undo()
