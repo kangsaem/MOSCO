@@ -86,19 +86,24 @@ def main():
     print("AUTO TEST OK")
     sys.stdout.flush()
     sys.stderr.flush()
-    from mosco import ff
+    # 깨끗이 정리: 진행 중 작업 취소 → ffmpeg 종료 → 스레드풀 비우기
+    w.state.cancel_all()
+    from mosco import ff, jobs
     ff.kill_all()
-    os._exit(0)
+    for pool in (jobs.PREVIEW_POOL, jobs.RENDER_POOL, jobs.ANALYZE_POOL, jobs.PROBE_POOL):
+        pool.clear()
+        pool.waitForDone(2000)
+    app.processEvents()
 
 
 if __name__ == "__main__":
     import traceback
     try:
         main()
-    except SystemExit:
-        raise
     except BaseException:
         traceback.print_exc()
         sys.stdout.flush()
         sys.stderr.flush()
         os._exit(1)
+    sys.stdout.flush()
+    os._exit(0)      # 스레드 조인 대기 없이 0 으로 종료
