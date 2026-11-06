@@ -219,9 +219,13 @@ class Resolver:
             if not ks:
                 continue
             if g.get("manual"):
-                if i < ks[0]:
-                    continue
-                v = vals[-1] if i >= ks[-1] else _interp_keys(ks, vals, i)
+                # 수동(그린) 타원은 클립 처음~끝 존재: 첫 키 이전엔 첫 값, 마지막 키 이후엔 마지막 값
+                if i <= ks[0]:
+                    v = vals[0]
+                elif i >= ks[-1]:
+                    v = vals[-1]
+                else:
+                    v = _interp_keys(ks, vals, i)
             else:       # 자동 그룹인데 이 프레임에 자동 타원이 없음 → 키 구간 안에서만
                 v = _interp_keys(ks, vals, i)
                 if v is None:

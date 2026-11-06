@@ -111,10 +111,32 @@ def main():
     pump(app, 0.5)
     src = w.state.source()
     assert any(g.get("manual") for g in src.edits[src.mode]["groups"]), "타원 추가 안 됨"
-    assert not w.panel.b_add.isChecked()
+    assert w.panel.b_add.isChecked(), "연속 그리기: 추가 모드가 켠 채로 유지돼야 함"
+    w.panel.b_add.toggle()                 # 끄기
+    pump(app, 0.1)
     assert w.state.undo()
     assert not any(g.get("manual") for g in w.state.source().edits[src.mode]["groups"]), "추가 실행취소 안 됨"
     print("edit add OK")
+    # 드래그로 그리기(연속) → 수동 타원 1개
+    w.panel.b_add.toggle()
+    pump(app, 0.1)
+    c = QPoint(w.mon.width() // 2, w.mon.height() // 2)
+    QTest.mousePress(w.mon, Qt.LeftButton, Qt.NoModifier, c)
+    QTest.mouseMove(w.mon, c + QPoint(60, 70))
+    QTest.mouseRelease(w.mon, Qt.LeftButton, Qt.NoModifier, c + QPoint(60, 70))
+    pump(app, 0.3)
+    src = w.state.source()
+    man = [g for g in src.edits[src.mode]["groups"] if g.get("manual")]
+    assert man, "드래그로 그린 타원 없음"
+    assert w.panel.b_add.isChecked(), "그린 뒤에도 추가 모드 유지"
+    w.panel.b_add.toggle()
+    pump(app, 0.1)
+    # 삭제 모드: 그린 타원을 클릭해 삭제
+    key = ("g", man[0]["gid"])
+    w.on_delete(key)
+    pump(app, 0.2)
+    assert not any(g.get("manual") for g in w.state.source().edits[src.mode]["groups"]), "삭제 안 됨"
+    print("draw+delete OK")
     pump(app, 1.0)
     w.grab().save(str(out / "8_edit.png"))
     # 재생

@@ -144,9 +144,11 @@ class ControlPanel(QWidget):
         self.sec_edit = Section("타원 편집")
         r1 = QHBoxLayout()
         r1.setSpacing(4)
-        self.b_add = Toggle("타원 추가", w=72, tip="모니터를 클릭해 새 타원 (A)")
+        self.b_add = Toggle("타원 추가", w=72, tip="모니터에서 드래그해 새 타원. 켠 채로 계속 그림 (A)")
+        self.b_del = Toggle("삭제", w=48, tip="켜고 타원을 클릭해 삭제(오검출 제거). 자동 타원은 전 구간 숨김")
         self.b_merge = Toggle("합치기", w=54, tip="선택한 타원과 같은 사람: 다른 프레임의 타원을 클릭")
         self.b_add.toggled2.connect(lambda v: self._tool("add", v))
+        self.b_del.toggled2.connect(lambda v: self._tool("del", v))
         self.b_merge.toggled2.connect(lambda v: self._tool("merge", v))
         self.b_delkey = btn("키 삭제", "현재 프레임의 키 삭제 (Del: 모니터)", w=58, on_click=self.del_key.emit)
         self.b_off = QToolButton()
@@ -159,7 +161,7 @@ class ControlPanel(QWidget):
                      ("remove", "추가 타원 삭제")):
             m.addAction(t, lambda k=k: self.off.emit(k))
         self.b_off.setMenu(m)
-        for w in (self.b_add, self.b_merge, self.b_delkey, self.b_off):
+        for w in (self.b_add, self.b_del, self.b_merge, self.b_delkey, self.b_off):
             r1.addWidget(w)
         r1.addStretch(1)
         w1 = QWidget()
@@ -224,16 +226,18 @@ class ControlPanel(QWidget):
         self.stop_tool()
 
     def _tool(self, name, v):
-        other = self.b_merge if name == "add" else self.b_add
-        if v and other.isChecked():
-            other.blockSignals(True)
-            other.setChecked(False)
-            set_on(other, False)
-            other.blockSignals(False)
+        tog = {"add": self.b_add, "del": self.b_del, "merge": self.b_merge}
+        if v:
+            for k, b in tog.items():
+                if k != name and b.isChecked():
+                    b.blockSignals(True)
+                    b.setChecked(False)
+                    set_on(b, False)
+                    b.blockSignals(False)
         self.tool.emit(name if v else None)
 
     def stop_tool(self):
-        for b in (self.b_add, self.b_merge):
+        for b in (self.b_add, self.b_del, self.b_merge):
             if b.isChecked():
                 b.blockSignals(True)
                 b.setChecked(False)
@@ -401,7 +405,7 @@ class ControlPanel(QWidget):
                 self.state.set_params(mode, params)
             self.state.cur = cur
             self.state.current_changed.emit()
-            self.state.message.emit(f"프리셋 적용: {ad.scene_label(dlg.scene)}")
+            self.state.message.emit(f"프리셋 적용: {dlg.label}")
 
     # ------------------------------------------------------------ 상태 읽기
     def view_mode(self):
@@ -409,50 +413,39 @@ class ControlPanel(QWidget):
 
 
 class PresetGridPopup(QDialog):
-    """장면 프리셋 격자. 작업·장소·인원·각도·카메라를 골라 즉시 보정값으로 변환해 적용.
+    """프리셋 격자. 작업(뷰티/블러) × 강도(약/중/강)를 골라 즉시 적용 + 저장된 프리셋 바로 적용.
 
-    AUTO 창과 같은 틀이지만 클립 인식 없이 '고정 조합'을 바로 적용한다(현재 클립에).
+    장면 자동판정(시장/정면 …)은 부정확해서 쓰지 않는다. 현재/선택 클립에 바로 적용.
     """
 
     def __init__(self, parent, mode):
         super().__init__(parent)
         self.result = None
-        self.scene = ad.default_scene()
-        self.scene["work"] = mode          # 현재 클립 모드로 시작
+        self.label = ""
+        self.mode = mode if mode in ("beauty", "blur") else "beauty"
         self.strength = "mid"
         self.setWindowFlag(Qt.FramelessWindowHint)
         self.setModal(True)
         self.setStyleSheet("PresetGridPopup{background:#262626;border:1px solid #555;border-radius:6px}"
                            "QLabel{color:#ccc;font-size:12px}")
-        self.setFixedWidth(430)
+        self.setFixedWidth(360)
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 14, 16, 14)
         root.setSpacing(10)
-        head = QLabel("장면 프리셋")
+        head = QLabel("프리셋")
         head.setStyleSheet("color:#fff;font-size:13px;font-weight:bold")
         root.addWidget(head)
 
-        grid = QGridLayout()
-        grid.setHorizontalSpacing(10)
-        grid.setVerticalSpacing(8)
-        self.segs = {}
-        for row, (key, label, opts) in enumerate(ad.ROWS):
-            lb = QLabel(label)
-            lb.setFixedWidth(44)
-            grid.addWidget(lb, row, 0)
-            seg = Seg([(o, ad.LABEL.get(o, o)) for o in opts])
-            seg.set(self.scene.get(key) if self.scene.get(key) in opts else opts[0])
-            if self.scene.get(key) not in opts:
-                self.scene[key] = opts[0]
-            seg.changed.connect(lambda v, k=key: self.scene.__setitem__(k, v))
-            self.segs[key] = seg
-            grid.addWidget(seg, row, 1)
-        root.addLayout(grid)
-
-        div = QFrame()
-        div.setFrameShape(QFrame.HLine)
-        div.setStyleSheet("color:#3a3a3a")
-        root.addWidget(div)
+        wr = QHBoxLayout()
+        wr.setSpacing(8)
+        wlb = QLabel("작업")
+        wlb.setFixedWidth(44)
+        wr.addWidget(wlb)
+        self.wseg = Seg([("beauty", "뷰티"), ("blur", "블러")])
+        self.wseg.set(self.mode)
+        self.wseg.changed.connect(lambda v: setattr(self, "mode", v))
+        wr.addWidget(self.wseg, 1)
+        root.addLayout(wr)
 
         sr = QHBoxLayout()
         sr.setSpacing(8)
@@ -468,12 +461,16 @@ class PresetGridPopup(QDialog):
         # 저장된 프리셋(바로 적용)
         names = P.list_presets()
         if names:
+            div = QFrame()
+            div.setFrameShape(QFrame.HLine)
+            div.setStyleSheet("color:#3a3a3a")
+            root.addWidget(div)
             root.addWidget(QLabel("저장된 프리셋"))
             wrap = QGridLayout()
             wrap.setHorizontalSpacing(6)
             wrap.setVerticalSpacing(6)
             for i, n in enumerate(names):
-                wrap.addWidget(btn(n, f"'{n}' 적용", w=128, on_click=lambda n=n: self._use_named(n)), i // 3, i % 3)
+                wrap.addWidget(btn(n, f"'{n}' 적용", w=104, on_click=lambda n=n: self._use_named(n)), i // 3, i % 3)
             root.addLayout(wrap)
 
         br = QHBoxLayout()
@@ -483,7 +480,8 @@ class PresetGridPopup(QDialog):
         root.addLayout(br)
 
     def _apply(self):
-        self.result = ad.to_params(self.scene, {}, self.strength)
+        self.result = ad.to_params(self.mode, self.strength)
+        self.label = f"{ad.LABEL.get(self.mode, self.mode)} · {ad.LABEL.get(self.strength, self.strength)}"
         self.accept()
 
     def _use_named(self, name):
@@ -493,7 +491,7 @@ class PresetGridPopup(QDialog):
             QMessageBox.warning(self, "프리셋", str(e))
             return
         self.result = (d.get("mode", "beauty"), d.get("params", {}))
-        self.scene = {"work": d.get("mode", "beauty")}
+        self.label = name
         self.accept()
 
 

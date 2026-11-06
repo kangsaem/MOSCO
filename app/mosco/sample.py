@@ -10,18 +10,50 @@ from . import analyze, decoder, edits, ff, fx
 from .render import make_track
 
 
-def _compose(orig16, out16, size_w):
-    """원본|보정 반반(가운데 흰 2px). 8bit BGR 로 저장용."""
-    h, w = orig16.shape[:2]
+def _face_rect(items, W, H, pad=1.9):
+    """가장 큰 타원(얼굴/머리)을 중심으로 한 정사각 크롭 영역. 얼굴 없으면 중앙 크롭."""
+    best, area = None, -1.0
+    for it in items:
+        cx, cy, w, h, _ = it.ell
+        a = float(w) * float(h)
+        if a > area:
+            area, best = a, (float(cx), float(cy), float(w), float(h))
+    if best is None:
+        s = int(min(W, H) * 0.8)
+        x0 = (W - s) // 2
+        y0 = (H - s) // 2
+        return x0, y0, x0 + s, y0 + s
+    cx, cy, w, h = best
+    half = max(max(w, h) * 0.5 * pad, 80.0)
+    half = min(half, min(W, H) / 2)           # 프레임보다 크지 않게
+    x0 = cx - half
+    y0 = cy - half
+    side = half * 2
+    x0 = max(0.0, min(x0, W - side))          # 경계 안으로 밀기
+    y0 = max(0.0, min(y0, H - side))
+    return int(round(x0)), int(round(y0)), int(round(x0 + side)), int(round(y0 + side))
+
+
+def _compose_crop(orig16, out16, rect, size_w, p16):
+    """얼굴 크롭을 확대해 왼쪽 원본 | 오른쪽 보정본 반반(가운데 흰 선). BGR 저장용."""
+    x0, y0, x1, y1 = rect
+    o = orig16[y0:y1, x0:x1]
+    c = out16[y0:y1, x0:x1]
+    h, w = o.shape[:2]
     half = w // 2
-    comp = out16.copy()
-    comp[:, :half] = orig16[:, :half]
-    img = np.ascontiguousarray((comp >> 8).astype(np.uint8)[..., ::-1])   # RGB16 → BGR8
-    cv2.line(img, (half, 0), (half, h), (255, 255, 255), 2)
-    if size_w and size_w != w:
-        nh = round(h * size_w / w)
-        img = cv2.resize(img, (size_w, nh), interpolation=cv2.INTER_AREA if size_w < w else cv2.INTER_CUBIC)
-    return img
+    comp = c.copy()
+    comp[:, :half] = o[:, :half]              # 왼쪽 원본 / 오른쪽 보정본
+    if p16:
+        bgr = np.ascontiguousarray(comp[..., ::-1])              # RGB16 → BGR16
+        cv2.line(bgr, (half, 0), (half, h), (65535, 65535, 65535), 2)
+    else:
+        bgr = np.ascontiguousarray((comp >> 8).astype(np.uint8)[..., ::-1])   # RGB16 → BGR8
+        cv2.line(bgr, (half, 0), (half, h), (255, 255, 255), 2)
+    sw = size_w or 1000                        # 기본 1000px 폭(정사각)으로 통일
+    if sw != w:
+        nh = round(h * sw / w)
+        bgr = cv2.resize(bgr, (sw, nh), interpolation=cv2.INTER_AREA if sw < w else cv2.INTER_CUBIC)
+    return bgr
 
 
 def imwrite(path: Path, img, params=None):
@@ -86,25 +118,18 @@ def render_samples(src, info: ff.Info, opts: dict, progress=None, cancel=None):
             from .ui_main import temp_items     # 지연 import(순환 방지)
             items = temp_items(src, (fr >> 8).astype(np.uint8)) + items
         if src.mode == "beauty":
-            out = fx.beauty(fr, items, src.beauty, i).out
+            r = fx.beauty(fr, items, src.beauty, i)
+            out = r.out
+            ell_items = [it for it, _ in r.ells]
         else:
-            out, _, _ = fx.blur(fr, items, src.blur, False)
+            out, _, ells = fx.blur(fr, items, src.blur, True)
+            ell_items = [it for it, _ in ells]
+        rect = _face_rect(ell_items or items, info.w, info.h)
         path = unique(out_dir / filename(src, opts, k + 1))
-        sw = opts.get("size") or info.w
-        if p16:
-            half = fr.shape[1] // 2
-            comp = out.copy()
-            comp[:, :half] = fr[:, :half]
-            bgr = np.ascontiguousarray(comp[..., ::-1])       # RGB16 → BGR16
-            cv2.line(bgr, (half, 0), (half, fr.shape[0]), (65535, 65535, 65535), 2)
-            if sw != fr.shape[1]:
-                nh = round(fr.shape[0] * sw / fr.shape[1])
-                bgr = cv2.resize(bgr, (sw, nh), interpolation=cv2.INTER_AREA if sw < fr.shape[1] else cv2.INTER_CUBIC)
-            imwrite(path, bgr)
-        else:
-            img = _compose(fr, out, sw)
-            q = [cv2.IMWRITE_JPEG_QUALITY, 95] if opts.get("fmt") == "jpg" else []
-            imwrite(path, img, q)
+        sw = opts.get("size") or 0
+        bgr = _compose_crop(fr, out, rect, sw, p16)
+        q = [cv2.IMWRITE_JPEG_QUALITY, 95] if opts.get("fmt") == "jpg" else []
+        imwrite(path, bgr, q)
         saved.append(str(path))
         if progress:
             progress((k + 1) / count)

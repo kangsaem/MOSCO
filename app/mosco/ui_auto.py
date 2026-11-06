@@ -164,9 +164,8 @@ class AutoDialog(QDialog):
         self.after = state.settings.d.get("auto_after", "render")
         self.clips = []
         for i, s in enumerate(state.project.sources):
-            self.clips.append({"idx": i, "name": s.name, "inc": True, "scene": ad.default_scene(),
-                               "detected": None, "stats": None, "prog": None,
-                               "c": s.custom, "outp": "HQ"})
+            self.clips.append({"idx": i, "name": s.name, "inc": True, "mode": s.mode,
+                               "measured": None, "prog": None, "c": s.custom, "outp": "HQ"})
         self.selected = {0} if self.clips else set()
         self.rows = []
         self._jobs = {}
@@ -204,28 +203,13 @@ class AutoDialog(QDialog):
         # 오른쪽 격자+값
         right = QVBoxLayout()
         right.setSpacing(10)
-        right.addWidget(_b("모두 자동", h=32, style="background:#2f4f78;border-color:#4a8fe0;color:#fff;font-weight:700",
-                           tip="모든 클립을 자동 인식으로", on=self._all_auto))
-        self.grid_rows = {}
-        for key, label, opts in ad.ROWS:
-            roww = QWidget()
-            rl = QHBoxLayout(roww)
-            rl.setContentsMargins(0, 0, 0, 0)
-            rl.setSpacing(5)
-            lb = QLabel(label)
-            lb.setFixedWidth(62)
-            lb.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            rl.addWidget(lb)
-            abtn = _b("자동", w=52, h=30, style=AUTO_OFF, on=lambda _=0, k=key: self._set_attr(k, "auto"))
-            rl.addWidget(abtn)
-            obtns = {}
-            for o in opts:
-                ob = _b(ad.LABEL[o], h=30, on=lambda _=0, k=key, v=o: self._set_attr(k, v))
-                ob.setMinimumWidth(10)
-                rl.addWidget(ob, 1)
-                obtns[o] = ob
-            self.grid_rows[key] = (abtn, obtns)
-            right.addWidget(roww)
+        self.seg_work, self.set_work = _seg([("beauty", "뷰티"), ("blur", "블러")], "beauty",
+                                            self._on_work, label="작업")
+        right.addWidget(self.seg_work)
+        wl = QLabel("선택한 클립의 작업을 정합니다. 장면 자동판정은 쓰지 않습니다(부정확).")
+        wl.setStyleSheet("color:#8a8a8a;font-size:11px")
+        wl.setWordWrap(True)
+        right.addWidget(wl)
         div = QFrame()
         div.setFrameShape(QFrame.HLine)
         div.setStyleSheet("color:#3a3a3a")
@@ -321,14 +305,9 @@ class AutoDialog(QDialog):
                 c["inc"] = v
         self._refresh()
 
-    def _set_attr(self, key, value):
+    def _on_work(self, k):
         for c in self._targets():
-            c["scene"][key] = value
-        self._refresh()
-
-    def _all_auto(self):
-        for c in self._targets():
-            c["scene"] = ad.default_scene()
+            c["mode"] = k
         self._refresh()
 
     def _on_strength(self, k):
@@ -336,8 +315,7 @@ class AutoDialog(QDialog):
         self._refresh()
 
     def _resolved_work(self, c):
-        return ad.resolve(c["scene"], c["detected"] or {}).get("work") or \
-            self.state.project.sources[c["idx"]].mode
+        return c["mode"]
 
     def _out_chip(self, c):
         return c["outp"] + ("+α" if self._resolved_work(c) == "blur" else "")
@@ -371,41 +349,30 @@ class AutoDialog(QDialog):
 
     def _refresh(self):
         for c, r in zip(self.clips, self.rows):
-            det = c["detected"]
-            lbl = ad.scene_label(c["scene"], det)
-            # 인식 결과가 직접 지정과 다를 때 작은 글씨
+            m = c["measured"]
+            lbl = ad.LABEL.get(c["mode"], c["mode"])
             sub = ""
             if c["prog"] is not None:
-                sub = f"인식 중 {int(c['prog'] * 100)}%"
-            elif det:
-                diffs = [ad.LABEL[det[k]] for k, _, _ in ad.ROWS
-                         if c["scene"].get(k) not in ("auto", det.get(k)) and det.get(k)]
-                if diffs:
-                    sub = "인식: " + " · ".join(diffs)
-            auto_colored = all(v == "auto" for v in c["scene"].values())
-            r.set_state(c["inc"], c["idx"] in self.selected, c["c"], lbl, sub, self._out_chip(c), c["prog"], auto_colored)
-        # 격자: primary 클립 기준 버튼 상태
+                sub = f"측정 중 {int(c['prog'] * 100)}%"
+            elif m and c["mode"] == "blur":
+                bits = []
+                if m.get("min_face"):
+                    bits.append(f"최소 얼굴 {m['min_face']}px")
+                bits.append(f"움직임 {m.get('motion', 0)}")
+                sub = "측정: " + " · ".join(bits)
+            r.set_state(c["inc"], c["idx"] in self.selected, c["c"], lbl, sub, self._out_chip(c), c["prog"], False)
+        # primary 클립 기준 작업 버튼 상태
         p = self._primary()
-        for key, (abtn, obtns) in self.grid_rows.items():
-            v = p["scene"].get(key, "auto") if p else "auto"
-            abtn.setStyleSheet("QPushButton{%s;border-radius:3px;padding:0 6px}" % (AUTO_ON if v == "auto" else AUTO_OFF))
-            for o, ob in obtns.items():
-                sel = v == o
-                ob.setStyleSheet("QPushButton{%s;border-radius:3px;padding:0 8px}"
-                                 % (ON if sel else "background:#3a3a3a;border:1px solid #555;color:#e6e6e6"))
+        self.set_work(p["mode"] if p else "beauty")
         self.set_strength(self.strength)
-        # 세부 정보
         if p:
-            mode, params = ad.to_params(p["scene"], p["detected"] or {}, self.strength)
+            mode, params = ad.to_params(p["mode"], self.strength, p["measured"])
             self.detail.setText(self._detail_text(p, mode, params))
-            info = self.state.info(self.state.project.sources[p["idx"]].path)
             base = f"{self.name}_{p['name']}" if self.name else p["name"]
-            ext = ".mov"
-            self.fname.setText(base + "_MOSCO" + ext)
-        _ = info if p else None
+            self.fname.setText(base + "_MOSCO.mov")
 
     def _detail_text(self, clip, mode, params):
-        title = ad.scene_label(clip["scene"], clip["detected"])
+        title = ad.LABEL.get(mode, mode)
         if mode == "beauty":
             keys = [("강도", params["strength"]), ("질감 보존", params["texture"]), ("그레인", params["grain"]),
                     ("피부 범위", params["skin_range"]), ("색 통일", params["unify"]),
@@ -421,10 +388,10 @@ class AutoDialog(QDialog):
         rows = "   ".join(f"{k} {v}" for k, v in keys)
         return f"● {title}\n{rows}"
 
-    # ------------------------------------------------------------ 인식(백그라운드)
+    # ------------------------------------------------------------ 측정(백그라운드)
     def _start_detect(self):
         for c in self.clips:
-            if not c["inc"] or c["detected"] is not None:
+            if not c["inc"] or c["measured"] is not None:
                 continue
             info = self.state.info(self.state.project.sources[c["idx"]].path)
             if info is None:
@@ -433,7 +400,7 @@ class AutoDialog(QDialog):
             idx = c["idx"]
 
             def fn(prog, cancel, info=info):
-                return ad.detect_scene(info, cancel, prog)
+                return ad.measure(info, cancel, prog)
             j = jobs.Job(fn, with_progress=True)
             self._jobs[idx] = j
             j.signals.progress.connect(lambda v, i=idx: self._det_prog(i, v))
@@ -478,7 +445,7 @@ class AutoDialog(QDialog):
             return
         c = self._clip(idx)
         if c:
-            c["detected"], c["stats"] = res
+            c["measured"] = res
             c["prog"] = None
             self._update_bar()
             self._refresh()
@@ -489,14 +456,14 @@ class AutoDialog(QDialog):
         c = self._clip(idx)
         if c:
             c["prog"] = None
-            c["detected"] = ad.default_scene()
+            c["measured"] = {}
             self._refresh()
 
     def _update_bar(self):
         running = [c for c in self.clips if c["prog"] is not None]
         if running:
             avg = sum(c["prog"] for c in running) / len(running)
-            done = sum(1 for c in self.clips if c["inc"] and c["detected"] is not None)
+            done = sum(1 for c in self.clips if c["inc"] and c["measured"] is not None)
             total = sum(1 for c in self.clips if c["inc"])
             frac = (done + avg) / max(1, total)
             self.pbar.setStyleSheet(
@@ -506,7 +473,7 @@ class AutoDialog(QDialog):
             self.pbar.setStyleSheet("background:#2a2a2a;border-radius:3px")
 
     def _all_detected(self):
-        return all(c["detected"] is not None for c in self.clips if c["inc"])
+        return all(c["measured"] is not None for c in self.clips if c["inc"])
 
     # ------------------------------------------------------------ 적용
     def _assignments(self):
@@ -517,7 +484,7 @@ class AutoDialog(QDialog):
                 continue
             if self.keep_existing and c["c"]:
                 continue
-            mode, params = ad.to_params(c["scene"], c["detected"] or {}, self.strength)
+            mode, params = ad.to_params(c["mode"], self.strength, c["measured"])
             out.append((c["idx"], mode, params))
         return out
 
@@ -578,7 +545,7 @@ class AutoDialog(QDialog):
         for c in inc:
             s = copy.deepcopy(self.state.project.sources[c["idx"]])
             if not (self.keep_existing and c["c"]):
-                mode, params = ad.to_params(c["scene"], c["detected"] or {}, self.strength)
+                mode, params = ad.to_params(c["mode"], self.strength, c["measured"])
                 s.mode = mode
                 (s.beauty if mode == "beauty" else s.blur).update(params)
             srcs.append(s)

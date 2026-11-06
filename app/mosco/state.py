@@ -341,6 +341,29 @@ class AppState(QObject):
         self.sel = ("g", g["gid"])
         self._edited()
 
+    def add_ellipse_box(self, frame, cx, cy, w, h):
+        """드래그로 그린 새 타원(크기 지정). 연속 그리기 모드에서 계속 호출됨."""
+        s = self.source()
+        if s is None:
+            return
+        self.push_undo()
+        g = edits.add_manual(s, frame, (cx, cy, max(12.0, w), max(12.0, h)))
+        self.sel = ("g", g["gid"])
+        self._edited()
+
+    def delete_ellipse(self, key, frame):
+        """타원 삭제: 추가(수동) 타원은 그룹째 제거, 자동 타원은 전 구간 숨김(off_all)."""
+        s, g = self._group_for(key, frame)
+        if g is None:
+            return
+        self.push_undo()
+        if g.get("manual"):
+            edits.remove_group(s, g["gid"])
+        else:
+            g["off_all"] = True
+        self.sel = None
+        self._edited()
+
     def delete_key(self, frame):
         s, g = self._group_for(self.sel, frame, create=False)
         if g is None or str(int(frame)) not in g.get("keys", {}):

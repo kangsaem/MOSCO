@@ -103,8 +103,8 @@ def compute_preview(src, frame16, resolver, has_track, i, scale=1.0):
     out = {"orig": to8(frame16)}
     p = src.params()
     items = _scale_items(resolver.items(i), scale)      # 트랙·수정값은 원본 좌표 → 보기 좌표로
-    if not has_track:
-        items = temp_items(src, out["orig"], scale) + items
+    # 분석/AUTO 전에는 매 프레임 단발 검출을 하지 않는다(부하·느림). 원본만, 수동 타원만 표시.
+    _ = has_track
     if src.mode == "beauty":
         r = fx.beauty(frame16, items, p, i, want_keys=True)
         out["fx"] = to8(r.out)
@@ -342,6 +342,8 @@ class MainWindow(QMainWindow):
         self.bar.del_key.connect(lambda k: self.state.delete_key(k))
         self.panel.tool.connect(self.on_tool)
         self.mon.add_at.connect(self.on_add)
+        self.mon.drawn.connect(self.on_draw)
+        self.mon.delete_ell.connect(self.on_delete)
         self.mon.selected.connect(self.on_select)
         self.mon.edited.connect(lambda key, ell: self.state.edit_ellipse(key, self.f, self._to_full(ell)))
         self.mon.merge_with.connect(self.on_merge)
@@ -405,7 +407,18 @@ class MainWindow(QMainWindow):
         sc = self._vscale()
         size = info.h * (0.3 if s.mode == "beauty" else 0.09)       # 원본 좌표
         self.state.add_ellipse(self.f, x / sc, y / sc, size)        # 클릭은 보기 좌표 → 원본
-        self.panel.stop_tool()
+        # 연속 그리기: 도구를 끄지 않는다(버튼을 다시 눌러야 끝)
+
+    def on_draw(self, cx, cy, w, h):
+        if not self.state.source():
+            return
+        sc = self._vscale()
+        self.state.add_ellipse_box(self.f, cx / sc, cy / sc, w / sc, h / sc)
+        # 연속 그리기: 그린 뒤에도 계속 그릴 수 있게 도구 유지
+
+    def on_delete(self, key):
+        self.state.delete_ellipse(key, self.f)
+        # 삭제 모드 유지(여러 개 연속 삭제)
 
     def on_merge(self, key_b):
         if self.state.merge(self.state.sel, self._merge_anchor, key_b, self.f):

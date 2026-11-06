@@ -44,16 +44,15 @@ def main():
 
     dlg = AutoDialog(w, w.state)
     assert len(dlg.clips) == 2 and dlg.width() == 1040
-    assert pump(app, 90, lambda: dlg._all_detected()), "장면 인식이 끝나지 않음"
+    assert pump(app, 90, lambda: dlg._all_detected()), "측정이 끝나지 않음"
     for c in dlg.clips:
-        assert c["detected"] and c["detected"]["people"] in ad.PEOPLE
-    print("detect OK:", ad.scene_label(dlg.clips[0]["scene"], dlg.clips[0]["detected"]))
+        assert c["measured"] is not None and "min_face" in c["measured"]
+    print("measure OK:", ad.LABEL.get(dlg.clips[0]["mode"]), dlg.clips[0]["measured"])
 
-    # 속성 바꾸기: 두 번째 클립만 선택 → 블러·시장
+    # 작업 바꾸기: 두 번째 클립만 선택 → 블러
     dlg.selected = {1}
-    dlg._set_attr("work", "blur")
-    dlg._set_attr("place", "market")
-    assert dlg.clips[1]["scene"]["work"] == "blur"
+    dlg._on_work("blur")
+    assert dlg.clips[1]["mode"] == "blur"
     # 출력 바꾸기 → 블러라 +α
     dlg._on_out("std")
     assert "+α" in dlg._out_chip(dlg.clips[1])
@@ -64,8 +63,8 @@ def main():
     w.state.apply_auto(assigns, keep_keys=True)
     assert w.state.project.sources[1].mode == "blur"
     assert w.state.project.sources[1].custom
-    assert w.state.project.sources[1].blur["min_size"] == 10          # 시장 → 작은 얼굴
-    assert w.state.project.sources[1].blur["link"] >= 150             # 시장 → 재등장 많음
+    assert w.state.project.sources[1].blur["body"] is True
+    assert 8 <= w.state.project.sources[1].blur["min_size"] <= 40      # 측정된 최소 얼굴 기반
     print("apply OK")
     dlg.reject()
 

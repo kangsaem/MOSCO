@@ -7,5 +7,5 @@ build/
 dist/
 *.spec
 engine_test/
-auto_test/
+auto_test*/
 ui_shots/

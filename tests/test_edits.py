@@ -58,11 +58,12 @@ def main():
     r = edits.Resolver(s, tr)
     assert all(it.gid != g["gid"] for it in r.items(90)) and any(it.gid == g["gid"] for it in r.items(70))
     print("off OK")
-    # 추가 타원: 30 에서 시작, 50 에 키, 이후 유지
+    # 추가(그린) 타원: 클립 처음~끝 존재. 30·50 키, 그 사이 보간, 첫 키 이전엔 첫 값 유지
     m = edits.add_manual(s, 30, (100, 100, 60, 75))
     edits.set_key(m, 50, (300, 100, 60, 75))
     r = edits.Resolver(s, tr)
-    assert not any(it.gid == m["gid"] for it in r.items(29))
+    m29 = next(it for it in r.items(29) if it.gid == m["gid"])
+    assert abs(m29.ell[0] - 100) < 1e-3, "그린 타원은 첫 키 이전에도 존재(첫 값)"
     m40 = next(it for it in r.items(40) if it.gid == m["gid"])
     assert abs(m40.ell[0] - 200) < 1e-3
     m100 = next(it for it in r.items(100) if it.gid == m["gid"])

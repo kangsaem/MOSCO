@@ -11,13 +11,14 @@ BTN_MAIN = (88, 32)
 
 QSS = """
 QWidget { font-family: 'Malgun Gothic', 'Noto Sans CJK KR', sans-serif; font-size: 12px; color: #e6e6e6; }
-QPushButton, QToolButton { background: #3a3a3a; border: 1px solid #555; border-radius: 3px; padding: 0 6px; }
-QPushButton:hover, QToolButton:hover { background: #444; }
-QPushButton:pressed, QToolButton:pressed { background: #2f2f2f; }
-QPushButton:disabled { color: #777; }
+QPushButton, QToolButton { background: #2e2e2e; border: 1px solid #555; border-radius: 3px; padding: 0 6px; }
+QPushButton:hover, QToolButton:hover { background: #3a3a3a; }
+QPushButton:pressed, QToolButton:pressed { background: #262626; }
+QPushButton:disabled { color: #777; background: #262626; }
 QPushButton[on="true"], QToolButton[on="true"] { background: #5a4a1a; border-color: #f2c94c; color: #f2c94c; }
-QPushButton[red="true"] { background: #cf3b2b; border-color: #e0574a; color: #fff; }
-QPushButton[red="true"]:hover { background: #db4636; }
+QPushButton[red="true"] { background: #c0392b; border: none; color: #fff; font-weight: 700; }
+QPushButton[red="true"]:hover { background: #d64535; }
+QPushButton[red="true"]:disabled { background: #7a2a22; color: #ddd; }
 QPushButton[seg="true"] { background: #2a2a2a; border-radius: 0; }
 QPushButton[seg="true"]:checked { background: #2f4f78; color: #fff; }
 QToolButton::menu-indicator { image: none; }
@@ -39,7 +40,19 @@ QStatusBar { background: #1c1c1c; }
 """
 
 
-def btn(text, tip="", size=BTN, red=False, w=None, on_click=None) -> QPushButton:
+def add_shadow(w, blur=10, dy=2, alpha=170):
+    """DTME 식 입체감: 버튼 아래로 부드러운 그림자. (위젯마다 효과 1개 필요 → 공유 불가)"""
+    from PySide6.QtGui import QColor
+    from PySide6.QtWidgets import QGraphicsDropShadowEffect
+    e = QGraphicsDropShadowEffect(w)
+    e.setBlurRadius(blur)
+    e.setOffset(0, dy)
+    e.setColor(QColor(0, 0, 0, alpha))
+    w.setGraphicsEffect(e)
+    return w
+
+
+def btn(text, tip="", size=BTN, red=False, w=None, on_click=None, shadow=True) -> QPushButton:
     b = QPushButton(text)
     b.setFixedSize(w or size[0], size[1])
     if tip:
@@ -49,6 +62,8 @@ def btn(text, tip="", size=BTN, red=False, w=None, on_click=None) -> QPushButton
     b.setFocusPolicy(Qt.NoFocus)
     if on_click:
         b.clicked.connect(on_click)
+    if shadow:
+        add_shadow(b)
     return b
 
 
@@ -69,6 +84,7 @@ class Toggle(QPushButton):
         self.setFocusPolicy(Qt.NoFocus)
         if tip:
             self.setToolTip(tip)
+        add_shadow(self)
         self.toggled.connect(self._t)
 
     def _t(self, v):

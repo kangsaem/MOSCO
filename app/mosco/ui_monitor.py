@@ -57,7 +57,9 @@ class Monitor(QWidget):
     view_changed = Signal()
     selected = Signal(object)           # 타원 key 또는 None
     edited = Signal(object, object)     # key, (cx, cy, w, h, ang)  — 드래그 끝
-    add_at = Signal(float, float)       # 타원 추가 위치
+    add_at = Signal(float, float)       # 타원 추가 위치(클릭)
+    drawn = Signal(float, float, float, float)   # 드래그로 그린 새 타원 cx,cy,w,h(원본 좌표)
+    delete_ell = Signal(object)         # 삭제할 타원 key
     merge_with = Signal(object)         # 합치기 상대 key
 
     def __init__(self):
@@ -69,8 +71,9 @@ class Monitor(QWidget):
         self.imgs: list[QImage] = []
         self.ells = []          # [{"key", "label", "ell", "manual", "keyed"}]
         self.sel = None
-        self.tool = None        # None | "add" | "merge"
+        self.tool = None        # None | "add" | "del" | "merge"
         self._edit = None       # (key, mode, p0, ell0)  mode: move | w | h
+        self._draw = None       # (q0, q1) 드래그로 타원 그리는 중(원본 좌표)
         self.show_ell = True
         self.show_ids = False
         self.focus_ell = None   # 반반 얼굴 자동 확대용
@@ -245,7 +248,15 @@ class Monitor(QWidget):
                 self.picked.emit(q.x(), q.y())
             return
         if e.button() == Qt.LeftButton and q is not None and self.tool == "add":
-            self.add_at.emit(q.x(), q.y())
+            # 드래그로 크기 지정하며 그리기 시작(놓을 때 drawn 발생). 켠 채로 계속 그림.
+            self._draw = [q, q]
+            self.update()
+            return
+        if e.button() == Qt.LeftButton and q is not None and self.tool == "del" and self.show_ell:
+            s, _ = self.xform(pane)
+            ent, _ = self._hit(q, s)
+            if ent is not None:
+                self.delete_ell.emit(ent["key"])
             return
         if e.button() == Qt.LeftButton and q is not None and self.show_ell:
             s, _ = self.xform(pane)
@@ -270,6 +281,12 @@ class Monitor(QWidget):
             self._drag = (e.position(), s, QPointF(c))
 
     def mouseMoveEvent(self, e):
+        if self._draw is not None:
+            q, _ = self.to_img(e.position())
+            if q is not None:
+                self._draw[1] = q
+                self.update()
+            return
         if self._edit:
             import math
             key, mode, q0, ell0, s, _ = self._edit
@@ -301,6 +318,17 @@ class Monitor(QWidget):
             self._set_manual(s, QPointF(c.x() - d.x() / s, c.y() - d.y() / s))
 
     def mouseReleaseEvent(self, e):
+        if self._draw is not None:
+            q0, q1 = self._draw
+            self._draw = None
+            cx, cy = (q0.x() + q1.x()) / 2, (q0.y() + q1.y()) / 2
+            w, h = abs(q1.x() - q0.x()), abs(q1.y() - q0.y())
+            if w < 12 or h < 12:                 # 거의 클릭 → 기본 크기 타원
+                self.add_at.emit(q0.x(), q0.y())
+            else:
+                self.drawn.emit(cx, cy, w, h)
+            self.update()
+            return
         if self._edit:
             key, mode, q0, ell0, s, moved = self._edit
             self._edit = None
@@ -371,6 +399,13 @@ class Monitor(QWidget):
                         p.fillRect(r, col)
                         p.setPen(QColor("#111"))
                         p.drawText(r, Qt.AlignCenter, lab)
+            if self._draw is not None and pane is self.panes()[0]:
+                q0, q1 = self._draw
+                cx, cy = (q0.x() + q1.x()) / 2, (q0.y() + q1.y()) / 2
+                ew, eh = abs(q1.x() - q0.x()), abs(q1.y() - q0.y())
+                p.setPen(QPen(QColor("#7fd1ff"), 2, Qt.DashLine))
+                p.setBrush(Qt.NoBrush)
+                p.drawEllipse(QPointF(ox + cx * s, oy + cy * s), ew / 2 * s, eh / 2 * s)
             p.restore()
 
 
