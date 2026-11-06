@@ -9,7 +9,7 @@ from pathlib import Path
 from . import paths
 
 BEAUTY_DEFAULT = {
-    "strength": 50, "texture": 35, "grain": 15, "skin_range": 50, "unify": 20,
+    "strength": 50, "wrinkle": 50, "texture": 35, "grain": 15, "skin_range": 50, "unify": 20,
     "size": 165, "feather": 20, "neck": 40, "stabilize": 50, "skin_ref": None, "features": True,
 }
 BLUR_DEFAULT = {
@@ -18,7 +18,8 @@ BLUR_DEFAULT = {
 }
 # 슬라이더 정의: 키, 이름, 최소, 최대, 표시 단위
 BEAUTY_SLIDERS = [
-    ("strength", "강도", 0, 100, ""), ("texture", "질감 보존", 0, 100, ""), ("grain", "그레인", 0, 100, ""),
+    ("strength", "매끈 강도", 0, 100, ""), ("wrinkle", "주름 메우기", 0, 100, ""),
+    ("texture", "질감 보존", 0, 100, ""), ("grain", "그레인", 0, 100, ""),
     ("skin_range", "피부 범위", 0, 100, ""), ("unify", "색 통일", 0, 100, ""),
 ]
 BEAUTY_ELLIPSE = [

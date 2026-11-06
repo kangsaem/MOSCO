@@ -181,22 +181,30 @@ def beauty(frame16, items, p, frame_no=0, want_keys=False) -> BeautyResult:
         if want_keys:
             np.maximum(res.region[y0:y1, x0:x1], region, out=res.region[y0:y1, x0:x1])
             np.maximum(res.alpha[y0:y1, x0:x1], alpha, out=res.alpha[y0:y1, x0:x1])
-        st = it.ov.get("strength", p["strength"]) / 100
-        if st <= 0 and p["unify"] <= 0:
+        st = it.ov.get("strength", p["strength"]) / 100          # 매끈 강도(양방향)
+        wf = it.ov.get("wrinkle", p.get("wrinkle", 0)) / 100     # 주름 메우기(어두운 골만)
+        if st <= 0 and wf <= 0 and p["unify"] <= 0:
             continue
         res_img = img
-        if st > 0:
-            # 3-band 주파수 분리: 저(구조)·중(주름)·고(모공)
-            #  - 저주파(코·광대·턱선 음영)는 항상 보존
-            #  - 중주파(주름)만 '강도'로 제거
-            #  - 고주파(모공·질감)는 '질감 보존'으로 유지
-            sig_s = max(2.0, face_w / 12.0)     # 구조/주름 경계
-            sig_f = max(0.8, face_w / 200.0)    # 주름/모공 경계
-            low = cv2.GaussianBlur(img, (0, 0), sig_s)
-            blur_f = cv2.GaussianBlur(img, (0, 0), sig_f)
-            high = img - blur_f                  # 모공·미세 질감
-            mid = blur_f - low                   # 주름 대역
-            target = low + (1.0 - st) * mid + (p["texture"] / 100) * high
+        if st > 0 or wf > 0:
+            target = img
+            # ① 매끈: 양방향 필터(엣지 보존 → 구조 안 뭉개짐) + 질감 되살리기
+            if st > 0:
+                r = max(3, int(face_w / 28))
+                base = cv2.bilateralFilter((np.clip(img, 0, 1) * 255).astype(np.uint8),
+                                           d=(r | 1), sigmaColor=42, sigmaSpace=r).astype(np.float32) / 255
+                fine = img - cv2.GaussianBlur(img, (0, 0), max(0.8, face_w / 350))
+                sm = base + (p["texture"] / 100) * fine
+                target = img + (sm - img) * st
+            # ② 주름 메우기: 주름은 어두운 골 → 그 음영만 끌어올림(블러 없음)
+            if wf > 0:
+                sig = max(2.0, face_w / 22)
+                low = cv2.GaussianBlur(target, (0, 0), sig)
+                detail = target - low
+                g = cv2.cvtColor((np.clip(target, 0, 1) * 255).astype(np.uint8), cv2.COLOR_RGB2GRAY)
+                gd = g.astype(np.float32) / 255 - cv2.GaussianBlur(g.astype(np.float32) / 255, (0, 0), sig)
+                dark = np.clip(-gd * 6, 0, 1)[..., None]
+                target = target + (-np.minimum(detail, 0)) * dark * wf
             if p["grain"] > 0:
                 rng = np.random.default_rng(frame_no * 131 + x0)
                 target = target + rng.normal(0, p["grain"] / 100 * 0.03, img.shape[:2]).astype(np.float32)[..., None]

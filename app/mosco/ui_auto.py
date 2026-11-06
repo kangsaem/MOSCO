@@ -367,7 +367,8 @@ class AutoDialog(QDialog):
     def _detail_text(self, clip, mode, params):
         title = ad.LABEL.get(mode, mode)
         if mode == "beauty":
-            keys = [("강도", params["strength"]), ("질감 보존", params["texture"]), ("그레인", params["grain"]),
+            keys = [("매끈 강도", params["strength"]), ("주름 메우기", params["wrinkle"]),
+                    ("질감 보존", params["texture"]), ("그레인", params["grain"]),
                     ("피부 범위", params["skin_range"]), ("색 통일", params["unify"]),
                     ("타원 크기", f"{params['size']}%"), ("페더", f"{params['feather']}%"),
                     ("목 확장", params["neck"]), ("떨림 보정", params["stabilize"]),

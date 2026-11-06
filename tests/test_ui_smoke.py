@@ -162,4 +162,10 @@ def main():
 
 
 if __name__ == "__main__":
+    import os
+    import mosco.ff as ff
     main()
+    # Qt/PyAV 종료 정리에서 간헐 세그폴트가 나므로(판정은 위에서 끝남) 즉시 정상 종료
+    ff.kill_all()
+    sys.stdout.flush()
+    os._exit(0)

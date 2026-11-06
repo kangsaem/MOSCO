@@ -68,8 +68,9 @@ def to_params(mode, strength="mid", measured=None):
     s = STRENGTH.get(strength, 1)
     if mode == "beauty":
         p = dict(BEAUTY_DEFAULT)
-        p["strength"] = [35, 55, 75][s]
-        p["texture"] = [50, 35, 22][s]
+        p["strength"] = [35, 55, 75][s]       # 매끈
+        p["wrinkle"] = [30, 50, 70][s]        # 주름 메우기
+        p["texture"] = [55, 40, 28][s]        # 질감 보존
         return "beauty", p
     p = dict(BLUR_DEFAULT)
     p["strength"] = [60, 72, 85][s]
