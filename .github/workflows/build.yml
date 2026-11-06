@@ -27,7 +27,7 @@ jobs:
       - name: Build exe (PyInstaller, onedir)
         run: |
           pyinstaller --noconfirm --windowed --name MOSCO --paths app `
-            --collect-submodules mosco --collect-binaries onnxruntime `
+            --collect-submodules mosco --collect-all onnxruntime `
             --exclude-module PySide6.QtWebEngineCore --exclude-module PySide6.QtWebEngineWidgets `
             --exclude-module PySide6.QtQuick --exclude-module PySide6.QtQml --exclude-module PySide6.Qt3DCore `
             --exclude-module PySide6.QtMultimedia --exclude-module tkinter `
@@ -56,6 +56,8 @@ jobs:
           python tests/test_engine.py engine_test
           if ($LASTEXITCODE -ne 0) { exit 1 }
           python tests/test_edits.py
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          python tests/test_auto.py engine_test/synth.mov auto_test
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
       - name: UI test (오프스크린)

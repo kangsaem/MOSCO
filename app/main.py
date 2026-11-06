@@ -29,6 +29,8 @@ def main():
     app.setApplicationName("MOSCO")
     dark(app)
     w = MainWindow()
+    from mosco import models
+    models.set_gpu(w.state.settings.render.get("gpu", False))
     w.show()
     if os.environ.get("MOSCO_SELFTEST"):       # 빌드 점검: 모델 로드 + 창 띄우고 2초 뒤 종료
         from PySide6.QtCore import QTimer

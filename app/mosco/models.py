@@ -38,13 +38,59 @@ def _anchors(size=192, stride=4):
     return a.astype(np.float32)
 
 
+USE_GPU = False          # 설정에서 켜면 GPU(DirectML→CUDA) 검출. 꺼지면 CPU
+
+
+def available_providers():
+    try:
+        import onnxruntime as ort
+        return list(ort.get_available_providers())
+    except Exception:  # noqa: BLE001
+        return ["CPUExecutionProvider"]
+
+
+def gpu_name():
+    """쓸 수 있는 GPU 가속기 이름(없으면 None). 설정 화면 표시용."""
+    av = available_providers()
+    for p, name in (("DmlExecutionProvider", "GPU (DirectML)"), ("CUDAExecutionProvider", "GPU (CUDA)")):
+        if p in av:
+            return name
+    return None
+
+
+def _providers():
+    if USE_GPU:
+        av = available_providers()
+        for p in ("DmlExecutionProvider", "CUDAExecutionProvider"):
+            if p in av:
+                return [p, "CPUExecutionProvider"]
+    return ["CPUExecutionProvider"]
+
+
+def set_gpu(on: bool):
+    """GPU 검출 켜고 끄기. 이미 만든 세션을 버려 다음 사용 때 새 장치로 다시 만든다."""
+    global USE_GPU, _det, _mesh, _small, _person
+    on = bool(on) and gpu_name() is not None
+    if on == USE_GPU:
+        return
+    USE_GPU = on
+    with _lock:
+        _det = _mesh = _small = _person = None
+
+
 def _sess(name):
     import onnxruntime as ort
     so = ort.SessionOptions()
-    so.intra_op_num_threads = 2
-    so.inter_op_num_threads = 1
     so.log_severity_level = 3
-    return ort.InferenceSession(str(paths.model_dir() / name), so, providers=["CPUExecutionProvider"])
+    provs = _providers()
+    if provs[0] == "CPUExecutionProvider":
+        so.intra_op_num_threads = 2
+        so.inter_op_num_threads = 1
+    else:
+        # DirectML 권장: 메모리 패턴·병렬 실행 끄기(동적 입력에서 안정)
+        so.enable_mem_pattern = False
+        so.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+    return ort.InferenceSession(str(paths.model_dir() / name), so, providers=provs)
 
 
 def nms(dets: list[Det], thr=0.3) -> list[Det]:

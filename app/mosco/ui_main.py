@@ -285,6 +285,20 @@ class MainWindow(QMainWindow):
         rv = QVBoxLayout(right)
         rv.setContentsMargins(0, 0, 0, 0)
         rv.setSpacing(3)
+        arow = QHBoxLayout()
+        arow.addStretch(1)
+        self.b_auto = btn("AUTO", "여러 클립을 장면 인식해 한 번에 보정 (AUTO)", size=BTN_MAIN, red=True, w=88,
+                          on_click=self.open_auto)
+        self.b_auto.setStyleSheet("QPushButton{background:#c0392b;border:1px solid #d64535;color:#fff;font-weight:700;"
+                                  "border-radius:3px;letter-spacing:1px}QPushButton:hover{background:#d64535}")
+        arow.addWidget(self.b_auto)
+        arow.addStretch(1)
+        rv.addLayout(arow)
+        self.auto_bar = QWidget()
+        self.auto_bar.setFixedHeight(3)
+        self.auto_bar.setStyleSheet("background:#2a2a2a;border-radius:2px")
+        self.auto_bar.setVisible(False)
+        rv.addWidget(self.auto_bar)
         self.sources = SourceList(self.state)
         self.sources.add_dialog = self.add_dialog
         rv.addWidget(self.sources, 1)
@@ -780,6 +794,8 @@ class MainWindow(QMainWindow):
         if d.exec():
             self.state.settings.render.update(d.value())
             self.state.settings.save()
+            from . import models
+            models.set_gpu(self.state.settings.render.get("gpu", False))
             self.state._tracks.clear()
             self.on_params()
 
@@ -806,6 +822,29 @@ class MainWindow(QMainWindow):
             it = RenderItem(s, self.state.settings.render, out)
             self.rpanel.add(it)
             self._start_render(it)
+
+    # ------------------------------------------------------------ AUTO
+    def open_auto(self):
+        if not self.state.project.sources:
+            self.flash("먼저 영상을 추가하세요")
+            return
+        from .ui_auto import AutoDialog
+        dlg = AutoDialog(self, self.state)
+        dlg.move(self.geometry().center() - dlg.rect().center())
+        dlg.exec()
+
+    def render_auto(self, idxs, out_dir, name):
+        rs = dict(self.state.settings.render)
+        if name:
+            rs["name"] = name
+        for idx in idxs:
+            if 0 <= idx < len(self.state.project.sources):
+                s = self.state.project.sources[idx]
+                it = RenderItem(s, rs, out_dir)
+                self.rpanel.add(it)
+                self._start_render(it)
+        if idxs:
+            self.flash(f"AUTO 적용 완료 — {len(idxs)}개 렌더 시작")
 
     def rerender(self, rows):
         for r in rows:

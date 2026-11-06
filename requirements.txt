@@ -1,4 +1,4 @@
 PySide6==6.12.0
 numpy
 opencv-contrib-python-headless
-onnxruntime
+onnxruntime-directml

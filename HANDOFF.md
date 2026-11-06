@@ -1,6 +1,6 @@
 # HANDOFF — MOSCO (Mosaic + Cosmo)
 
-다음 대화는 이 문서를 기준으로 이어서 작업한다. **v0.2.1: 성능(불러올 때 자동분석 제거·보기 화질 ½·¼·현재 프레임만 미리보기·[분석] 버튼) + 종료 시 ffmpeg 자식 프로세스 강제 종료(종료 후 버벅임 수정). AUTO 기능은 아직 미구현(시안만). 이전: v0.2.0: 블러 검출 강화(작은 얼굴·몸→머리·끊긴 트랙 잇기) + 타원 수정 기능(키프레임·추가·끄기·합치기·타원별 값). 다음: 사용자 실제 영상 테스트 → 피드백 반영.**
+다음 대화는 이 문서를 기준으로 이어서 작업한다. **v0.3.0: AUTO(장면 인식 → 여러 클립 일괄 보정, 바로 렌더/개별 보정, 샘플 반반 PNG) + GPU 검출(DirectML, 설정에서 켬). AUTO 창·샘플 창은 DTME AUTO_UI.md 틀. 남은 것: 보정 탭 프리셋 창(격자 팝업)은 미구현(지금은 named 프리셋 콤보). 이전: v0.2.1: 성능(불러올 때 자동분석 제거·보기 화질 ½·¼·현재 프레임만 미리보기·[분석] 버튼) + 종료 시 ffmpeg 자식 프로세스 강제 종료(종료 후 버벅임 수정). AUTO 기능은 아직 미구현(시안만). 이전: v0.2.0: 블러 검출 강화(작은 얼굴·몸→머리·끊긴 트랙 잇기) + 타원 수정 기능(키프레임·추가·끄기·합치기·타원별 값). 다음: 사용자 실제 영상 테스트 → 피드백 반영.**
 
 ## 0. v0.2.0 변경 (2026-11-05, 사용자 요청)
 
@@ -73,6 +73,9 @@ app/mosco/models.py       BlazeFace full-range(192) 검출 + 타일 + NMS, FaceM
 app/mosco/analyze.py      분석(뷰티: 랜드마크 추적 / 블러: 프레임별 병렬 검출) → cache/analysis/*.npz, 트랙 후처리
 app/mosco/fx.py           뷰티(가이디드 필터 + 질감 복원 + 그레인 + 색 통일), 피부 키, 블러/모자이크, 4444 알파
 app/mosco/render.py       분석 → 트랙 → 수정 반영(edits.Resolver) → 프레임 병렬 처리(순서 유지) → Writer
+app/mosco/autodetect.py   AUTO 장면 인식(샘플 프레임 → 작업·장소·인원·각도·카메라) + 속성→보정값
+app/mosco/sample.py       AUTO [샘플]: 반반(원본|보정) PNG/JPG N장
+app/mosco/ui_auto.py      AUTO 창(1040×720)·샘플 창 — DTME 틀, MOSCO 분류
 app/mosco/edits.py        타원 수정 데이터(Source.edits[모드])·적용(보정량 키, 추가 타원, 끄기, 합치기, 타원별 값)
 app/mosco/project.py      Source/Project/Settings/프리셋, 기본값·슬라이더 정의
 app/mosco/state.py        공유 상태, 분석 작업·진행, 트랙 캐시, 실행취소(80)
@@ -82,6 +85,7 @@ models/                   ONNX 6개(BlazeFace·FaceMesh·MTCNN 3·NanoDet) + NOT
 tests/test_engine.py      합성 FHD 29.97 ProRes → 분석·렌더·출력 검사(CI). 실제 영상 경로를 주면 시간도 측정
 tests/test_ui_smoke.py    화면 흐름(오프스크린, 타원 끌기·추가·실행취소 포함) + 캡처
 tests/test_edits.py       수정 기능·다시 잇기(가짜 트랙) — CI
+tests/test_auto.py        AUTO 인식·적용·샘플 PNG — CI
 ```
 
 ## 6. 핵심 기술 결정과 근거

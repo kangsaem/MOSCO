@@ -32,7 +32,7 @@ BLUR_DETECT = [("sensitivity", "민감도", 0, 100, ""), ("min_size", "최소 �
 
 RENDER_DEFAULT = {
     "out_dir": "", "name": "", "main": True, "prores": "422 HQ", "overlay": True, "review": False,
-    "audio": True, "hw": False, "two_pass": True,
+    "audio": True, "hw": False, "two_pass": True, "gpu": False,
 }
 
 

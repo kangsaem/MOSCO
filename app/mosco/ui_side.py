@@ -310,6 +310,14 @@ class RenderSettings(QDialog):
         self.two.setCurrentIndex(0 if rs.get("two_pass", True) else 1)
         self.two.setToolTip("앞뒤 2회 = 얼굴이 처음 잡히기 전 구간도 거슬러 덮음")
         f.addRow("블러 처리", self.two)
+        from . import models
+        self.gpu = QComboBox()
+        gname = models.gpu_name()
+        self.gpu.addItems(["CPU"] + ([gname] if gname else []))
+        self.gpu.setCurrentIndex(1 if (rs.get("gpu") and gname) else 0)
+        self.gpu.setEnabled(gname is not None)
+        self.gpu.setToolTip("얼굴·사람 검출을 GPU 로. 분석·AUTO 가 빨라짐" + ("" if gname else " (이 PC에 쓸 수 있는 GPU 가속기가 없음)"))
+        f.addRow("검출 장치", self.gpu)
         r = QHBoxLayout()
         r.addStretch(1)
         r.addWidget(btn("확인", on_click=self.accept))
@@ -325,4 +333,5 @@ class RenderSettings(QDialog):
         return {"out_dir": self.dir.text().strip(), "name": self.name.text().strip(), "main": self.main.isChecked(),
                 "prores": self.prores.currentText(), "overlay": self.overlay.isChecked(),
                 "review": self.review.isChecked(), "audio": self.audio.isChecked(),
-                "hw": self.hw.currentIndex() == 1, "two_pass": self.two.currentIndex() == 0}
+                "hw": self.hw.currentIndex() == 1, "two_pass": self.two.currentIndex() == 0,
+                "gpu": self.gpu.currentIndex() == 1}

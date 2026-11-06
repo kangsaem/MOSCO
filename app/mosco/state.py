@@ -40,6 +40,27 @@ class AppState(QObject):
         self.settings.save()
         self.params_changed.emit()
 
+    def apply_auto(self, assigns, keep_keys=True):
+        """AUTO 적용: [(idx, mode, params)] 를 한 번의 실행취소로. keep_keys=False 면 그 모드의 타원 수정 지움."""
+        if not assigns:
+            return
+        self.push_undo()
+        for idx, mode, params in assigns:
+            if not (0 <= idx < len(self.project.sources)):
+                continue
+            s = self.project.sources[idx]
+            s.mode = mode
+            (s.beauty if mode == "beauty" else s.blur).update(copy.deepcopy(params))
+            s.custom = True
+            if not keep_keys:
+                s.edits.pop(mode, None)
+        self._tracks.clear()
+        self._res.clear()
+        self.dirty = True
+        self.changed.emit()
+        self.current_changed.emit()
+        self.params_changed.emit()
+
     def analyze_now(self, s: Source = None):
         """명시적으로 분석 시작(없으면 현재 소스). 이미 하는 중/끝났으면 그대로."""
         s = s or self.source()
