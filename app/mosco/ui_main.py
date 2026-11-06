@@ -297,16 +297,12 @@ class MainWindow(QMainWindow):
         self.b_analyze = btn("분석", "이 클립을 분석(얼굴·트래킹). 누르면 타원·검수가 정확해지고 재생 결과도 정확해집니다",
                              w=60, on_click=self.analyze_current)
         tr.addWidget(self.b_analyze)
-        from .ui_widgets import Seg
-        qlabel = QLabel("화질")
-        qlabel.setStyleSheet("color:#999;margin-left:8px")
-        tr.addWidget(qlabel)
-        self.quality = Seg([("1", "전체"), ("0.5", "½"), ("0.25", "¼")])
-        self.quality.set({1.0: "1", 0.5: "0.5", 0.25: "0.25"}.get(self.state.view_scale, "0.5"))
-        self.quality.changed.connect(lambda k: self.state.set_view_scale(float(k)))
-        tr.addWidget(self.quality)
+        self.state.set_view_scale(1.0)              # 미리보기는 항상 100%(화질 선택창 없앰)
         self.b_toqueue = btn("➜", "렌더 목록으로 보내기 (현재/선택 소스). 실제 렌더는 오른쪽 [렌더] 버튼",
-                             w=46, red=True, on_click=self.queue_to_render)
+                             size=BTN_MAIN, w=88, red=True, on_click=self.queue_to_render)
+        _af = self.b_toqueue.font()
+        _af.setPointSize(16)
+        self.b_toqueue.setFont(_af)
         tr.addWidget(self.b_toqueue)
         mid.addLayout(tr)
         self.status = QLabel("")
