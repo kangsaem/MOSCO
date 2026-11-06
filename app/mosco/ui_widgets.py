@@ -11,8 +11,13 @@ BTN_MAIN = (88, 32)
 
 QSS = """
 QWidget { font-family: 'Malgun Gothic', 'Noto Sans CJK KR', sans-serif; font-size: 12px; color: #e6e6e6; }
-/* 일반 버튼은 Fusion 기본 렌더(위 밝고 아래 어두운 볼록 베벨)를 그대로 쓴다 — 배경을 덮지 않음.
-   특수 버튼(켬/빨강/세그)만 QSS 로 칠한다. */
+/* 일반 버튼: QSS 그라데이션으로 볼록 베벨(위 밝고 아래 어두움)+위쪽 밝은 테두리.
+   Fusion 네이티브 렌더에 의존하지 않음 — 윈도우에서 네이티브+그림자 조합이 불안정했음. */
+QPushButton, QToolButton { background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 #3b3b3b, stop:1 #2b2b2b);
+    border: 1px solid #555; border-top-color: #6a6a6a; border-bottom-color: #3a3a3a; border-radius: 3px; padding: 0 6px; }
+QPushButton:hover, QToolButton:hover { background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 #474747, stop:1 #353535); }
+QPushButton:pressed, QToolButton:pressed { background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 #2a2a2a, stop:1 #343434); }
+QPushButton:disabled, QToolButton:disabled { color: #777; background: #2a2a2a; border-color: #444; }
 QPushButton[on="true"], QToolButton[on="true"] { background: #5a4a1a; border: 1px solid #f2c94c; border-radius: 3px; color: #f2c94c; }
 QPushButton[red="true"] { background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 #cf4535, stop:1 #b3321f); border: none; border-radius: 3px; color: #fff; font-weight: 700; }
 QPushButton[red="true"]:hover { background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 #e05345, stop:1 #c53a28); }
