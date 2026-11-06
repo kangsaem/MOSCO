@@ -88,29 +88,25 @@ class ClipRow(QFrame):
     def __init__(self, idx, name):
         super().__init__()
         self.idx = idx
-        self.setFixedHeight(28)
+        self.setFixedHeight(30)
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(8, 0, 8, 0)
+        lay.setContentsMargins(10, 0, 8, 0)
         lay.setSpacing(8)
         self.chk = QCheckBox()
         self.chk.setChecked(True)
         lay.addWidget(self.chk)
         self.name = QLabel(name)
-        self.name.setFixedWidth(104)
         self.name.setStyleSheet("font-weight:700")
         lay.addWidget(self.name)
-        self.c = QLabel("")
-        self.c.setFixedWidth(12)
-        self.c.setStyleSheet("color:#f2c94c")
-        lay.addWidget(self.c)
-        self.preset = QLabel("자동")
-        lay.addWidget(self.preset)
-        self.sub = QLabel("")
-        self.sub.setStyleSheet("color:#c4cad1;font-size:11px")
-        lay.addWidget(self.sub)
+        self.tag = QLabel("")                 # 'C · 뷰티' 식 작은 표시
+        self.tag.setStyleSheet("color:#9aa0a6;font-size:11px")
+        lay.addWidget(self.tag)
         lay.addStretch(1)
-        self.out = QLabel("HQ")
-        self.out.setStyleSheet("background:#3a3a3a;border-radius:2px;padding:1px 6px;font-size:10px")
+        self.sub = QLabel("")                 # 측정 결과(작게)
+        self.sub.setStyleSheet("color:#8a9bb0;font-size:11px")
+        lay.addWidget(self.sub)
+        self.out = QLabel("HQ")               # 출력 칩(오른쪽)
+        self.out.setStyleSheet("background:#3a3a3a;border-radius:2px;padding:1px 7px;font-size:10px;color:#cfcfcf")
         lay.addWidget(self.out)
         self.sel = False
         self.prog = None
@@ -122,30 +118,23 @@ class ClipRow(QFrame):
         self.chk.blockSignals(True)
         self.chk.setChecked(included)
         self.chk.blockSignals(False)
-        self.c.setText("C" if c else "")
-        self.preset.setText(preset)
-        self.preset.setStyleSheet("color:%s" % ("#c4cad1" if detected_auto else "#fff"))
+        self.tag.setText((("C · " if c else "") + preset) if preset else ("C" if c else ""))
         self.sub.setText(sub)
         self.out.setText(out)
-        self.name.setStyleSheet("font-weight:700;color:%s" % ("#fff" if included else "#8a8a8a"))
+        self.name.setStyleSheet("font-weight:700;color:%s" % ("#eaeaea" if included else "#777"))
         self._paint()
 
     def _paint(self):
-        if self.sel:
-            bg = "#2f4f78"
-        elif self.prog is not None:
-            bg = "#3c3c3c"
-        else:
-            bg = "#6b6b6b" if self.chk.isChecked() else "#3c3c3c"
-        extra = ""
+        # DTME 식: 차분한 행 배경 + 선택은 파란 '테두리'(채움 아님), 측정 중이면 아래 얇은 진행 느낌
+        base = "#2d2d2c" if self.chk.isChecked() else "#242424"
         if self.prog is not None:
-            pct = int(self.prog * 100)
-            extra = (f",stop:0 #5d7896,stop:{self.prog:.3f} #5d7896,"
-                     f"stop:{min(0.999, self.prog + 0.001):.3f} {bg},stop:1 {bg}")
-            self.setStyleSheet("ClipRow{border-radius:3px;background:qlineargradient(x1:0,y1:0,x2:1,y2:0%s)}" % extra)
+            p = max(0.0, min(1.0, self.prog))
+            bg = ("qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #2f3a4a,"
+                  f"stop:{p:.3f} #2f3a4a,stop:{min(0.999, p + 0.001):.3f} {base},stop:1 {base})")
         else:
-            self.setStyleSheet("ClipRow{border-radius:3px;background:%s}" % bg)
-        _ = pct if self.prog is not None else 0
+            bg = base
+        border = "1px solid #4a8fe0" if self.sel else "1px solid #333"
+        self.setStyleSheet("ClipRow{border-radius:3px;background:%s;border:%s}" % (bg, border))
 
     def mousePressEvent(self, e):
         if self.childAt(e.position().toPoint()) is self.chk:

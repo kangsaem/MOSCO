@@ -100,10 +100,8 @@ class Resolver:
         if tr is None:
             return []
         if self.mode == "beauty":
-            pts, pres = tr.at(i)
-            if pts is None:
-                return []
-            return [(1, analyze.head_ellipse(pts, self.p["size"], self.p["neck"]), pts, pres)]
+            return [(slot + 1, analyze.head_ellipse(pts, self.p["size"], self.p["neck"]), pts, pres)
+                    for slot, pts, pres in tr.at(i)]
         out = {}
         for f in tr.at(i):
             tid = self.merge.get(f[0], f[0])
@@ -128,8 +126,8 @@ class Resolver:
         if tr is None:
             return []
         if self.mode == "beauty":
-            pts, pres = tr.at(i)
-            return [] if pts is None else [(1, analyze.head_ellipse(pts, self.p["size"], self.p["neck"]), pts, pres)]
+            return [(slot + 1, analyze.head_ellipse(pts, self.p["size"], self.p["neck"]), pts, pres)
+                    for slot, pts, pres in tr.at(i)]
         return [(f[0], analyze.face_to_head(*f[1:5], self.p["margin"]), None, 1.0) for f in tr.at(i)]
 
     def _merges(self):

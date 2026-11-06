@@ -10,7 +10,7 @@ from . import paths
 
 BEAUTY_DEFAULT = {
     "strength": 50, "texture": 35, "grain": 15, "skin_range": 50, "unify": 20,
-    "size": 150, "feather": 20, "neck": 0, "stabilize": 50, "skin_ref": None, "features": True,
+    "size": 165, "feather": 20, "neck": 40, "stabilize": 50, "skin_ref": None, "features": True,
 }
 BLUR_DEFAULT = {
     "kind": "blur", "strength": 70, "margin": 160, "feather": 10, "stabilize": 50,

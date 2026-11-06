@@ -14,7 +14,7 @@ import numpy as np
 
 from . import ff, models, paths
 
-VERSION = 3
+VERSION = 4      # v4: 뷰티 다중 얼굴(lm 형상 (N,K,468,2))
 LOW_SCORE = 0.3          # 분석 때 낮게 저장 → 민감도로 후처리
 
 
@@ -65,11 +65,32 @@ def beauty_frame(rgb, prev):
     return (pts2, conf2) if conf2 > 0.5 else (pts, conf)
 
 
+BEAUTY_K = 8          # 뷰티 동시 얼굴 최대 수
+_B_HOLD = 12          # 잠깐 놓친 슬롯을 몇 프레임까지 ROI 로 쫓을지
+
+
+def _pts_box(pts):
+    o = pts[models.FACE_OVAL]
+    x0, y0 = o[:, 0].min(), o[:, 1].min()
+    x1, y1 = o[:, 0].max(), o[:, 1].max()
+    return x0, y0, x1, y1
+
+
+def _pts_center(pts):
+    o = pts[models.FACE_OVAL]
+    return float(o[:, 0].mean()), float(o[:, 1].mean())
+
+
 def analyze_beauty(info: ff.Info, progress=None, cancel=None, hw=False):
+    """여러 얼굴을 추적해 각 슬롯별 랜드마크를 저장. lm 형상 (N, K, 468, 2)."""
     n = max(1, info.frames)
-    lm = np.full((n, 468, 2), np.nan, np.float32)
+    K = BEAUTY_K
+    mesh = models.mesh()
+    det = models.detector()
+    lm = np.full((n, K, 468, 2), np.nan, np.float32)
     r = ff.Reader(info, 0, 8, hw=hw)
-    prev = None
+    prev = [None] * K          # 슬롯별 직전 랜드마크(추적 ROI 용)
+    miss = [0] * K             # 슬롯별 연속 놓친 프레임 수
     i = 0
     try:
         while True:
@@ -79,12 +100,41 @@ def analyze_beauty(info: ff.Info, progress=None, cancel=None, hw=False):
             if fr is None:
                 break
             if i >= n:
-                lm = np.concatenate([lm, np.full((n, 468, 2), np.nan, np.float32)])
+                lm = np.concatenate([lm, np.full((n, K, 468, 2), np.nan, np.float32)])
                 n *= 2
-            pts, _ = beauty_frame(fr, prev)
-            if pts is not None:
-                lm[i] = pts
-            prev = pts
+            cur = [None] * K
+            boxes = []          # 이미 이 프레임에서 잡은 얼굴 박스(중복 방지)
+            # 1) 기존 슬롯을 직전 랜드마크 ROI 로 추적(안정적·빠름)
+            for k in range(K):
+                if prev[k] is None:
+                    continue
+                pts, conf = mesh.run(fr, *models.roi_from_landmarks(prev[k]))
+                if conf > 0.5:
+                    cur[k] = pts
+                    boxes.append(_pts_box(pts))
+            # 2) 새 얼굴 검출 → 빈 슬롯에 배정(이미 추적 중인 영역은 건너뜀)
+            for d in sorted(det.detect(fr, 0.5), key=lambda d: -(d.box[2] - d.box[0])):
+                cx, cy = (d.box[0] + d.box[2]) / 2, (d.box[1] + d.box[3]) / 2
+                if any(bx0 <= cx <= bx1 and by0 <= cy <= by1 for bx0, by0, bx1, by1 in boxes):
+                    continue
+                slot = next((k for k in range(K) if cur[k] is None), None)
+                if slot is None:
+                    break
+                pts, conf = mesh.run(fr, *models.roi_from_det(d))
+                if conf < 0.5:
+                    continue
+                cur[slot] = pts
+                boxes.append(_pts_box(pts))
+            # 3) 슬롯 유지: 잡았으면 저장·리셋, 놓쳤으면 hold 동안 직전값으로 계속 추적 시도
+            for k in range(K):
+                if cur[k] is not None:
+                    lm[i, k] = cur[k]
+                    prev[k] = cur[k]
+                    miss[k] = 0
+                elif prev[k] is not None:
+                    miss[k] += 1
+                    if miss[k] > _B_HOLD:
+                        prev[k] = None
             i += 1
             if progress and i % 15 == 0:
                 progress(min(1.0, i / max(1, info.frames)))
@@ -94,7 +144,7 @@ def analyze_beauty(info: ff.Info, progress=None, cancel=None, hw=False):
         raise Cancelled()
     if i == 0:
         raise RuntimeError("프레임을 읽지 못했습니다")
-    return {"lm": lm[:i].astype(np.float16), "n": np.array(i)}
+    return {"lm": lm[:i].astype(np.float16), "n": np.array(i), "k": np.array(K)}
 
 
 # ------------------------------------------------------------ 군중(블러): 프레임별 검출
@@ -240,23 +290,27 @@ def stab_sigma(v):
 # ------------------------------------------------------------ 뷰티 트랙
 @dataclass
 class BeautyTrack:
-    lm: np.ndarray        # (N,468,2) 보정된 랜드마크 (없으면 NaN)
-    presence: np.ndarray  # (N,) 0~1 (페이드)
+    lm: np.ndarray        # (N,K,468,2) 슬롯별 보정 랜드마크 (없으면 NaN)
+    presence: np.ndarray  # (N,K) 0~1 (페이드)
     n: int
 
     def at(self, i):
-        if i < 0 or i >= self.n or self.presence[i] <= 0.001:
-            return None, 0.0
-        return self.lm[i], float(self.presence[i])
+        """반환 [(slot, pts, presence)] — 그 프레임에 있는 얼굴들."""
+        if i < 0 or i >= self.n:
+            return []
+        out = []
+        for k in range(self.lm.shape[1]):
+            if self.presence[i, k] > 0.001:
+                out.append((k, self.lm[i, k], float(self.presence[i, k])))
+        return out
 
 
-def beauty_track(z, params, hold=15) -> BeautyTrack:
-    lm = z["lm"].astype(np.float32)
-    n = lm.shape[0]
-    valid = ~np.isnan(lm[:, 0, 0])
-    # 짧은 공백은 앞뒤 값으로 보간
+def _track_one(lm_k, stabilize, hold):
+    """한 슬롯 (N,468,2) → (보정 랜드마크, presence)."""
+    n = lm_k.shape[0]
+    valid = ~np.isnan(lm_k[:, 0, 0])
     idx = np.where(valid)[0]
-    filled = lm.copy()
+    filled = lm_k.copy()
     if len(idx):
         gaps = np.diff(idx)
         for a, g in zip(idx[:-1], gaps):
@@ -264,15 +318,25 @@ def beauty_track(z, params, hold=15) -> BeautyTrack:
                 b = a + g
                 for t in range(1, g):
                     u = t / g
-                    filled[a + t] = lm[a] * (1 - u) + lm[b] * u
+                    filled[a + t] = lm_k[a] * (1 - u) + lm_k[b] * u
     v2 = ~np.isnan(filled[:, 0, 0])
-    sm = _smooth_series(np.nan_to_num(filled), v2, stab_sigma(params.get("stabilize", 50)))
+    sm = _smooth_series(np.nan_to_num(filled), v2, stab_sigma(stabilize))
     sm[~v2] = np.nan
-    # 존재(페이드 0.25초)
-    pres = v2.astype(np.float32)
-    k = np.ones(7, np.float32) / 7
-    pres = np.minimum(pres, np.convolve(pres, k, "same") * 1.0)
-    pres = np.clip(np.convolve(pres, k, "same"), 0, 1) * v2
+    ker = np.ones(7, np.float32) / 7
+    pres = np.clip(np.convolve(v2.astype(np.float32), ker, "same"), 0, 1) * v2
+    return sm, pres
+
+
+def beauty_track(z, params, hold=15) -> BeautyTrack:
+    lm = z["lm"].astype(np.float32)
+    if lm.ndim == 3:                         # 옛 캐시(단일 얼굴) 호환 → 슬롯축 추가
+        lm = lm[:, None, :, :]
+    n, K = lm.shape[0], lm.shape[1]
+    sm = np.full_like(lm, np.nan)
+    pres = np.zeros((n, K), np.float32)
+    stab = params.get("stabilize", 50)
+    for k in range(K):
+        sm[:, k], pres[:, k] = _track_one(lm[:, k], stab, hold)
     return BeautyTrack(sm, pres, n)
 
 

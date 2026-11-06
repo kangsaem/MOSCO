@@ -569,7 +569,9 @@ class MainWindow(QMainWindow):
             tr = self.state.track(s)
             n = tr.n
             if s.mode == "beauty":
-                cov = (tr.presence > 0).astype(np.int8)
+                pres = tr.presence
+                any_face = pres.max(axis=1) if pres.ndim == 2 else pres     # 슬롯 축 합치기(다중 얼굴)
+                cov = (any_face > 0).astype(np.int8)
             else:
                 cov = np.zeros(tr.n, np.int8)
                 for i, fs in enumerate(tr.frames):

@@ -97,6 +97,25 @@ def main():
     res = fx.beauty(frame, rb.items(10), sb.beauty, 10, want_keys=True)
     assert res.alpha.max() > 0.9
     print("beauty manual OK")
+
+    # 다중 얼굴 뷰티: 2개 얼굴 슬롯 → 자동 타원 2개
+    from mosco import models
+    N = 30
+    lm = np.full((N, 2, 468, 2), np.nan, np.float32)
+    ang = np.linspace(0, 2 * np.pi, len(models.FACE_OVAL), endpoint=False)
+    for cx, cy, slot in ((500, 400, 0), (1300, 500, 1)):
+        oval = np.stack([cx + 120 * np.cos(ang), cy + 160 * np.sin(ang)], 1).astype(np.float32)
+        for f in range(N):
+            lm[f, slot, :] = (cx, cy)                 # 전체 랜드마크 유효(0번 포함)
+            lm[f, slot, models.FACE_OVAL] = oval      # 윤곽만 타원으로
+    zb = {"lm": lm, "n": np.array(N), "k": np.array(2)}
+    sbm = Source("x.mov", "beauty")
+    trb = analyze.beauty_track(zb, sbm.beauty)
+    assert len(trb.at(15)) == 2, "두 얼굴 슬롯이 다 안 잡힘"
+    rbm = edits.Resolver(sbm, trb)
+    its = rbm.items(15)
+    assert len(its) == 2 and {it.tid for it in its} == {1, 2}, f"자동 타원 2개가 아님: {its}"
+    print("beauty multiface OK")
     print("EDITS OK")
 
 
