@@ -9,6 +9,26 @@ from PySide6.QtWidgets import (QButtonGroup, QHBoxLayout, QLabel, QLineEdit, QPu
 BTN = (76, 28)
 BTN_MAIN = (88, 32)
 
+
+def arrow_icon(w=34, h=18, color="#ffffff"):
+    """DTME식 두께 있는 오른쪽 블록 화살표(벡터). 문자표 글리프 대신 사용."""
+    from PySide6.QtCore import QPointF
+    from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap, QPolygonF
+    pm = QPixmap(w * 2, h * 2)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setPen(Qt.NoPen)
+    p.setBrush(QColor(color))
+    W, H = w * 2, h * 2
+    shaft_h, head_w = H * 0.46, W * 0.42
+    p.drawPolygon(QPolygonF([QPointF(0, (H - shaft_h) / 2), QPointF(W - head_w, (H - shaft_h) / 2),
+                             QPointF(W - head_w, 0), QPointF(W, H / 2), QPointF(W - head_w, H),
+                             QPointF(W - head_w, (H + shaft_h) / 2), QPointF(0, (H + shaft_h) / 2)]))
+    p.end()
+    pm.setDevicePixelRatio(2)
+    return QIcon(pm)
+
 QSS = """
 QWidget { font-family: 'Malgun Gothic', 'Noto Sans CJK KR', sans-serif; font-size: 12px; color: #e6e6e6; }
 /* 일반 버튼: QSS 그라데이션으로 볼록 베벨(위 밝고 아래 어두움)+위쪽 밝은 테두리.

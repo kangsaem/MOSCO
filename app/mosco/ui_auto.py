@@ -59,7 +59,8 @@ def _seg(opts, cur, on_change, lw=76, label=""):
     hb = QHBoxLayout(box)
     hb.setContentsMargins(0, 0, 0, 0)
     hb.setSpacing(0)
-    box.setStyleSheet("background:#2a2a2a;border:1px solid #555;border-radius:3px")
+    box.setStyleSheet("background:#2b2b2b;border:1px solid #555;border-radius:3px")
+    add_shadow(box)                       # DTME식 입체감
     grp = QButtonGroup(box)
     btns = {}
     for i, (k, t) in enumerate(opts):
@@ -67,8 +68,10 @@ def _seg(opts, cur, on_change, lw=76, label=""):
         b.setCheckable(True)
         b.setFixedHeight(28)
         b.setFocusPolicy(Qt.NoFocus)
-        b.setStyleSheet("QPushButton{background:#2a2a2a;border:none;color:#ddd;padding:0 14px}"
-                        "QPushButton:checked{background:#2f4f78;color:#fff}")
+        b.setStyleSheet(
+            "QPushButton{background:transparent;border:none;color:#ddd;padding:0 14px}"
+            "QPushButton:checked{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #3a5f8c,stop:1 #284a72);"
+            "color:#fff}")
         grp.addButton(b)
         hb.addWidget(b)
         btns[k] = b
@@ -199,6 +202,23 @@ class AutoDialog(QDialog):
         # 오른쪽 격자+값
         right = QVBoxLayout()
         right.setSpacing(10)
+        # 상단: 기존 보정 / 키프레임 (DTME 배치)
+        toprow = QHBoxLayout()
+        toprow.setSpacing(8)
+        w1, self.set_keep = _seg([("keep", "기존 보정 유지"), ("drop", "기존 보정 무시")],
+                                 "keep" if self.keep_existing else "drop", self._on_keep, label="")
+        toprow.addWidget(w1)
+        toprow.addStretch(1)
+        w2, self.set_keepk = _seg([("keys", "키프레임 유지"), ("autok", "키프레임 자동")],
+                                  "keys" if self.keep_keys else "autok", self._on_keepk, label="")
+        toprow.addWidget(w2)
+        topw = QWidget()
+        topw.setLayout(toprow)
+        right.addWidget(topw)
+        div0 = QFrame()
+        div0.setFrameShape(QFrame.HLine)
+        div0.setStyleSheet("color:#3a3a3a")
+        right.addWidget(div0)
         self.seg_work, self.set_work = _seg([("beauty", "뷰티"), ("blur", "블러")], "beauty",
                                             self._on_work, label="작업")
         right.addWidget(self.seg_work)
@@ -250,21 +270,6 @@ class AutoDialog(QDialog):
         self.pbar.setFixedHeight(6)
         self.pbar.setStyleSheet("background:#2a2a2a;border-radius:3px")
         root.addWidget(self.pbar)
-        exrow = QHBoxLayout()
-        exlb = QLabel("기존 값")
-        exlb.setFixedWidth(52)
-        exlb.setAlignment(Qt.AlignRight)
-        exrow.addWidget(exlb)
-        w1, self.set_keep = _seg([("keep", "기존 보정 유지"), ("drop", "기존 보정 무시")],
-                                 "keep" if self.keep_existing else "drop", self._on_keep, label="")
-        exrow.addWidget(w1)
-        w2, self.set_keepk = _seg([("keys", "키프레임 유지"), ("autok", "키프레임 자동")],
-                                  "keys" if self.keep_keys else "autok", self._on_keepk, label="")
-        exrow.addWidget(w2)
-        exrow.addStretch(1)
-        exw = QWidget()
-        exw.setLayout(exrow)
-        root.addWidget(exw)
         btmrow = QHBoxLayout()
         btmrow.addWidget(_b("취소", w=88, h=32, on=self.reject))
         btmrow.addStretch(1)

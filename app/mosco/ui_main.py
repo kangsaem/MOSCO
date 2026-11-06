@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QSize, QTimer
 from PySide6.QtGui import QAction, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QDialog, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QSplitter,
                                QToolBar, QVBoxLayout, QWidget)
@@ -20,7 +20,7 @@ from .state import AppState
 from .ui_monitor import EllipseLanes, Monitor, TimeBar, TimeRuler
 from .ui_panel import ControlPanel
 from .ui_side import VIDEO_EXT, RenderItem, RenderPanel, RenderSettings, SourceList
-from .ui_widgets import BTN_MAIN, QSS, btn
+from .ui_widgets import BTN_MAIN, QSS, arrow_icon, btn
 
 
 def confirm_save(parent, text="변경 내용을 저장할까요?") -> str:
@@ -296,11 +296,10 @@ class MainWindow(QMainWindow):
                              w=60, on_click=self.analyze_current)
         tr.addWidget(self.b_analyze)
         self.state.set_view_scale(1.0)              # 미리보기는 항상 100%(화질 선택창 없앰)
-        self.b_toqueue = btn("➜", "렌더 목록으로 보내기 (현재/선택 소스). 실제 렌더는 오른쪽 [렌더] 버튼",
+        self.b_toqueue = btn("", "렌더 목록으로 보내기 (현재/선택 소스). 실제 렌더는 오른쪽 [렌더] 버튼",
                              size=BTN_MAIN, w=88, red=True, on_click=self.queue_to_render)
-        _af = self.b_toqueue.font()
-        _af.setPointSize(16)
-        self.b_toqueue.setFont(_af)
+        self.b_toqueue.setIcon(arrow_icon())
+        self.b_toqueue.setIconSize(QSize(26, 14))
         tr.addWidget(self.b_toqueue)
         mid.addLayout(tr)
         self.status = QLabel("")
@@ -360,10 +359,7 @@ class MainWindow(QMainWindow):
         self.rpanel.on_rerender = self.rerender
         rv.addWidget(self.rpanel)
         split = QSplitter(Qt.Horizontal)
-        split.setHandleWidth(4)
-        split.setChildrenCollapsible(False)
-        split.setStyleSheet("QSplitter::handle{background:#2b2b2b}"
-                            "QSplitter::handle:hover{background:#4a4a4a}")
+        split.setChildrenCollapsible(False)       # 핸들은 Fusion 기본(그립) — DTME와 동일
         for wdg in (self.panel, midw, right):
             split.addWidget(wdg)
         split.setStretchFactor(0, 0)
