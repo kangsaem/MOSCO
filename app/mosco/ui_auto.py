@@ -12,19 +12,10 @@ from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QDialog, QFileDialog, QF
 
 from . import autodetect as ad
 from . import ff, jobs
-from .ui_widgets import add_shadow, btn
+from .ui_widgets import DragMove, add_shadow, btn, set_on, tone
 
-# 볼록 그라데이션(위 밝고 아래 어두움) — 일반 버튼의 Fusion 베벨과 톤 맞춤
-RED = ("background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #cf4535,stop:1 #b3321f);"
-       "border:none;color:#fff;font-weight:700")
-ORANGE = ("background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #e49440,stop:1 #cf7620);"
-          "border:none;color:#fff;font-weight:700")
-GREY = ("background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #d6d6d6,stop:1 #bababa);"
-        "border:none;color:#222;font-weight:700")
-ON = ("background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #3a5f8c,stop:1 #284a72);"
-      "border:none;color:#fff")
-AUTO_ON = "border:1px solid #f2c94c;color:#f2c94c;background:#3a3420"
-AUTO_OFF = "border:1px dashed #666;color:#bbb;background:#2e2e2e"
+# 버튼 색 이름 — 모양은 ui_widgets.QSS(DTME buttons.qss) 한 곳
+RED, ORANGE, GREY = "red", "orange", "light"
 
 
 def _b(text, w=0, h=28, style="", tip="", on=None):
@@ -34,7 +25,7 @@ def _b(text, w=0, h=28, style="", tip="", on=None):
         b.setFixedWidth(w)
     b.setFocusPolicy(Qt.NoFocus)
     if style:
-        b.setStyleSheet("QPushButton{%s;border-radius:3px;padding:0 10px}" % style)
+        tone(b, style)
     if tip:
         b.setToolTip(tip)
     if on:
@@ -58,20 +49,14 @@ def _seg(opts, cur, on_change, lw=76, label=""):
     box = QWidget()
     hb = QHBoxLayout(box)
     hb.setContentsMargins(0, 0, 0, 0)
-    hb.setSpacing(0)
-    box.setStyleSheet("background:#2b2b2b;border:1px solid #555;border-radius:3px")
-    add_shadow(box)                       # DTME식 입체감
+    hb.setSpacing(5)                      # DTME: 떨어진 둥근 버튼, 상자·그림자 없음
     grp = QButtonGroup(box)
     btns = {}
     for i, (k, t) in enumerate(opts):
         b = QPushButton(t)
         b.setCheckable(True)
-        b.setFixedHeight(28)
+        b.setFixedHeight(30)                  # DTME AUTO 창과 같은 높이
         b.setFocusPolicy(Qt.NoFocus)
-        b.setStyleSheet(
-            "QPushButton{background:transparent;border:none;color:#ddd;padding:0 14px}"
-            "QPushButton:checked{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #3a5f8c,stop:1 #284a72);"
-            "color:#fff}")
         grp.addButton(b)
         hb.addWidget(b)
         btns[k] = b
@@ -145,7 +130,7 @@ class ClipRow(QFrame):
         self.clicked.emit(self.idx, e.modifiers())
 
 
-class AutoDialog(QDialog):
+class AutoDialog(DragMove, QDialog):
     def __init__(self, parent, state):
         super().__init__(parent)
         self.state = state
@@ -212,6 +197,9 @@ class AutoDialog(QDialog):
         w2, self.set_keepk = _seg([("keys", "키프레임 유지"), ("autok", "키프레임 자동")],
                                   "keys" if self.keep_keys else "autok", self._on_keepk, label="")
         toprow.addWidget(w2)
+        for wx in (w1, w2):                   # DTME: [기존 보정 유지|무시] [키프레임 유지|자동] 최소 폭 100
+            for bx in wx.findChildren(QPushButton):
+                bx.setMinimumWidth(100)
         topw = QWidget()
         topw.setLayout(toprow)
         right.addWidget(topw)
@@ -568,7 +556,7 @@ class AutoDialog(QDialog):
 
 
 # ------------------------------------------------------------ 샘플 창
-class SampleDialog(QDialog):
+class SampleDialog(DragMove, QDialog):
     def __init__(self, parent, state, srcs, out_dir, name):
         super().__init__(parent)
         self.state = state
@@ -628,13 +616,14 @@ class SampleDialog(QDialog):
         root.addWidget(field("이름", self.name_edit))
         trow = QHBoxLayout()
         trow.setSpacing(6)
-        self.t_date = _b("날짜시간", w=76, on=self._toggle)
+        self.t_date = _b("날짜시간", w=76, on=self._toggle)     # DTME 처럼 뺌(숨김, 값은 항상 끔)
         self.t_date.setCheckable(True)
-        self.t_date.setChecked(self.opts.get("date", False))
+        self.t_date.setChecked(False)
+        self.t_date.hide()
+        self.opts["date"] = False
         self.t_num = _b("번호", w=64, on=self._toggle)
         self.t_num.setCheckable(True)
         self.t_num.setChecked(self.opts["num"])
-        trow.addWidget(self.t_date)
         trow.addWidget(self.t_num)
         trow.addStretch(1)
         root.addWidget(field("붙이기", trow))
@@ -671,8 +660,7 @@ class SampleDialog(QDialog):
         self.opts["num"] = self.t_num.isChecked()
         self.opts["date"] = self.t_date.isChecked()
         for b, on in ((self.t_num, self.opts["num"]), (self.t_date, self.opts["date"])):
-            b.setStyleSheet("QPushButton{%s;border-radius:3px;padding:0 10px}" % (ON if on else
-                            "background:#3a3a3a;border:1px solid #555;color:#e6e6e6"))
+            set_on(b, on)                                    # 켜짐 = 파랑(QSS)
         self._preview()
 
     def _preview(self):

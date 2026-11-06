@@ -26,14 +26,13 @@ class ZoomBox(QWidget):
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(2)
-        st = ("QPushButton{background:rgba(20,20,20,200);border:1px solid #555;border-radius:3px;"
-              "color:#ddd;font-size:11px;padding:0}")
+        from .ui_widgets import tone
         self.minus = QPushButton("−")
         self.pct = QPushButton("맞춤")
         self.plus = QPushButton("+")
         for b, w in ((self.minus, 24), (self.pct, 52), (self.plus, 24)):
             b.setFixedSize(w, 22)
-            b.setStyleSheet(st)
+            tone(b, "overlay")                    # 모니터 위 = 반투명 입체감(DTME)
             b.setFocusPolicy(Qt.NoFocus)
             lay.addWidget(b)
         self.minus.setToolTip("축소 (-)")

@@ -7,11 +7,11 @@ from pathlib import Path
 from PySide6.QtCore import QRect, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout,
-                               QHBoxLayout, QLineEdit, QListWidget, QListWidgetItem, QMenu, QStyle,
+                               QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMenu, QStyle,
                                QStyledItemDelegate, QVBoxLayout, QWidget)
 
 from . import ff
-from .ui_widgets import BTN_MAIN, btn
+from .ui_widgets import BTN_MAIN, DragMove, btn, tone
 
 VIDEO_EXT = {".mov", ".mp4", ".mxf", ".mts", ".m2ts", ".avi", ".mkv"}
 MODE_TXT = {"beauty": "뷰티", "blur": "블러"}
@@ -263,13 +263,19 @@ class RenderPanel(QWidget):
         super().keyPressEvent(e)
 
 
-class RenderSettings(QDialog):
+class RenderSettings(DragMove, QDialog):
     def __init__(self, parent, rs: dict):
-        super().__init__(parent)
+        super().__init__(parent, Qt.Dialog | Qt.FramelessWindowHint)     # DTME 렌더 설정 창과 같은 모양
         self.setWindowTitle("렌더 설정")
+        self.setObjectName("RenderSet")
+        self.setStyleSheet("#RenderSet{background:#262626; border:1px solid #555; border-radius:6px;}")
         self.setMinimumWidth(500)
         self.rs = dict(rs)
         f = QFormLayout(self)
+        f.setContentsMargins(16, 12, 16, 14)
+        title = QLabel("렌더 설정")
+        title.setStyleSheet("font-weight:700; color:#e0e0e0;")
+        f.addRow(title)
         f.setLabelAlignment(Qt.AlignRight)
         f.setHorizontalSpacing(10)
         f.setVerticalSpacing(10)
@@ -320,8 +326,8 @@ class RenderSettings(QDialog):
         f.addRow("검출 장치", self.gpu)
         r = QHBoxLayout()
         r.addStretch(1)
-        r.addWidget(btn("확인", on_click=self.accept))
         r.addWidget(btn("취소", on_click=self.reject))
+        r.addWidget(tone(btn("확인", on_click=self.accept), "blue"))      # DTME: 확인 = 파랑, 오른쪽
         f.addRow(r)
 
     def _browse(self):

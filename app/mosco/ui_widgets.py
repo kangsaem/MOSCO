@@ -30,26 +30,18 @@ def arrow_icon(w=34, h=18, color="#ffffff"):
     return QIcon(pm)
 
 QSS = """
-QWidget { font-family: 'Malgun Gothic', 'Noto Sans CJK KR', sans-serif; font-size: 12px; color: #e6e6e6; }
-/* 일반 버튼: QSS 그라데이션으로 볼록 베벨(위 밝고 아래 어두움)+위쪽 밝은 테두리.
-   Fusion 네이티브 렌더에 의존하지 않음 — 윈도우에서 네이티브+그림자 조합이 불안정했음. */
-QPushButton, QToolButton { background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 #3b3b3b, stop:1 #2b2b2b);
-    border: 1px solid #555; border-top-color: #6a6a6a; border-bottom-color: #3a3a3a; border-radius: 3px; padding: 0 6px; }
-QPushButton:hover, QToolButton:hover { background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 #474747, stop:1 #353535); }
-QPushButton:pressed, QToolButton:pressed { background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 #2a2a2a, stop:1 #343434); }
-QPushButton:disabled, QToolButton:disabled { color: #777; background: #2a2a2a; border-color: #444; }
-QPushButton[on="true"], QToolButton[on="true"] { background: #5a4a1a; border: 1px solid #f2c94c; border-radius: 3px; color: #f2c94c; }
-QPushButton[red="true"] { background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 #cf4535, stop:1 #b3321f); border: none; border-radius: 3px; color: #fff; font-weight: 700; }
-QPushButton[red="true"]:hover { background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 #e05345, stop:1 #c53a28); }
-QPushButton[red="true"]:disabled { background: #7a2a22; color: #ddd; }
-QPushButton[seg="true"] { background: #2a2a2a; border: none; border-radius: 0; }
-QPushButton[seg="true"]:checked { background: #2f4f78; color: #fff; }
+QWidget { color: #e6e6e6; }
+/* ---- 버튼(DTME 와 같은 모양: 그림자 없음 · 버튼 안 입체감 · 켜짐 파랑) — design/gen/make_mosco_qss.py 로 만듦 ---- */
+QPushButton, QToolButton{color:#e6e6e6;  border:1px solid #1c1c1c; border-top-color:#5c5c5c; border-bottom-color:#0e0e0e; border-radius:3px; background:qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0.0 #4e4e4e, stop:0.48 #3f3f3f, stop:0.52 #383838, stop:1.0 #282828); padding:0 6px;}QPushButton:hover, QToolButton:hover{background:qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0.0 #585858, stop:0.48 #424242, stop:0.52 #383838, stop:1.0 #323232);}QPushButton:pressed, QToolButton:pressed{background:qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0.0 #262626, stop:0.48 #323232, stop:0.52 #383838, stop:1.0 #434343); border-top-color:#0e0e0e; border-bottom-color:#4e4e4e;}QPushButton:disabled, QToolButton:disabled{color:#afafaf; background:qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0.0 #393939, stop:0.48 #393939, stop:0.52 #393939, stop:1.0 #212121); border-color:#1d1d1d;}
 QToolButton::menu-indicator { image: none; }
-QComboBox { background: #2a2a2a; border: 1px solid #4a4a4a; border-radius: 3px; padding: 2px 8px; min-height: 20px; }
-QComboBox QAbstractItemView { background: #262626; selection-background-color: #2f4f78; }
-QSlider::groove:horizontal { height: 4px; background: #3c3c3c; border-radius: 2px; }
-QSlider::sub-page:horizontal { background: #4f7fb8; border-radius: 2px; }
-QSlider::handle:horizontal { width: 10px; margin: -5px 0; background: #5a5a5a; border: 1px solid #777; border-radius: 2px; }
+QPushButton[red="true"], QPushButton[tone="red"]{color:#ffffff; font-weight:700; border:1px solid #a41d0f; border-top-color:#e45d4f; border-bottom-color:#960f01; border-radius:3px; background:qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0.0 #d64f41, stop:0.48 #c74032, stop:0.52 #c0392b, stop:1.0 #b0291b); }QPushButton[red="true"]:hover, QPushButton[tone="red"]:hover{background:qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0.0 #e0594b, stop:0.48 #ca4335, stop:0.52 #c0392b, stop:1.0 #ba3325);}QPushButton[red="true"]:pressed, QPushButton[tone="red"]:pressed{background:qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0.0 #ae2719, stop:0.48 #ba3325, stop:0.52 #c0392b, stop:1.0 #cb4436); border-top-color:#960f01; border-bottom-color:#d64f41;}QPushButton[red="true"]:disabled, QPushButton[tone="red"]:disabled{color:#b9b9b9; background:qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0.0 #763a33, stop:0.48 #763a33, stop:0.52 #763a33, stop:1.0 #5e221b); border-color:#5a1e17;}
+QPushButton[tone="orange"]{color:#ffffff; font-weight:700; border:1px solid #bd660f; border-top-color:#fda64f; border-bottom-color:#af5801; border-radius:3px; background:qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0.0 #ef9841, stop:0.48 #e08932, stop:0.52 #d9822b, stop:1.0 #c9721b); }QPushButton[tone="orange"]:hover{background:qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0.0 #f9a24b, stop:0.48 #e38c35, stop:0.52 #d9822b, stop:1.0 #d37c25);}QPushButton[tone="orange"]:pressed{background:qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0.0 #c77019, stop:0.48 #d37c25, stop:0.52 #d9822b, stop:1.0 #e48d36); border-top-color:#af5801; border-bottom-color:#ef9841;}QPushButton[tone="orange"]:disabled{color:#b9b9b9; background:qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0.0 #825a33, stop:0.48 #825a33, stop:0.52 #825a33, stop:1.0 #6a421b); border-color:#663e17;}
+QPushButton[tone="light"]{color:#111111; font-weight:700; border:1px solid #adadad; border-top-color:#e1e1e1; border-bottom-color:#9f9f9f; border-radius:3px; background:qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0.0 #d3d3d3, stop:0.48 #cccccc, stop:0.52 #c9c9c9, stop:1.0 #b9b9b9); }QPushButton[tone="light"]:hover{background:qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0.0 #dddddd, stop:0.48 #cfcfcf, stop:0.52 #c9c9c9, stop:1.0 #c3c3c3);}QPushButton[tone="light"]:pressed{background:qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0.0 #b7b7b7, stop:0.48 #c3c3c3, stop:0.52 #c9c9c9, stop:1.0 #cecece); border-top-color:#9f9f9f; border-bottom-color:#d3d3d3;}QPushButton[tone="light"]:disabled{color:#5a5a5a; background:qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0.0 #7a7a7a, stop:0.48 #7a7a7a, stop:0.52 #7a7a7a, stop:1.0 #626262); border-color:#5e5e5e;}
+QPushButton[tone="blue"]{color:#ffffff; font-weight:700; border:1px solid #13335c; border-top-color:#53739c; border-bottom-color:#05254e; border-radius:3px; background:qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0.0 #45658e, stop:0.48 #36567f, stop:0.52 #2f4f78, stop:1.0 #1f3f68); }QPushButton[tone="blue"]:hover{background:qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0.0 #4f6f98, stop:0.48 #395982, stop:0.52 #2f4f78, stop:1.0 #294972);}QPushButton[tone="blue"]:pressed{background:qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0.0 #1d3d66, stop:0.48 #294972, stop:0.52 #2f4f78, stop:1.0 #3a5a83); border-top-color:#05254e; border-bottom-color:#45658e;}QPushButton[tone="blue"]:disabled{color:#b9b9b9; background:qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0.0 #354356, stop:0.48 #354356, stop:0.52 #354356, stop:1.0 #1d2b3e); border-color:#19273a;}
+QPushButton[tone="overlay"]{color:#dddddd;  border:1px solid rgba(10,10,10,225); border-top-color:rgba(74,74,74,225); border-bottom-color:rgba(0,0,0,225); border-radius:3px; background:qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0.0 rgba(60,60,60,225), stop:0.48 rgba(45,45,45,225), stop:0.52 rgba(38,38,38,225), stop:1.0 rgba(22,22,22,225)); font-size:11px; padding:0;}QPushButton[tone="overlay"]:hover{background:qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0.0 rgba(70,70,70,225), stop:0.48 rgba(48,48,48,225), stop:0.52 rgba(38,38,38,225), stop:1.0 rgba(32,32,32,225));}QPushButton[tone="overlay"]:pressed{background:qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0.0 rgba(20,20,20,225), stop:0.48 rgba(32,32,32,225), stop:0.52 rgba(38,38,38,225), stop:1.0 rgba(49,49,49,225)); border-top-color:rgba(0,0,0,225); border-bottom-color:rgba(60,60,60,225);}QPushButton[tone="overlay"]:disabled{color:#ababab; background:qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0.0 rgba(49,49,49,225), stop:0.48 rgba(49,49,49,225), stop:0.52 rgba(49,49,49,225), stop:1.0 rgba(25,25,25,225)); border-color:rgba(21,21,21,225);}
+QPushButton[head="true"]{color:#e0e0e0; font-weight:700; border:1px solid #0f0f0f; border-top-color:#4f4f4f; border-bottom-color:#010101; border-radius:3px; background:qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0.0 #414141, stop:0.48 #323232, stop:0.52 #2b2b2b, stop:1.0 #1b1b1b); text-align:left; padding-left:8px;}QPushButton[head="true"]:hover{background:qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0.0 #4b4b4b, stop:0.48 #353535, stop:0.52 #2b2b2b, stop:1.0 #252525);}QPushButton[head="true"]:pressed{background:qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0.0 #191919, stop:0.48 #252525, stop:0.52 #2b2b2b, stop:1.0 #363636); border-top-color:#010101; border-bottom-color:#414141;}QPushButton[head="true"]:disabled{color:#acacac; background:qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0.0 #333333, stop:0.48 #333333, stop:0.52 #333333, stop:1.0 #1b1b1b); border-color:#171717;}
+QPushButton:checked, QPushButton[on="true"], QToolButton:checked, QToolButton[on="true"]{color:#ffffff;  border:1px solid #4a8fe0; border-top-color:#68adfe; border-radius:3px; background:qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0.0 #45658e, stop:0.48 #36567f, stop:0.52 #2f4f78, stop:1.0 #1f3f68); }QPushButton:checked:hover, QPushButton[on="true"]:hover, QToolButton:checked:hover, QToolButton[on="true"]:hover{background:qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0.0 #4f6f98, stop:0.48 #395982, stop:0.52 #2f4f78, stop:1.0 #294972);}QPushButton:checked:pressed, QPushButton[on="true"]:pressed, QToolButton:checked:pressed, QToolButton[on="true"]:pressed{background:qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0.0 #1d3d66, stop:0.48 #294972, stop:0.52 #2f4f78, stop:1.0 #3a5a83);}QPushButton:checked:disabled, QPushButton[on="true"]:disabled, QToolButton:checked:disabled, QToolButton[on="true"]:disabled{color:#b9b9b9; background:qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0.0 #354356, stop:0.48 #354356, stop:0.52 #354356, stop:1.0 #1d2b3e); border-color:#19273a;}
+/* 콤보·슬라이더 = Qt 기본(Fusion) + 어두운 팔레트 — DTME 와 같음 */
 QLineEdit { background: #111; border: 1px solid #4a4a4a; border-radius: 2px; padding: 1px 4px; }
 QLineEdit[val="true"] { background: transparent; border: 1px solid transparent; }
 QLineEdit[val="true"]:focus { background: #111; border-color: #4a8fe0; }
@@ -64,14 +56,8 @@ QStatusBar { background: #1c1c1c; }
 
 
 def add_shadow(w, blur=10, dy=2, alpha=170):
-    """DTME 식 입체감: 버튼 아래로 부드러운 그림자. (위젯마다 효과 1개 필요 → 공유 불가)"""
-    from PySide6.QtGui import QColor
-    from PySide6.QtWidgets import QGraphicsDropShadowEffect
-    e = QGraphicsDropShadowEffect(w)
-    e.setBlurRadius(blur)
-    e.setOffset(0, dy)
-    e.setColor(QColor(0, 0, 0, alpha))
-    w.setGraphicsEffect(e)
+    """그림자 없음(DTME v0.16.5 기준: 버튼 아래 그림자 없음 · 입체감은 버튼 안 QSS 그라데이션).
+    부르는 곳은 그대로 두고 아무것도 하지 않음(윈도우 지뢰였던 드롭섀도도 이걸로 사라짐)."""
     return w
 
 
@@ -90,6 +76,37 @@ def btn(text, tip="", size=BTN, red=False, w=None, on_click=None, shadow=True) -
     return b
 
 
+class DragMove:
+    """테두리 없는 창: 빈 바탕을 잡고 끌면 창이 움직임(DTME v0.16.3). 버튼·목록·입력란 위는 원래 동작."""
+    _drag_off = None
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self._drag_off = e.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            e.accept()
+            return
+        super().mousePressEvent(e)
+
+    def mouseMoveEvent(self, e):
+        if self._drag_off is not None and e.buttons() & Qt.LeftButton:
+            self.move(e.globalPosition().toPoint() - self._drag_off)
+            e.accept()
+            return
+        super().mouseMoveEvent(e)
+
+    def mouseReleaseEvent(self, e):
+        self._drag_off = None
+        super().mouseReleaseEvent(e)
+
+
+def tone(b, name: str):
+    """버튼 색 이름(QSS [tone=…]: red · orange · light · blue · overlay). 크기는 그대로."""
+    b.setProperty("tone", name or None)
+    b.style().unpolish(b)
+    b.style().polish(b)
+    return b
+
+
 def set_on(b, on: bool):
     b.setProperty("on", bool(on))
     b.style().unpolish(b)
@@ -97,7 +114,7 @@ def set_on(b, on: bool):
 
 
 class Toggle(QPushButton):
-    """켜짐 = 노란색."""
+    """켜짐 = 파랑(DTME 기준, QSS [on="true"])."""
     toggled2 = Signal(bool)
 
     def __init__(self, text, w=60, tip=""):
@@ -123,7 +140,7 @@ class Seg(QWidget):
         super().__init__()
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(0)
+        lay.setSpacing(5)                     # DTME: 떨어진 둥근 버튼(이어 붙인 직각 아님)
         self.group = QButtonGroup(self)
         self.group.setExclusive(True)
         self.btns = {}
@@ -230,8 +247,7 @@ class Section(QWidget):
         lay.setSpacing(6)
         self.head = QPushButton(f"▾  {title}")
         self.head.setFixedHeight(22)
-        self.head.setStyleSheet("QPushButton{background:#2b2b2b;border:none;border-radius:3px;text-align:left;"
-                                "font-weight:700;padding-left:8px;color:#e0e0e0}")
+        self.head.setProperty("head", True)        # 묶음 머리 = 입체감 + 왼쪽 정렬(QSS [head="true"])
         self.head.setFocusPolicy(Qt.NoFocus)
         self.head.clicked.connect(self.toggle)
         self.body = QWidget()

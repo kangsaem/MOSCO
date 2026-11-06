@@ -235,8 +235,7 @@ class MainWindow(QMainWindow):
         tb = QToolBar("main")
         tb.setMovable(False)
         tb.setStyleSheet("QToolBar{spacing:6px;padding:3px;background:#232323;border-bottom:1px solid #333}"
-                         "QToolButton{padding:4px 12px;background:transparent;border:none}"
-                         "QToolButton:hover{background:#333}")
+                         "QToolButton{padding:4px 12px}")        # 맨 위 줄도 입체감(DTME)
         self.addToolBar(tb)
         a = QAction("새 프로젝트", self)
         a.triggered.connect(self.new_project)
@@ -290,6 +289,9 @@ class MainWindow(QMainWindow):
         self.tc = QLabel("00:00:00;00")
         self.tc.setStyleSheet("background:#000;color:#e8e8e8;font:300 14px Consolas,monospace;padding:4px 10px;"
                               "border-radius:2px;margin-left:10px")
+        from PySide6.QtGui import QFont, QFontMetrics
+        _f = QFont("Consolas"); _f.setStyleHint(QFont.Monospace); _f.setPixelSize(14)
+        self.tc.setMinimumWidth(QFontMetrics(_f).horizontalAdvance("00:00:00;00") + 34)   # 글자 + 여백 20 + 왼쪽 10 → 잘리지 않게(DTME 처럼 다 보임)
         tr.addWidget(self.tc)
         tr.addStretch(1)
         self.b_analyze = btn("분석", "이 클립을 분석(얼굴·트래킹). 누르면 타원·검수가 정확해지고 재생 결과도 정확해집니다",
@@ -319,10 +321,6 @@ class MainWindow(QMainWindow):
         arow.addStretch(1)
         self.b_auto = btn("AUTO", "여러 클립을 장면 인식해 한 번에 보정 (AUTO)", size=BTN_MAIN, red=True, w=88,
                           on_click=self.open_auto)
-        self.b_auto.setStyleSheet(
-            "QPushButton{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #cf4535,stop:1 #b3321f);"
-            "border:none;color:#fff;font-weight:700;border-radius:3px;letter-spacing:1px}"
-            "QPushButton:hover{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #e05345,stop:1 #c53a28)}")
         arow.addWidget(self.b_auto)
         arow.addStretch(1)
         rv.addLayout(arow)
