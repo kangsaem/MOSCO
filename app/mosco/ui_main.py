@@ -652,6 +652,9 @@ class MainWindow(QMainWindow):
             self.update_status()
 
     def on_params(self):
+        s = self.state.source()
+        if s is not None and (s.path, s.mode) in self.state.an and self.state.analysis(s) is None:
+            self.state.ensure_analysis(s)      # 블러 [최소 크기]를 분석 하한보다 낮춤 → 다시 분석
         self._bar()
         self._sel_refresh()
         self._overlay_from_track(self.f)
@@ -966,6 +969,13 @@ class MainWindow(QMainWindow):
         self.rpanel.refresh()
 
     def _start_render(self, it: RenderItem):
+        # v0.7.4: 렌더 차례를 기다리는 동안 분석을 미리(분석 풀 3 — 뷰티 분석은 코어를 조금만 씀).
+        # 렌더 쪽 analyze() 는 같은 분석이 돌고 있으면 기다렸다가 캐시를 쓴다(중복 분석 없음).
+        live = next((x for x in self.state.project.sources if x.path == it.src.path and x.mode == it.src.mode), None)
+        if live is not None and analyze.level_for(live.mode, live.params()) == analyze.level_for(it.src.mode,
+                                                                                                    it.src.params()):
+            self.state.ensure_analysis(live)
+
         def fn(prog, cancel):
             it.stats = {}
             return do_render(it.src, it.rs, it.out_dir, prog, cancel, stats=it.stats)

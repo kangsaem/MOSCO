@@ -732,6 +732,9 @@ class AutoDialog(DragMove, QDialog):
             if it is not None:
                 c["kind"] = "render"
                 c["prog"] = it.p if it.state in ("대기", "진행") else None
+                an = self.state.an.get((it.src.path, it.src.mode))
+                if c["prog"] is not None and an and an.get("state") == "run" and (an.get("p") or 0) > 0:
+                    c["kind"], c["prog"] = "analyze", an["p"]     # 렌더 차례 전 미리 분석 중 = 청록
         n = len(self._renders)
         frac = sum(1.0 if it.state in ("완료", "오류", "취소") else it.p for it in self._renders) / n
         self._set_bar(frac, "render")

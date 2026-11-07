@@ -117,7 +117,7 @@ def render_samples(src, info: ff.Info, opts: dict, progress=None, cancel=None):
     n = max(1, info.frames)
     idxs = [int(round((k + 0.5) * n / count)) for k in range(count)]
     idxs = [min(n - 1, max(0, i)) for i in idxs]
-    z = analyze.load(info, src.mode)
+    z = analyze.load(info, src.mode, analyze.level_for(src.mode, src.params()))
     track = make_track(src, z, {}) if z is not None else None
     resolver = edits.Resolver(src, track)
     p16 = opts.get("fmt") == "png16"

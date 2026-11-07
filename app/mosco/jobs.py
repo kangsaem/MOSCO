@@ -74,7 +74,7 @@ def make_pool(n: int) -> QThreadPool:
 
 
 PROBE_POOL = make_pool(4)     # ffprobe
-ANALYZE_POOL = make_pool(1)   # 분석(내부에서 여러 스레드)
+ANALYZE_POOL = make_pool(3)   # 분석·트랙. 뷰티 분석은 순차라 여러 클립 동시(블러는 analyze 안에서 한 번에 하나)
 
 PREVIEW_POOL = make_pool(4)
 

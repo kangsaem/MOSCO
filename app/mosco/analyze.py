@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import threading
 from dataclasses import dataclass
 
 import cv2
@@ -28,14 +29,55 @@ def _key(info: ff.Info, mode: str) -> str:
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
 
 
-def cache_file(info: ff.Info, mode: str):
+SMALL_MIN = 12           # 블러 분석 기본 하한(작은 얼굴 MTCNN 최소 px)
+
+
+def level_for(mode: str, params: dict) -> int:
+    """분석 '하한'(v0.7.4). 블러: [최소 크기]보다 작은 얼굴은 트랙에서 어차피 버리므로
+    그보다 작은 얼굴은 분석에서 찾지 않는다(MTCNN 이 분석 시간의 대부분). 뷰티 = 0(해당 없음)."""
+    if mode != "blur":
+        return 0
+    try:
+        ms = float(params.get("min_size", SMALL_MIN))
+    except (TypeError, ValueError):
+        ms = SMALL_MIN
+    return max(SMALL_MIN, int(ms * 0.85))        # 상자 크기 오차 여유 15%
+
+
+def cache_file(info: ff.Info, mode: str, level: int = 0):
     d = paths.cache_dir() / "analysis"
     d.mkdir(exist_ok=True)
-    return d / f"{_key(info, mode)}.npz"
+    suf = f"_L{level}" if mode == "blur" and level > SMALL_MIN else ""
+    return d / f"{_key(info, mode)}{suf}.npz"
 
 
-def load(info: ff.Info, mode: str):
-    f = cache_file(info, mode)
+def _candidates(info: ff.Info, mode: str, level: int):
+    """쓸 수 있는 캐시 파일: 하한이 요구값 이하(더 작은 얼굴까지 찾은 것)면 그대로 써도 된다."""
+    base = cache_file(info, mode)
+    out = [base]
+    if mode == "blur":
+        lv = []
+        for f in base.parent.glob(f"{base.stem}_L*.npz"):
+            try:
+                L = int(f.stem.rsplit("_L", 1)[1])
+            except ValueError:
+                continue
+            if L <= level:
+                lv.append((L, f))
+        out += [f for _, f in sorted(lv, reverse=True)]
+    return out
+
+
+def load(info: ff.Info, mode: str, level: int = 0):
+    level = max(SMALL_MIN, level) if mode == "blur" else 0
+    for f in _candidates(info, mode, level):
+        z = _load_file(f)
+        if z is not None:
+            return z
+    return None
+
+
+def _load_file(f):
     if not f.exists():
         return None
     try:
@@ -67,6 +109,7 @@ def beauty_frame(rgb, prev):
 
 BEAUTY_K = 8          # 뷰티 동시 얼굴 최대 수
 _B_HOLD = 12          # 잠깐 놓친 슬롯을 몇 프레임까지 ROI 로 쫓을지
+DET_EVERY = 10        # 추적이 다 잘 될 때 새 얼굴 검출 간격(프레임)
 
 
 def _pts_box(pts):
@@ -91,6 +134,7 @@ def analyze_beauty(info: ff.Info, progress=None, cancel=None, hw=False):
     r = ff.Reader(info, 0, 8, hw=hw)
     prev = [None] * K          # 슬롯별 직전 랜드마크(추적 ROI 용)
     miss = [0] * K             # 슬롯별 연속 놓친 프레임 수
+    last_det = -10 ** 9
     i = 0
     try:
         while True:
@@ -113,7 +157,16 @@ def analyze_beauty(info: ff.Info, progress=None, cancel=None, hw=False):
                     cur[k] = pts
                     boxes.append(_pts_box(pts))
             # 2) 새 얼굴 검출 → 빈 슬롯에 배정(이미 추적 중인 영역은 건너뜀)
-            for d in sorted(det.detect(fr, 0.5), key=lambda d: -(d.box[2] - d.box[0])):
+            #    v0.7.4: 추적이 다 잘 되는 동안은 DET_EVERY 프레임마다만(검출이 추적보다 2배 느림).
+            #    얼굴이 없거나 하나라도 놓치면 매 프레임 검출.
+            tracking = any(p is not None for p in prev)
+            lost = any(prev[k] is not None and cur[k] is None for k in range(K))
+            if tracking and not lost and i - last_det < DET_EVERY:
+                found = []
+            else:
+                found = det.detect(fr, 0.5)
+                last_det = i
+            for d in sorted(found, key=lambda d: -(d.box[2] - d.box[0])):
                 cx, cy = (d.box[0] + d.box[2]) / 2, (d.box[1] + d.box[3]) / 2
                 if any(bx0 <= cx <= bx1 and by0 <= cy <= by1 for bx0, by0, bx1, by1 in boxes):
                     continue
@@ -172,7 +225,7 @@ def _nms_rows(rows, thr=0.4):
     return [rows[i] for i in keep]
 
 
-def blur_frame(rgb, small=True, body=True):
+def blur_frame(rgb, small=True, body=True, small_min=SMALL_MIN):
     """한 프레임: 얼굴(BlazeFace 타일) + 작은 얼굴(MTCNN) + 몸→머리(NanoDet).
     반환 행: x0,y0,x1,y1,score,kind,hist(16)  — 상자는 '얼굴 상자' 기준(몸에서 추정한 머리도 같은 기준으로 환산)."""
     H, W = rgb.shape[:2]
@@ -183,8 +236,8 @@ def blur_frame(rgb, small=True, body=True):
             if conf < 0.05:
                 continue
         rows.append([*d.box, d.score, KIND_FACE])
-    if small:
-        for x0, y0, x1, y1, sc in models.small_detector().detect(rgb, 12, 64):
+    if small and small_min < 64:       # 작은 얼굴: [최소 크기] 아래는 안 찾음(분석 하한)
+        for x0, y0, x1, y1, sc in models.small_detector().detect(rgb, small_min, 64):
             rows.append([x0, y0, x1, y1, sc * 0.9, KIND_SMALL])
     rows = _nms_rows(rows)
     if body:
@@ -208,11 +261,11 @@ def blur_frame(rgb, small=True, body=True):
     return out
 
 
-def analyze_blur(info: ff.Info, progress=None, cancel=None, hw=False, workers=None):
+def analyze_blur(info: ff.Info, progress=None, cancel=None, hw=False, workers=None, small_min=SMALL_MIN):
     """프레임마다 독립 검출 → 여러 스레드로 병렬."""
     from concurrent.futures import ThreadPoolExecutor
     from collections import deque
-    workers = workers or max(2, min(16, (os.cpu_count() or 4) - 2))
+    workers = workers or max(2, (os.cpu_count() or 4) - 2)      # v0.7.4: 상한 16 없앰(32코어면 30)
     rows = []      # frame, x0, y0, x1, y1, score
     r = ff.Reader(info, 0, 8, hw=hw)
     pool = ThreadPoolExecutor(workers)
@@ -230,7 +283,7 @@ def analyze_blur(info: ff.Info, progress=None, cancel=None, hw=False, workers=No
             fr = r.read()
             if fr is None:
                 break
-            q.append((i, pool.submit(blur_frame, fr.copy())))
+            q.append((i, pool.submit(blur_frame, fr.copy(), True, True, small_min)))
             i += 1
             while len(q) >= workers * 2:
                 take()
@@ -248,20 +301,47 @@ def analyze_blur(info: ff.Info, progress=None, cancel=None, hw=False, workers=No
     return {"det": np.array(rows, np.float32).reshape(-1, 7 + HIST), "n": np.array(i)}
 
 
-def analyze(info: ff.Info, mode: str, progress=None, cancel=None, hw=False, workers=None):
-    z = load(info, mode)
+_inflight_guard = threading.Lock()
+_inflight: dict = {}                 # 같은 소스·모드 분석이 두 번 돌지 않게(렌더 ↔ 편집·AUTO 분석)
+_BLUR_SEM = threading.Semaphore(1)   # 블러 분석은 안에서 코어를 다 씀 → 한 번에 하나
+
+
+def _acquire(lock, cancel):
+    """취소를 보면서 잠금 대기."""
+    while not lock.acquire(timeout=0.2):
+        if cancel is not None and cancel.is_set():
+            raise Cancelled()
+
+
+def analyze(info: ff.Info, mode: str, progress=None, cancel=None, hw=False, workers=None, level=0):
+    level = max(SMALL_MIN, level) if mode == "blur" else 0
+    z = load(info, mode, level)
     if z is not None:
         return z
-    if mode == "beauty":
-        z = analyze_beauty(info, progress, cancel, hw)       # 추적이라 순차(작업자 수 무관)
-    else:
-        z = analyze_blur(info, progress, cancel, hw, workers)
-    f = cache_file(info, mode)
-    import threading
-    tmp = f.with_name(f"{f.stem}.{os.getpid()}.{threading.get_ident()}.tmp.npz")
-    np.savez_compressed(tmp, **z)
-    os.replace(tmp, f)
-    return z
+    with _inflight_guard:
+        lk = _inflight.setdefault((info.path, mode), threading.Lock())
+    _acquire(lk, cancel)               # 다른 곳에서 같은 분석 중이면 끝날 때까지 기다렸다가 캐시 사용
+    try:
+        z = load(info, mode, level)
+        if z is not None:
+            return z
+        if mode == "beauty":
+            z = analyze_beauty(info, progress, cancel, hw)       # 추적이라 순차(작업자 수 무관) → 여러 클립 동시 가능
+        else:
+            _acquire(_BLUR_SEM, cancel)
+            try:
+                z = analyze_blur(info, progress, cancel, hw, workers, small_min=level)
+            finally:
+                _BLUR_SEM.release()
+        if mode == "blur":
+            z["level"] = np.array(level)
+        f = cache_file(info, mode, level)
+        tmp = f.with_name(f"{f.stem}.{os.getpid()}.{threading.get_ident()}.tmp.npz")
+        np.savez_compressed(tmp, **z)
+        os.replace(tmp, f)
+        return z
+    finally:
+        lk.release()
 
 
 # ------------------------------------------------------------ 후처리 공통

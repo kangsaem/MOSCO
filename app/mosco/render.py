@@ -86,14 +86,16 @@ def render(src: Source, rs: dict, out_dir: str, progress=None, cancel=None, work
     info = ff.probe(src.path)
     hw = bool(rs.get("hw"))
     workers = workers or pick_workers(rs)
-    cached = analyze.load(info, src.mode) is not None
+    level = analyze.level_for(src.mode, src.params())
+    cached = analyze.load(info, src.mode, level) is not None
     w_an = 0.0 if cached else 0.35
 
     def p_an(v):
         if progress:
             progress(v * w_an)
     t0 = time.perf_counter()
-    z = analyze.analyze(info, src.mode, p_an, cancel, hw, workers if int(rs.get("workers") or 0) > 0 else None)
+    z = analyze.analyze(info, src.mode, p_an, cancel, hw, workers if int(rs.get("workers") or 0) > 0 else None,
+                        level=level)
     t_an = 0.0 if cached else time.perf_counter() - t0
     track = make_track(src, z, rs)
     resolver = edits.Resolver(src, track)

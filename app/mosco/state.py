@@ -12,6 +12,15 @@ from .project import Project, Settings, Source
 UNDO_MAX = 80
 
 
+def _z_level(z, mode):
+    if mode != "blur":
+        return 0
+    try:
+        return int(z["level"]) if "level" in z else analyze.SMALL_MIN
+    except Exception:  # noqa: BLE001
+        return analyze.SMALL_MIN
+
+
 class AppState(QObject):
     changed = Signal()                 # 목록·값 변경(화면 갱신)
     current_changed = Signal()         # 선택 소스 바뀜
@@ -216,26 +225,33 @@ class AppState(QObject):
         if info is None:
             return
         key = (s.path, s.mode)
+        level = analyze.level_for(s.mode, s.params())
         a = self.an.get(key)
         if a and a["state"] in ("run", "done"):
-            return
-        z = analyze.load(info, s.mode)
+            if a.get("level", 0) <= level:
+                return
+            # [최소 크기]를 분석 하한보다 낮춤 → 더 작은 얼굴까지 다시 분석
+            if a.get("job") is not None:
+                a["job"].cancel.set()
+            self.an.pop(key, None)
+        z = analyze.load(info, s.mode, level)
         if z is not None:
-            self.an[key] = {"z": z, "p": 1.0, "state": "done", "err": ""}
+            self.an[key] = {"z": z, "p": 1.0, "state": "done", "err": "", "level": _z_level(z, s.mode)}
             self.analysis_changed.emit(s.path)
             return
-        rec = {"z": None, "p": 0.0, "state": "run", "err": ""}
+        rec = {"z": None, "p": 0.0, "state": "run", "err": "", "level": level}
         self.an[key] = rec
         hw = bool(self.settings.render.get("hw"))
         mode = s.mode
 
         def fn(prog, cancel):
-            return analyze.analyze(info, mode, prog, cancel, hw)
+            return analyze.analyze(info, mode, prog, cancel, hw, level=level)
         j = jobs.Job(fn, with_progress=True)
         rec["job"] = j
-        j.signals.progress.connect(lambda v, k=key: self._an_prog(k, v))
-        j.signals.done.connect(lambda z, k=key: self._an_done(k, z))
-        j.signals.error.connect(lambda e, k=key: self._an_err(k, e))
+        # 같은 키에 새 분석이 들어왔을 수 있음(하한 변경) → 자기 기록일 때만 반영
+        j.signals.progress.connect(lambda v, k=key, r=rec: self.an.get(k) is r and self._an_prog(k, v))
+        j.signals.done.connect(lambda z, k=key, r=rec: self.an.get(k) is r and self._an_done(k, z))
+        j.signals.error.connect(lambda e, k=key, r=rec: self.an.get(k) is r and self._an_err(k, e))
         jobs.submit(jobs.ANALYZE_POOL, j, 5 if s is self.source() else 0)
 
     def _an_prog(self, key, v):
@@ -245,7 +261,7 @@ class AppState(QObject):
 
     def _an_done(self, key, z):
         if key in self.an:
-            self.an[key].update(z=z, p=1.0, state="done")
+            self.an[key].update(z=z, p=1.0, state="done", level=_z_level(z, key[1]))
             self._tracks.pop(key, None)
             self.analysis_changed.emit(key[0])
             self.params_changed.emit()
@@ -263,7 +279,11 @@ class AppState(QObject):
             self.changed.emit()
 
     def analysis(self, s: Source):
-        return self.an.get((s.path, s.mode))
+        """지금 값에 쓸 수 있는 분석(블러: 분석 하한이 [최소 크기] 기준 이하). 아니면 None → 다시 분석 대상."""
+        a = self.an.get((s.path, s.mode))
+        if a is not None and a.get("level", 0) > analyze.level_for(s.mode, s.params()):
+            return None
+        return a
 
     def _track_sig(self, s: Source):
         p = s.params()

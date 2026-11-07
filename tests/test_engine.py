@@ -85,6 +85,33 @@ def main():
         # 얼굴이 없으면 처리 없음 → ProRes 재인코딩 오차만(합성 화면의 날카로운 경계에서 생김)
         assert diff < 200, f"{mode}: 원본과 차이가 큼 {diff}"
         print(f"{mode} OK  {time.time() - t:.1f}s  meandiff16={diff:.1f}  {list(outs.values())}")
+    # v0.7.4 분석 하한(블러): 하한별 캐시 · 낮은 하한 캐시는 높은 요구에도 씀 · 같은 분석 동시 요청 = 한 번만
+    import threading
+    info = ff.probe(str(syn))
+    import shutil
+    from mosco import paths
+    shutil.rmtree(paths.cache_dir() / "analysis", ignore_errors=True)
+    assert analyze.level_for("blur", {"min_size": 12}) == 12 and analyze.level_for("blur", {"min_size": 30}) == 25
+    assert analyze.level_for("beauty", {"min_size": 30}) == 0
+    calls = []
+    orig = analyze.analyze_blur
+
+    def counted(*a, **k):
+        calls.append(k.get("small_min"))
+        return orig(*a, **k)
+    analyze.analyze_blur = counted
+    t = time.time()
+    ths = [threading.Thread(target=analyze.analyze, args=(info, "blur"), kwargs={"level": 25}) for _ in range(2)]
+    for th in ths:
+        th.start()
+    for th in ths:
+        th.join()
+    analyze.analyze_blur = orig
+    assert calls == [25], f"같은 분석이 중복 실행됨: {calls}"
+    assert analyze.cache_file(info, "blur", 25).exists()
+    assert analyze.load(info, "blur", 30) is not None          # 하한 25 분석 = 최소 크기 30 에 충분
+    assert analyze.load(info, "blur", 12) is None              # 더 작은 얼굴은 못 찾았으니 다시 분석해야 함
+    print(f"analysis level OK  {time.time() - t:.1f}s")
     for rpath in reals:
         info = ff.probe(rpath)
         for mode in ("beauty", "blur"):
