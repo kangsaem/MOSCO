@@ -14,7 +14,21 @@ import numpy as np
 
 from . import paths
 
-NOWIN = 0x08000000 if os.name == "nt" else 0   # CREATE_NO_WINDOW
+# CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS(v0.7.4) — ffmpeg 도 우선순위 '보통 이하'
+# → 크롬·에펙 등 다른 프로그램이 CPU 를 원하면 그쪽이 먼저, 놀 때는 MOSCO 가 다 씀
+NOWIN = (0x08000000 | 0x00004000) if os.name == "nt" else 0
+
+
+def low_priority():
+    """이 프로세스(MOSCO 자신)를 '보통 이하'로. 윈도우만, 실패해도 무시."""
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+        k = ctypes.windll.kernel32
+        return bool(k.SetPriorityClass(k.GetCurrentProcess(), 0x00004000))
+    except Exception:  # noqa: BLE001
+        return False
 
 # 살아있는 ffmpeg 자식 프로세스 등록부 → 프로그램 종료 시 모두 강제 종료
 # (안 하면 분석·재생용 ffmpeg 가 창을 닫아도 남아서 CPU/GPU 를 계속 씀)

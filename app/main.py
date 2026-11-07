@@ -25,6 +25,8 @@ def dark(app: QApplication):
 
 
 def main():
+    from mosco import ff
+    ff.low_priority()                          # 다른 프로그램(크롬·에펙)에 CPU 양보 — 놀 때는 그대로 다 씀
     app = QApplication(sys.argv)
     app.setApplicationName("MOSCO")
     dark(app)
