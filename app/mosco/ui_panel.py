@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (QComboBox, QDialog, QFrame, QGridLayout, QHBoxLay
 
 from . import autodetect as ad
 from . import project as P
-from .ui_widgets import BTN, Section, Seg, SliderRow, Toggle, btn, set_on
+from .ui_widgets import BTN, DragMove, Section, Seg, SliderRow, Toggle, btn, set_on
 
 KEYS = [("off", "끔"), ("final", "최종 키"), ("skin", "피부 키"), ("alpha", "타원 알파")]
 
@@ -398,7 +398,7 @@ class ControlPanel(QWidget):
         return self.view.value() or "fx"
 
 
-class PresetGridPopup(QDialog):
+class PresetGridPopup(DragMove, QDialog):          # 빈 바탕을 끌어 옮김(DTME 팝업과 같음)
     """프리셋 격자. 작업(뷰티/블러) × 강도(약/중/강)를 골라 즉시 적용 + 저장된 프리셋 바로 적용.
 
     장면 자동판정(시장/정면 …)은 부정확해서 쓰지 않는다. 현재/선택 클립에 바로 적용.
