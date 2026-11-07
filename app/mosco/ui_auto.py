@@ -8,14 +8,15 @@ import copy
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
-                               QPushButton, QScrollArea, QVBoxLayout, QWidget)
+                               QPushButton, QScrollArea, QStyle, QVBoxLayout, QWidget)
 
 from . import autodetect as ad
 from . import ff, jobs
-from .ui_widgets import DragMove, add_shadow, btn, set_on, tone
+from .ui_widgets import QSS, DragMove, add_shadow, btn, set_on, tone
 
 # 버튼 색 이름 — 모양은 ui_widgets.QSS(DTME buttons.qss) 한 곳
 RED, ORANGE, GREY = "red", "orange", "light"
+LEFT_PAD = 76 + 5          # _seg 이름칸 폭 + 간격 = [약|중|강] 첫 버튼 왼쪽 끝
 
 
 def _b(text, w=0, h=28, style="", tip="", on=None):
@@ -131,31 +132,42 @@ class ClipRow(QFrame):
 
 
 class AutoDialog(DragMove, QDialog):
-    def __init__(self, parent, state):
+    def __init__(self, parent, state, only=None, mw=None):
+        """only = 이 클립 번호만 목록에(시작 창 AUTO = 방금 고른 파일만). outcome = 'each'·'render'·'' (닫힌 이유).
+        mw = 본 창(parent 가 None 일 때 — 시작 창 흐름: 작업표시줄에 따로 보이게 부모 없이 띄움)."""
         super().__init__(parent)
+        self.mw = mw or parent
+        self.setWindowTitle("MOSCO AUTO")
+        self.outcome = ""
         self.state = state
         self.setWindowFlag(Qt.FramelessWindowHint)
         self.setModal(True)
-        self.setStyleSheet("AutoDialog{background:#262626;border:1px solid #555;border-radius:6px}"
+        # 부모 없이 뜨면(시작 창 흐름) 본 창의 버튼 QSS 를 못 물려받으므로 직접 붙임
+        self.setStyleSheet(("" if parent is not None else QSS) +
+                           "AutoDialog{background:#262626;border:1px solid #555;border-radius:6px}"
                            "QLabel{color:#ddd;font-size:12px}")
         self.setFixedSize(1040, 720)
         # 클립 상태
         rs = state.settings.render
         self.name = (rs.get("name") or "").strip()
         self.strength = state.settings.d.get("auto_strength", "mid")
-        self.keep_existing = state.settings.d.get("auto_keep", True)
-        self.keep_keys = state.settings.d.get("auto_keep_keys", True)
+        self.keep_existing = False          # 항상 '기존 보정 무시 · 키프레임 자동'으로 시작
+        self.keep_keys = False
         self.after = state.settings.d.get("auto_after", "render")
         self.clips = []
         for i, s in enumerate(state.project.sources):
+            if only is not None and i not in only:
+                continue
             self.clips.append({"idx": i, "name": s.name, "inc": True, "mode": s.mode,
                                "measured": None, "prog": None, "c": s.custom, "outp": "HQ"})
-        self.selected = {0} if self.clips else set()
+        self.selected = {self.clips[0]["idx"]} if self.clips else set()
         self.rows = []
         self._jobs = {}
         self._closed = False
+        self._renders = []            # 보정+렌더 중인 RenderItem
         self._build()
         self._refresh()
+        state.changed.connect(self._start_detect)       # 막 추가한 파일은 정보(probe)가 늦게 옴 → 오면 측정 시작
         self._start_detect()
 
     # ------------------------------------------------------------ 구성
@@ -190,13 +202,15 @@ class AutoDialog(DragMove, QDialog):
         # 상단: 기존 보정 / 키프레임 (DTME 배치)
         toprow = QHBoxLayout()
         toprow.setSpacing(8)
+        toprow.setContentsMargins(0, 0, 0, 0)
+        toprow.addSpacing(LEFT_PAD)           # 아래 [약|중|강] 버튼 왼쪽 끝에 맞춤
         w1, self.set_keep = _seg([("keep", "기존 보정 유지"), ("drop", "기존 보정 무시")],
                                  "keep" if self.keep_existing else "drop", self._on_keep, label="")
         toprow.addWidget(w1)
-        toprow.addStretch(1)
         w2, self.set_keepk = _seg([("keys", "키프레임 유지"), ("autok", "키프레임 자동")],
                                   "keys" if self.keep_keys else "autok", self._on_keepk, label="")
         toprow.addWidget(w2)
+        toprow.addStretch(1)
         for wx in (w1, w2):                   # DTME: [기존 보정 유지|무시] [키프레임 유지|자동] 최소 폭 100
             for bx in wx.findChildren(QPushButton):
                 bx.setMinimumWidth(100)
@@ -243,10 +257,17 @@ class AutoDialog(DragMove, QDialog):
         self.detail.setTextFormat(Qt.RichText)
         self.detail.setAlignment(Qt.AlignTop | Qt.AlignLeft)
         self.detail.setStyleSheet("background:#1c1c1c;border:1px solid #333;border-radius:3px;padding:12px 16px;color:#ddd")
-        self.detail.setFixedSize(470, 150)         # DTME 설정값 박스 크기·비례
-        right.addWidget(self.detail)
+        self.detail.setFixedHeight(186)           # 6줄(뷰티 11칸) 안 잘림
+        drow = QHBoxLayout()
+        m = self.style().pixelMetric(QStyle.PM_LayoutLeftMargin)    # [약|중|강] 줄과 같은 바깥 여백
+        drow.setContentsMargins(m, 0, m, 0)
+        drow.addSpacing(LEFT_PAD)
+        drow.addWidget(self.detail)
+        dw = QWidget()
+        dw.setLayout(drow)
+        right.addWidget(dw)
         rw = QWidget()
-        rw.setFixedWidth(470)
+        rw.setFixedWidth(530)          # 윗줄 4버튼을 [약] 왼쪽 끝부터 놓아도 안 잘리게(470 → 530)
         rw.setLayout(right)
         mid.addWidget(rw)
         root.addLayout(mid, 1)
@@ -256,13 +277,19 @@ class AutoDialog(DragMove, QDialog):
         self.pbar.setStyleSheet("background:#2a2a2a;border-radius:3px")
         root.addWidget(self.pbar)
         btmrow = QHBoxLayout()
+        self.status = QLabel("")
+        self.status.setStyleSheet("color:#7fd18b")
+        btmrow.addWidget(self.status)
         btmrow.addStretch(1)                       # 취소도 오른쪽 그룹에(DTME: 취소·샘플·보정만·보정+렌더)
-        btmrow.addWidget(_b("취소", w=88, h=32, on=self.reject))
-        btmrow.addWidget(_b("샘플", w=88, h=32, style=ORANGE, tip="렌더 없이 샘플 PNG 만", on=self._sample))
+        self.b_cancel = _b("취소", w=88, h=32, on=self._cancel)
+        btmrow.addWidget(self.b_cancel)
+        self.b_sample = _b("샘플", w=88, h=32, style=ORANGE, tip="렌더 없이 샘플 PNG 만 (마지막 샘플 설정)",
+                           on=self._sample)
+        btmrow.addWidget(self.b_sample)
         self.b_correct = _b("보정만", w=96, h=32, style=GREY,
                             tip="적용 + 분석(타원 생성). 렌더는 안 함 — 개별 보정 이어서", on=lambda: self._go("each"))
         self.b_render = _b("보정+렌더", w=110, h=32, style=RED,
-                           tip="적용하고 바로 렌더 시작", on=lambda: self._go("render"))
+                           tip="적용하고 렌더 — 끝나면 창이 닫힘", on=lambda: self._go("render"))
         btmrow.addWidget(self.b_correct)
         btmrow.addWidget(self.b_render)
         bw = QWidget()
@@ -334,7 +361,7 @@ class AutoDialog(DragMove, QDialog):
             lbl = ad.LABEL.get(c["mode"], c["mode"])
             sub = ""
             if c["prog"] is not None:
-                sub = f"측정 중 {int(c['prog'] * 100)}%"
+                sub = f"{'렌더' if self._renders else '측정 중'} {int(c['prog'] * 100)}%"
             elif m and c["mode"] == "blur":
                 bits = []
                 if m.get("min_face"):
@@ -382,10 +409,16 @@ class AutoDialog(DragMove, QDialog):
 
     # ------------------------------------------------------------ 측정(백그라운드)
     def _start_detect(self):
+        if self._closed:
+            return
         for c in self.clips:
-            if not c["inc"] or c["measured"] is not None:
+            if not c["inc"] or c["measured"] is not None or c["idx"] in self._jobs:
                 continue
-            info = self.state.info(self.state.project.sources[c["idx"]].path)
+            path = self.state.project.sources[c["idx"]].path
+            if path in self.state.errors:          # 못 읽는 파일 → 측정 없이 기본값(멈춰 기다리지 않게)
+                c["measured"] = {}
+                continue
+            info = self.state.info(path)
             if info is None:
                 continue
             c["prog"] = 0.0
@@ -415,6 +448,10 @@ class AutoDialog(DragMove, QDialog):
         # QDialog.accept()/reject() 가 모두 거쳐 가는 지점 → 어떤 식으로 닫히든 취소 보장
         self._closed = True
         self._cancel_detect()
+        try:
+            self.state.changed.disconnect(self._start_detect)
+        except Exception:  # noqa: BLE001
+            pass
         super().done(r)
 
     def _clip(self, idx):
@@ -490,23 +527,43 @@ class AutoDialog(DragMove, QDialog):
             self.state.settings.render["name"] = self.name
         self.state.settings.save()
 
+    def _busy(self, on):
+        for b in (self.b_sample, self.b_correct, self.b_render):
+            b.setEnabled(not on)
+
+    def reject(self):
+        if any(it.state in ("대기", "진행") for it in self._renders):     # 렌더 중 Esc = 렌더 취소(창은 유지)
+            self._cancel()
+            return
+        super().reject()
+
+    def _cancel(self):
+        """취소: 렌더 중이면 렌더를 멈추고(창은 그대로), 아니면 창 닫기."""
+        live = [it for it in self._renders if it.state in ("대기", "진행")]
+        if live:
+            for it in live:
+                if it.job is not None:
+                    it.job.cancel.set()
+            self.status.setText("렌더 취소 중…")
+            return
+        super().reject()
+
     def _go(self, after):
         """보정만(each) / 보정+렌더(render). 렌더만 저장폴더가 필요하다."""
         if not any(c["inc"] for c in self.clips):
             return
         out_dir = None
         if after == "render":
-            out_dir = self.parent()._out_dir()
+            out_dir = self.mw._out_dir()
             if not out_dir:
                 return
         self.after = after
         self._persist_settings()
-        for b in (self.b_correct, self.b_render):
-            b.setEnabled(False)
+        self._busy(True)
         (self.b_render if after == "render" else self.b_correct).setText("측정 대기…")
         # 측정이 끝날 때까지 기다렸다가 적용
         if self._all_detected():
-            self._apply_and_close(out_dir)
+            self._apply(out_dir)
         else:
             self._pending_dir = out_dir
             from PySide6.QtCore import QTimer
@@ -516,28 +573,78 @@ class AutoDialog(DragMove, QDialog):
     def _check_ready(self):
         if self._all_detected():
             self._wait.stop()
-            self._apply_and_close(self._pending_dir)
+            self._apply(self._pending_dir)
 
-    def _apply_and_close(self, out_dir):
+    def _apply(self, out_dir):
         assigns = self._assignments()
         self.state.apply_auto(assigns, keep_keys=self.keep_keys)
-        self.accept()
-        mw = self.parent()
+        mw = self.mw
+        idxs = [c["idx"] for c in self.clips if c["inc"]]
         if self.after == "render":
-            mw.render_auto([a[0] for a in assigns], out_dir, self.name)
-        else:
-            # 개별 보정: 적용값으로 분석(트래킹)을 돌려 타원이 생기게 한다
-            for idx, _, _ in assigns:
-                if 0 <= idx < len(mw.state.project.sources):
-                    mw.state.analyze_now(mw.state.project.sources[idx])
-            mw.state.select(assigns[0][0] if assigns else 0)
-            mw.flash("AUTO 적용 완료 — 분석 시작(타원 생성)")
+            # 렌더: 창을 띄운 채 진행률 표시 → 다 끝나면 닫힘(오류가 있으면 남아서 알림)
+            self.b_render.setText("렌더 중…")
+            self._renders = mw.render_auto(idxs, out_dir, self.name)
+            from PySide6.QtCore import QTimer
+            self._rt = QTimer(self, interval=250, timeout=self._render_tick)
+            self._rt.start()
+            self._render_tick()
+            return
+        # 보정만: 적용값으로 분석(트래킹)을 돌려 타원이 생기게 하고 창을 닫는다(본 편집 화면으로)
+        self.outcome = "each"
+        self.accept()
+        for idx in idxs:
+            if 0 <= idx < len(mw.state.project.sources):
+                mw.state.analyze_now(mw.state.project.sources[idx])
+        mw.state.select(idxs[0] if idxs else 0)
+        mw.flash("AUTO 적용 완료 — 분석 시작(타원 생성)")
+
+    def _render_tick(self):
+        if not self._renders:
+            self._rt.stop()
+            self._busy(False)
+            self.b_render.setText("보정+렌더")
+            return
+        by_path = {}
+        for it in self._renders:
+            by_path[it.src.path] = it
+        for c in self.clips:
+            it = by_path.get(self.state.project.sources[c["idx"]].path) if c["idx"] < len(self.state.project.sources) else None
+            if it is not None:
+                c["prog"] = it.p if it.state in ("대기", "진행") else None
+        n = len(self._renders)
+        frac = sum(1.0 if it.state in ("완료", "오류", "취소") else it.p for it in self._renders) / n
+        self._set_bar(frac)
+        done = sum(1 for it in self._renders if it.state == "완료")
+        self.status.setText(f"렌더 {done}/{n}")
+        self._refresh()
+        if all(it.state in ("완료", "오류", "취소") for it in self._renders):
+            self._rt.stop()
+            bad = [it for it in self._renders if it.state != "완료"]
+            if not bad:
+                self.outcome = "render"
+                self.accept()
+                return
+            err = sum(1 for it in bad if it.state == "오류")
+            self.status.setText(f"렌더 {done}/{n} 완료 · " + (f"오류 {err}" if err else "취소됨"))
+            self.status.setStyleSheet("color:#e06c6c" if err else "color:#c8c8c8")
+            self.b_render.setText("보정+렌더")
+            self._busy(False)
+            self._renders = []
+            for c in self.clips:
+                c["prog"] = None
+            self._refresh()
+
+    def _set_bar(self, frac):
+        self.pbar.setStyleSheet(
+            "background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #4a8fe0,stop:%.3f #4a8fe0,"
+            "stop:%.3f #2a2a2a,stop:1 #2a2a2a);border-radius:3px" % (frac, min(0.999, frac + 0.001)))
 
     def _sample(self):
+        """샘플: 샘플 설정 창을 띄우고, 끝나면(또는 취소) AUTO 창으로 돌아와 대기."""
         inc = [c for c in self.clips if c["inc"]]
         if not inc:
             return
-        out_dir = self.parent()._out_dir()
+        out_dir = self.mw._out_dir()
         if not out_dir:
             return
         self._persist_settings()
@@ -550,9 +657,12 @@ class AutoDialog(DragMove, QDialog):
                 s.mode = mode
                 (s.beauty if mode == "beauty" else s.blur).update(params)
             srcs.append(s)
-        dlg = SampleDialog(self.parent(), self.state, srcs, out_dir, self.name)
-        self.accept()
+        dlg = SampleDialog(self, self.state, srcs, out_dir, self.name)
+        dlg.move(self.geometry().center() - dlg.rect().center())
         dlg.exec()
+        if dlg.saved:
+            self.status.setStyleSheet("color:#7fd18b")
+            self.status.setText(f"샘플 {len(dlg.saved)}장 저장")
 
 
 # ------------------------------------------------------------ 샘플 창
@@ -569,6 +679,7 @@ class SampleDialog(DragMove, QDialog):
         self.opts = {"out_dir": out_dir, "name": name, "size": ss.get("size", 1920),
                      "fmt": ss.get("fmt", "png8"), "num": ss.get("num", True), "date": ss.get("date", False),
                      "count": 6}
+        self.saved = []
         self._build()
 
     def _build(self):
@@ -698,6 +809,7 @@ class SampleDialog(DragMove, QDialog):
         jobs.submit(jobs.RENDER_POOL, j)
 
     def _finished(self, paths):
+        self.saved = paths
         self.status.setText(f"{len(paths)}장 저장 완료")
         import os
         if paths and os.environ.get("QT_QPA_PLATFORM") != "offscreen":

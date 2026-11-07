@@ -31,7 +31,16 @@ def main():
     w = MainWindow()
     from mosco import models
     models.set_gpu(w.state.settings.render.get("gpu", False))
-    w.show()
+    args = [a for a in sys.argv[1:] if Path(a).suffix.lower() in VIDEO_EXT]
+    if os.environ.get("MOSCO_SELFTEST") or args:
+        w.show()                               # 빌드 점검·파일을 끌어다 실행 = 바로 편집 화면
+    else:
+        # 시작 창 [AUTO]/[편집]. 창 사이를 오가므로 '마지막 창 닫힘 = 종료'는 끄고 직접 종료
+        from mosco.ui_start import StartWindow
+        app.setQuitOnLastWindowClosed(False)
+        start = StartWindow(w)
+        start.center()
+        start.show()
     if os.environ.get("MOSCO_SELFTEST"):       # 빌드 점검: 모델 로드 + 창 띄우고 2초 뒤 종료
         from PySide6.QtCore import QTimer
         from mosco import models
@@ -42,7 +51,6 @@ def main():
             print("model load failed:", e)
             ok = False
         QTimer.singleShot(2000, lambda: app.exit(0 if ok else 3))
-    args = [a for a in sys.argv[1:] if Path(a).suffix.lower() in VIDEO_EXT]
     if args:
         w.state.add_files(args)
     sys.exit(app.exec())

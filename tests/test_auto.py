@@ -91,6 +91,62 @@ def main():
     pngs = sorted(f for f in os.listdir(work) if f.endswith(".png"))
     print("sample OK:", pngs[:3], "...", len(pngs), "장")
 
+    # 시작 창 흐름: [AUTO] → (파일 고름) → AUTO 창만 → 샘플 설정 창 → 다시 AUTO 창 → 보정+렌더 → 끝나면 종료
+    from PySide6.QtCore import QTimer
+    from mosco.ui_start import StartWindow
+    app.setQuitOnLastWindowClosed(False)
+    w.hide()
+    sw = StartWindow(w)
+    sw.exit_app = lambda: log.__setitem__("exit", True)        # 테스트에선 실제 종료 대신 기록
+    sw.show()
+    log = {}
+    vid2 = str(work / "synth_copy.mov")
+    import shutil
+    shutil.copy(vid, vid2)                  # 목록에 없는 새 파일 = 고른 파일만 AUTO 에 떠야 함
+
+    def drive_render():
+        d = QApplication.activeModalWidget()
+        if not isinstance(d, AutoDialog) or not d._all_detected():
+            QTimer.singleShot(100, drive_render)
+            return
+        log["clips"] = [c["name"] for c in d.clips]
+        log["keep"] = (d.keep_existing, d.keep_keys)
+        d.grab().save(str(work / "auto_dialog.png"))
+        before = set(os.listdir(work))
+
+        def drive_sample():
+            sd = QApplication.activeModalWidget()
+            if not isinstance(sd, SampleDialog):
+                QTimer.singleShot(100, drive_sample)
+                return
+            sd.opts["count"] = 6
+            sd._go()
+        QTimer.singleShot(100, drive_sample)
+        d._sample()                          # 샘플 창 exec → 끝나면 AUTO 창으로 돌아옴
+        log["sample"] = len(set(os.listdir(work)) - before)
+        log["open_after_sample"] = d.isVisible()
+        d._go("render")
+    QTimer.singleShot(100, drive_render)
+    sw.run_auto([vid2])
+    assert log.get("clips") == ["synth_copy"], log
+    assert log["keep"] == (False, False), log           # 기본 = 기존 보정 무시 · 키프레임 자동
+    assert log["sample"] >= 6 and log["open_after_sample"], log
+    outs = [f for f in os.listdir(work) if f.startswith("synth_copy") and f.endswith("_MOSCO.mov")]
+    assert outs, "보정+렌더 출력 없음"
+    assert log.get("exit"), "보정+렌더가 끝나면 종료해야 함"
+    print("start->auto->sample->render->exit OK", outs)
+
+    def drive_each():
+        d = QApplication.activeModalWidget()
+        if not isinstance(d, AutoDialog) or not d._all_detected():
+            QTimer.singleShot(100, drive_each)
+            return
+        d._go("each")
+    QTimer.singleShot(100, drive_each)
+    sw.run_auto([vid2])
+    assert w.isVisible() and not sw.isVisible(), "보정만 → 본 편집 화면"
+    print("start->auto->each OK")
+
     w.state.dirty = False
     print("AUTO TEST OK")
     sys.stdout.flush()

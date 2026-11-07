@@ -318,10 +318,22 @@ class MainWindow(QMainWindow):
         rv.setContentsMargins(0, 0, 0, 0)
         rv.setSpacing(3)
         arow = QHBoxLayout()
+        arow.setSpacing(6)
         arow.addStretch(1)
-        self.b_auto = btn("AUTO", "여러 클립을 장면 인식해 한 번에 보정 (AUTO)", size=BTN_MAIN, red=True, w=88,
+        b1 = btn("파일 추가", "파일 또는 폴더(하위 폴더 포함)", size=BTN_MAIN, w=76)
+        from PySide6.QtWidgets import QMenu
+        m = QMenu(b1)
+        m.addAction("파일…", self.add_dialog)
+        m.addAction("폴더…", self.add_folder)
+        b1.setMenu(m)
+        b1.setStyleSheet("QPushButton::menu-indicator{width:0px}")
+        self.b_add_src = b1
+        self.b_auto = btn("AUTO", "목록의 클립을 장면 인식해 한 번에 보정 (AUTO)", size=BTN_MAIN, red=True, w=88,
                           on_click=self.open_auto)
+        b2 = btn("삭제", "선택한 소스 삭제 (Del)", size=BTN_MAIN, w=76, on_click=self.remove_sources)
+        arow.addWidget(b1)
         arow.addWidget(self.b_auto)
+        arow.addWidget(b2)
         arow.addStretch(1)
         rv.addLayout(arow)
         self.auto_bar = QWidget()
@@ -332,20 +344,6 @@ class MainWindow(QMainWindow):
         self.sources = SourceList(self.state)
         self.sources.add_dialog = self.add_dialog
         rv.addWidget(self.sources, 1)
-        r = QHBoxLayout()
-        r.setSpacing(4)
-        b1 = btn("영상 추가", "파일 또는 폴더(하위 폴더 포함)")
-        from PySide6.QtWidgets import QMenu
-        m = QMenu(b1)
-        m.addAction("파일…", self.add_dialog)
-        m.addAction("폴더…", self.add_folder)
-        b1.setMenu(m)
-        b2 = btn("삭제", "선택한 소스 삭제 (Del)", on_click=self.remove_sources)
-        b1.setFixedWidth(106)
-        b2.setFixedWidth(106)
-        r.addWidget(b1)
-        r.addWidget(b2)
-        rv.addLayout(r)
         line = QWidget()
         line.setFixedHeight(1)
         line.setStyleSheet("background:#333")
@@ -846,22 +844,34 @@ class MainWindow(QMainWindow):
         self.flash(f"피부색: Cb {ref[0]:+.3f} · Cr {ref[1]:+.3f}")
 
     # ------------------------------------------------------------ 소스 추가·삭제
-    def add_dialog(self):
+    def pick_files(self, parent=None):
+        """파일 선택 창 → 영상 경로 목록(취소면 [])."""
         start = self.state.settings.d.get("last_folder", "")
-        files, _ = QFileDialog.getOpenFileNames(self, "영상 추가", start, VID_FILTER)
+        files, _ = QFileDialog.getOpenFileNames(parent or self, "영상 추가", start, VID_FILTER)
         if files:
             self.state.settings.d["last_folder"] = str(Path(files[0]).parent)
             self.state.settings.save()
+        return files
+
+    def pick_folder(self, parent=None):
+        """폴더 선택 창 → 그 안(하위 포함) 영상 경로 목록. 취소면 None, 영상 없으면 []."""
+        start = self.state.settings.d.get("last_folder", "")
+        d = QFileDialog.getExistingDirectory(parent or self, "폴더 추가(하위 폴더 포함)", start)
+        if not d:
+            return None
+        self.state.settings.d["last_folder"] = d
+        self.state.settings.save()
+        return find_videos(d)
+
+    def add_dialog(self):
+        files = self.pick_files()
+        if files:
             self.state.add_files(files)
 
     def add_folder(self):
-        start = self.state.settings.d.get("last_folder", "")
-        d = QFileDialog.getExistingDirectory(self, "폴더 추가(하위 폴더 포함)", start)
-        if not d:
+        vids = self.pick_folder()
+        if vids is None:
             return
-        vids = find_videos(d)
-        self.state.settings.d["last_folder"] = d
-        self.state.settings.save()
         if vids:
             self.state.add_files(vids)
             self.flash(f"{len(vids)}개 추가")
@@ -931,6 +941,8 @@ class MainWindow(QMainWindow):
         dlg.exec()
 
     def render_auto(self, idxs, out_dir, name):
+        """AUTO 보정+렌더: 렌더 목록에 넣고 바로 시작. 만든 RenderItem 목록을 돌려줌(AUTO 창이 진행률 표시)."""
+        made = []
         rs = dict(self.state.settings.render)
         if name:
             rs["name"] = name
@@ -940,8 +952,10 @@ class MainWindow(QMainWindow):
                 it = RenderItem(s, rs, out_dir)
                 self.rpanel.add(it)
                 self._start_render(it)
+                made.append(it)
         if idxs:
             self.flash(f"AUTO 적용 완료 — {len(idxs)}개 렌더 시작")
+        return made
 
     def rerender(self, rows):
         for r in rows:
@@ -1049,6 +1063,9 @@ class MainWindow(QMainWindow):
             decoder.close_all()  # 상주 디코더 닫기
             ff.kill_all()        # 남은 ffmpeg 프로세스 강제 종료(종료 후 버벅임 방지)
             e.accept()
+            if getattr(self, "quit_on_close", False):      # 시작 창 흐름(main.py)에서는 본 창을 닫으면 종료
+                from PySide6.QtWidgets import QApplication
+                QApplication.instance().quit()
         else:
             e.ignore()
 

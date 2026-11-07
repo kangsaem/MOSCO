@@ -1,7 +1,7 @@
 """왼쪽 보정 패널: 리셋·기본값·프리셋 / 뷰티|블러 / 보정|원본|반반 · 타원 · 키 · ID / 묶음별 슬라이더."""
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QPoint, Qt, Signal
 from PySide6.QtWidgets import (QComboBox, QDialog, QFrame, QGridLayout, QHBoxLayout, QInputDialog, QLabel, QMenu,
                                QMessageBox, QScrollArea, QToolButton, QVBoxLayout, QWidget)
 
@@ -44,13 +44,15 @@ class ControlPanel(QWidget):
 
         r = QHBoxLayout()
         r.setSpacing(6)
-        self.preset = QComboBox()
-        self.preset.setFocusPolicy(Qt.NoFocus)
-        self.preset.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.preset.customContextMenuRequested.connect(self._preset_menu)
-        self.preset.activated.connect(self._preset_apply)
-        r.addWidget(self.preset, 1)
-        r.addWidget(btn("⊞", "장면 프리셋 격자(시장·거리·실내·정면·고정 …)", w=28, on_click=self._open_grid))
+        self.b_preset = btn("프리셋", "프리셋 창 (작업·강도 / 저장된 프리셋, 오른쪽 클릭 = 이름 바꾸기·삭제)",
+                            on_click=self._open_grid)
+        self.b_preset.setCheckable(True)
+        self.b_preset.setMinimumWidth(0)
+        self.b_preset.setMaximumWidth(16777215)
+        from PySide6.QtWidgets import QSizePolicy
+        self.b_preset.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.b_preset.setStyleSheet("text-align:left; padding-left:10px")
+        r.addWidget(self.b_preset, 1)
         r.addWidget(btn("저장…", "현재 값을 프리셋으로", w=56, on_click=self._preset_save))
         outer.addLayout(r)
 
@@ -319,31 +321,8 @@ class ControlPanel(QWidget):
     # ------------------------------------------------------------ 프리셋
     def refresh_presets(self, select=None):
         P.ensure_builtin_presets()
-        self.preset.blockSignals(True)
-        self.preset.clear()
-        self.preset.addItem("프리셋")
-        for n in P.list_presets():
-            self.preset.addItem(n)
         if select:
-            i = self.preset.findText(select)
-            self.preset.setCurrentIndex(max(0, i))
-        self.preset.blockSignals(False)
-
-    def _preset_apply(self, i):
-        if i <= 0:
-            return
-        try:
-            d = P.load_preset(self.preset.itemText(i))
-        except Exception as e:  # noqa: BLE001
-            QMessageBox.warning(self, "프리셋", str(e))
-            return
-        sel = [self.state.cur] + list(getattr(self, "extra_selected", lambda: [])())
-        cur = self.state.cur
-        for idx in dict.fromkeys(sel):
-            self.state.cur = idx
-            self.state.set_params(d.get("mode", "beauty"), d.get("params", {}))
-        self.state.cur = cur
-        self.state.current_changed.emit()
+            self.b_preset.setText(f"프리셋: {select}")
 
     def _preset_save(self):
         s = self.state.source()
@@ -355,16 +334,17 @@ class ControlPanel(QWidget):
             P.save_preset(name, s.mode, dict(s.params()))
             self.refresh_presets(name)
 
-    def _preset_menu(self, pos):
-        name = self.preset.currentText()
-        if self.preset.currentIndex() <= 0:
-            return
+    def preset_menu(self, name, global_pos):
+        """저장된 프리셋 오른쪽 클릭 메뉴(프리셋 창 안 버튼). 바뀌면 True."""
         m = QMenu(self)
-        m.addAction("이름 바꾸기", lambda: self._p_rename(name))
-        m.addAction("덮어쓰기", lambda: self._p_over(name))
-        m.addAction("기본값으로 쓰기", lambda: self._p_default(name))
-        m.addAction("삭제", lambda: self._p_del(name))
-        m.exec(self.preset.mapToGlobal(pos))
+        acts = {m.addAction("이름 바꾸기"): self._p_rename, m.addAction("덮어쓰기"): self._p_over,
+                m.addAction("기본값으로 쓰기"): self._p_default, m.addAction("삭제"): self._p_del}
+        a = m.exec(global_pos)
+        if a is None:
+            return False
+        before = set(P.list_presets())
+        acts[a](name)
+        return set(P.list_presets()) != before
 
     def _p_rename(self, name):
         new, ok = QInputDialog.getText(self, "이름 바꾸기", "새 이름", text=name)
@@ -395,8 +375,13 @@ class ControlPanel(QWidget):
         if not s:
             self.state.message.emit("클립을 먼저 불러오세요")
             return
+        set_on(self.b_preset, True)                       # 창이 떠 있는 동안 켜짐(파랑)
         dlg = PresetGridPopup(self, s.mode)
-        if dlg.exec() == QDialog.Accepted and dlg.result is not None:
+        dlg.move(self.b_preset.mapToGlobal(self.b_preset.rect().bottomLeft()) + QPoint(0, 4))
+        ok = dlg.exec() == QDialog.Accepted
+        self.b_preset.setChecked(False)
+        set_on(self.b_preset, False)
+        if ok and dlg.result is not None:
             mode, params = dlg.result
             sel = [self.state.cur] + list(getattr(self, "extra_selected", lambda: [])())
             cur = self.state.cur
@@ -406,6 +391,7 @@ class ControlPanel(QWidget):
             self.state.cur = cur
             self.state.current_changed.emit()
             self.state.message.emit(f"프리셋 적용: {dlg.label}")
+            self.b_preset.setText(f"프리셋: {dlg.label}")
 
     # ------------------------------------------------------------ 상태 읽기
     def view_mode(self):
@@ -470,7 +456,10 @@ class PresetGridPopup(QDialog):
             wrap.setHorizontalSpacing(6)
             wrap.setVerticalSpacing(6)
             for i, n in enumerate(names):
-                wrap.addWidget(btn(n, f"'{n}' 적용", w=104, on_click=lambda n=n: self._use_named(n)), i // 3, i % 3)
+                b = btn(n, f"'{n}' 적용", w=104, on_click=lambda n=n: self._use_named(n))
+                b.setContextMenuPolicy(Qt.CustomContextMenu)
+                b.customContextMenuRequested.connect(lambda pos, n=n, b=b: self._named_menu(n, b.mapToGlobal(pos)))
+                wrap.addWidget(b, i // 3, i % 3)
             root.addLayout(wrap)
 
         br = QHBoxLayout()
@@ -483,6 +472,11 @@ class PresetGridPopup(QDialog):
         self.result = ad.to_params(self.mode, self.strength)
         self.label = f"{ad.LABEL.get(self.mode, self.mode)} · {ad.LABEL.get(self.strength, self.strength)}"
         self.accept()
+
+    def _named_menu(self, name, gpos):
+        panel = self.parent()
+        if hasattr(panel, "preset_menu") and panel.preset_menu(name, gpos):
+            self.reject()                 # 목록이 바뀜(이름 바꿈·삭제) → 다시 열면 새 목록
 
     def _use_named(self, name):
         try:
