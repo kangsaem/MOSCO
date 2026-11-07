@@ -16,7 +16,8 @@ from .ui_widgets import QSS, DragMove, add_shadow, btn, set_on, tone
 
 # 버튼 색 이름 — 모양은 ui_widgets.QSS(DTME buttons.qss) 한 곳
 RED, ORANGE, GREY = "red", "orange", "light"
-LEFT_PAD = 76 + 5          # _seg 이름칸 폭 + 간격 = [약|중|강] 첫 버튼 왼쪽 끝
+AUTO_LW = 40               # AUTO 창 이름칸 폭(작업·강도·출력·이름 = 두 글자)
+LEFT_PAD = AUTO_LW + 5     # _seg 이름칸 폭 + 간격 = [약|중|강] 첫 버튼 왼쪽 끝
 
 
 def _b(text, w=0, h=28, style="", tip="", on=None):
@@ -146,7 +147,7 @@ class AutoDialog(DragMove, QDialog):
         self.setStyleSheet(("" if parent is not None else QSS) +
                            "AutoDialog{background:#262626;border:1px solid #555;border-radius:6px}"
                            "QLabel{color:#ddd;font-size:12px}")
-        self.setFixedSize(1040, 720)
+        self.setFixedSize(998, 720)          # 이름칸 76→40·가운데 간격 16→10 만큼 줄임(목록·버튼 크기 그대로)
         # 클립 상태
         rs = state.settings.render
         self.name = (rs.get("name") or "").strip()
@@ -176,7 +177,7 @@ class AutoDialog(DragMove, QDialog):
         root.setContentsMargins(16, 16, 16, 16)
         root.setSpacing(14)
         mid = QHBoxLayout()
-        mid.setSpacing(16)
+        mid.setSpacing(10)
         # 왼쪽 클립 목록
         sc = QScrollArea()
         sc.setWidgetResizable(True)
@@ -222,21 +223,21 @@ class AutoDialog(DragMove, QDialog):
         div0.setStyleSheet("color:#3a3a3a")
         right.addWidget(div0)
         self.seg_work, self.set_work = _seg([("beauty", "뷰티"), ("blur", "블러")], "beauty",
-                                            self._on_work, label="작업")
+                                            self._on_work, lw=AUTO_LW, label="작업")
         right.addWidget(self.seg_work)
         div = QFrame()
         div.setFrameShape(QFrame.HLine)
         div.setStyleSheet("color:#3a3a3a")
         right.addWidget(div)
         self.seg_strength, self.set_strength = _seg([("weak", "약"), ("mid", "중"), ("strong", "강")], self.strength,
-                                                    self._on_strength, label="강도")
+                                                    self._on_strength, lw=AUTO_LW, label="강도")
         right.addWidget(self.seg_strength)
         self.seg_out, self.set_out = _seg([("hq", "422 HQ"), ("std", "422"), ("lt", "LT")],
-                                          "hq", self._on_out, label="출력")
+                                          "hq", self._on_out, lw=AUTO_LW, label="출력")
         right.addWidget(self.seg_out)
         nrow = QHBoxLayout()
         nlb = QLabel("이름")
-        nlb.setFixedWidth(76)
+        nlb.setFixedWidth(AUTO_LW)
         nlb.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         nrow.addWidget(nlb)
         self.name_edit = QLineEdit(self.name)
@@ -267,7 +268,7 @@ class AutoDialog(DragMove, QDialog):
         dw.setLayout(drow)
         right.addWidget(dw)
         rw = QWidget()
-        rw.setFixedWidth(530)          # 윗줄 4버튼을 [약] 왼쪽 끝부터 놓아도 안 잘리게(470 → 530)
+        rw.setFixedWidth(494)          # 버튼 폭 그대로(530 에서 이름칸 줄인 36 만큼만 뺌)
         rw.setLayout(right)
         mid.addWidget(rw)
         root.addLayout(mid, 1)

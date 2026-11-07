@@ -43,7 +43,7 @@ def main():
     assert all(w.state.analysis(s) is None for s in w.state.project.sources)
 
     dlg = AutoDialog(w, w.state)
-    assert len(dlg.clips) == 2 and dlg.width() == 1040
+    assert len(dlg.clips) == 2 and dlg.width() == 998
     assert pump(app, 90, lambda: dlg._all_detected()), "측정이 끝나지 않음"
     for c in dlg.clips:
         assert c["measured"] is not None and "min_face" in c["measured"]
