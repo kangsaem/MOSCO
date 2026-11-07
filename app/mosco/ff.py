@@ -25,7 +25,11 @@ def low_priority():
         return False
     try:
         import ctypes
+        from ctypes import wintypes
         k = ctypes.windll.kernel32
+        k.GetCurrentProcess.restype = wintypes.HANDLE        # 64비트 의사 핸들(-1) 이 잘리지 않게
+        k.SetPriorityClass.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        k.SetPriorityClass.restype = wintypes.BOOL
         return bool(k.SetPriorityClass(k.GetCurrentProcess(), 0x00004000))
     except Exception:  # noqa: BLE001
         return False

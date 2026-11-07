@@ -13,7 +13,14 @@ BELOW = 0x00004000
 
 def prio(handle_or_pid, own=False):
     import ctypes
+    from ctypes import wintypes
     k = ctypes.windll.kernel32
+    k.GetCurrentProcess.restype = wintypes.HANDLE
+    k.OpenProcess.restype = wintypes.HANDLE
+    k.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    k.GetPriorityClass.argtypes = [wintypes.HANDLE]
+    k.GetPriorityClass.restype = wintypes.DWORD
+    k.CloseHandle.argtypes = [wintypes.HANDLE]
     if own:
         return k.GetPriorityClass(k.GetCurrentProcess())
     h = k.OpenProcess(0x1000, False, handle_or_pid)     # PROCESS_QUERY_LIMITED_INFORMATION
