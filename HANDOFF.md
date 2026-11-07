@@ -147,6 +147,7 @@ app/mosco/ui_auto.py      AUTO 팝업·샘플 창 (DTME AUTO_UI 틀)
 - 구체적인 작업은 **선택지와 추천을 먼저 보여주고 상의 후 결정**, "ㄱㄱ" = 바로 진행
 - 화면에 설명 문구 넣지 말 것(단축키는 툴팁). 화면은 단순하게. 렌더 버튼 빨강, 켜진 토글 **파랑**(v0.6.1 DTME 통일, 예전 노랑). 한국식 색(빨강=상승/매수, 파랑=하락/매도)
 - 대화가 길어져 압축되면 "새 대화로 넘어갈까요?" 먼저 묻기
+- **작업이 끝나면 매번 링크를 같이 줄 것**: Actions 실행 페이지 + 윈도우 빌드 다운로드(아티팩트) 링크. 아티팩트 = `https://github.com/kangsaem/MOSCO/actions/runs/<실행ID>/artifacts/<아티팩트ID>` (`gh api repos/kangsaem/MOSCO/actions/runs/<ID>/artifacts`)
 
 ## 3. 사용 환경·원본
 
