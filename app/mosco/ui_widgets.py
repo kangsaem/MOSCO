@@ -187,11 +187,13 @@ class SliderRow(QWidget):
         self.v = QLineEdit()
         self.v.setProperty("val", True)
         self.v.setFixedWidth(46)
+        self.v.setFixedHeight(22)
         self.v.setAlignment(Qt.AlignRight)
         self.v.setValidator(QIntValidator(lo, hi))
         lay.addWidget(lb)
         lay.addWidget(self.s, 1)
         lay.addWidget(self.v)
+        self.setFixedHeight(23)        # 줄 높이 23 + 섹션 간격 6 = 29px (DTME 슬라이더 줄과 비슷)
         self.s.valueChanged.connect(self._slid)
         self.v.editingFinished.connect(self._typed)
         self._mute = False
