@@ -17,6 +17,7 @@ class AppState(QObject):
     current_changed = Signal()         # 선택 소스 바뀜
     params_changed = Signal()          # 현재 소스 값 바뀜(미리보기 다시)
     analysis_changed = Signal(str)     # 분석 진행·완료 (경로)
+    busy_changed = Signal(str)         # 샘플·렌더 진행 (경로) — 소스 목록 표시만
     message = Signal(str)
 
     def __init__(self):
@@ -29,6 +30,7 @@ class AppState(QObject):
         self.infos: dict[str, ff.Info] = {}
         self.errors: dict[str, str] = {}
         self.an: dict = {}             # (path, mode) -> {"z", "p", "state", "err", "job"}
+        self.busy: dict = {}           # path -> (kind, p, 글자|None) 샘플·렌더 진행(소스 목록 표시용)
         self._tracks = {}
         self._res = {}
         self.sel = None                # 선택한 타원 key
@@ -244,11 +246,16 @@ class AppState(QObject):
     def _an_done(self, key, z):
         if key in self.an:
             self.an[key].update(z=z, p=1.0, state="done")
-            self._tracks = {k: v for k, v in self._tracks.items() if k[:2] != key}
+            self._tracks.pop(key, None)
             self.analysis_changed.emit(key[0])
             self.params_changed.emit()
 
     def _an_err(self, key, e):
+        if e == "취소됨":                          # 취소는 오류 아님 → 다음에 다시 분석
+            if key in self.an and self.an[key].get("state") == "run":
+                self.an.pop(key, None)
+            self.analysis_changed.emit(key[0])
+            return
         if key in self.an:
             self.an[key].update(state="err", err=e)
             self.errors[key[0]] = f"분석 실패: {e}"
@@ -258,24 +265,72 @@ class AppState(QObject):
     def analysis(self, s: Source):
         return self.an.get((s.path, s.mode))
 
-    def track(self, s: Source):
-        """현재 값 기준 트랙(캐시). 분석 전이면 None."""
-        a = self.analysis(s)
-        if not a or a["state"] != "done":
-            return None
+    def _track_sig(self, s: Source):
         p = s.params()
         rs = self.settings.render
         keys = ("stabilize",) if s.mode == "beauty" else ("stabilize", "sensitivity", "min_size", "hold")
-        sig = json.dumps([p.get(x) for x in keys]) + str(rs.get("two_pass", True))
-        k = (s.path, s.mode, sig)
-        t = self._tracks.get(k)
-        if t is None:
-            from .render import make_track
-            t = make_track(s, a["z"], rs)
-            if len(self._tracks) > 8:
-                self._tracks.clear()
-            self._tracks[k] = t
+        return json.dumps([p.get(x) for x in keys]) + str(rs.get("two_pass", True))
+
+    def track(self, s: Source):
+        """현재 값 기준 트랙(캐시). 분석 전이면 None.
+        캐시 = 소스·모드마다 최신 1개(예전: 전체 8개 넘으면 통째로 비움 → AUTO 로 9개 넘게 미리 만든 트랙이 지워졌음)."""
+        a = self.analysis(s)
+        if not a or a["state"] != "done":
+            return None
+        sig = self._track_sig(s)
+        k = (s.path, s.mode)
+        hit = self._tracks.get(k)
+        if hit is not None and hit[0] == sig:
+            return hit[1]
+        from .render import make_track
+        t = make_track(s, a["z"], self.settings.render)
+        self._tracks[k] = (sig, t)
         return t
+
+    def has_track(self, s: Source) -> bool:
+        hit = self._tracks.get((s.path, s.mode))
+        return hit is not None and hit[0] == self._track_sig(s)
+
+    def prepare_track(self, s: Source, on_done=None, on_error=None):
+        """분석이 끝난 소스의 트랙을 백그라운드에서 미리 계산해 캐시에 넣는다(AUTO [보정+편집])."""
+        a = self.analysis(s)
+        if not a or a["state"] != "done":
+            return None
+        if self.has_track(s):
+            if on_done:
+                on_done()
+            return None
+        sig = self._track_sig(s)
+        k = (s.path, s.mode)
+        src = copy.deepcopy(s)
+        z, rs = a["z"], dict(self.settings.render)
+
+        def fn():
+            from .render import make_track
+            return make_track(src, z, rs)
+
+        def done(t):
+            self._tracks[k] = (sig, t)
+            if on_done:
+                on_done()
+        j = jobs.Job(fn)
+        j.signals.done.connect(done)
+        if on_error:
+            j.signals.error.connect(on_error)
+        jobs.submit(jobs.ANALYZE_POOL, j, 5)
+        return j
+
+    # ------------------------------------------------------------ 진행 표시(소스 목록)
+    def set_busy(self, path, kind, p, label=None):
+        """샘플·렌더 진행을 소스 목록 줄에 표시(kind = ui_widgets.PROG 키)."""
+        self.busy[path] = (kind, p, label)
+        self.busy_changed.emit(path)
+
+    def clear_busy(self, path, kind=None):
+        b = self.busy.get(path)
+        if b and (kind is None or b[0] == kind):
+            self.busy.pop(path, None)
+            self.busy_changed.emit(path)
 
     # ------------------------------------------------------------ 타원 수정
     def resolver(self, s):

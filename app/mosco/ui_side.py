@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDialog,
                                QStyledItemDelegate, QVBoxLayout, QWidget)
 
 from . import ff
-from .ui_widgets import BTN_MAIN, DragMove, btn, tone
+from .ui_widgets import BTN_MAIN, PROG, PROG_TXT, DragMove, btn, tone
 
 VIDEO_EXT = {".mov", ".mp4", ".mxf", ".mts", ".m2ts", ".avi", ".mkv"}
 MODE_TXT = {"beauty": "뷰티", "blur": "블러"}
@@ -34,20 +34,28 @@ class SourceDelegate(QStyledItemDelegate):
         r = opt.rect.adjusted(0, 1, 0, -2)
         err = self.state.errors.get(s.path)
         a = self.state.analysis(s)
-        prog = a["p"] if a else 0.0
-        done = a is not None and a["state"] == "done"
+        # 진행 단계: 렌더·샘플(state.busy) > 분석(진행 중) — 색 = ui_widgets.PROG(DTME 와 같음)
+        kind, prog, label = None, None, ""
+        b = self.state.busy.get(s.path)
+        if b:
+            kind, prog = b[0], b[1]
+            label = b[2] if len(b) > 2 and b[2] else f"{PROG_TXT[kind]} {int(prog * 100)}%"
+        elif a is not None and a["state"] == "run":
+            kind, prog = "analyze", a["p"]
+            label = f"분석 {int(prog * 100)}%"
         if err:
-            bg = QColor("#b83a2e")
-        elif done:
-            bg = QColor("#c9c9c9")
-        else:      # 분석 진행만큼 밝아짐
-            v = int(0x5a + (0xb0 - 0x5a) * prog)
-            bg = QColor(v, v, v)
+            kind, prog, label = None, None, ("분석 실패" if str(err).startswith("분석 실패") else "읽기 실패")
+        base = QColor("#c9c9c9") if err else QColor("#2d2d2c")     # 읽기 실패 = 밝은 회색(누르면 다시 읽기)
         p.save()
         p.setRenderHint(QPainter.Antialiasing)
         p.setPen(Qt.NoPen)
-        p.setBrush(bg)
+        p.setBrush(base)
         p.drawRoundedRect(r, 3, 3)
+        if kind and prog is not None and not err:          # 줄 바탕을 진행만큼 채움
+            p.setClipRect(QRect(r.left(), r.top(), int(r.width() * max(0.0, min(1.0, prog))), r.height()))
+            p.setBrush(QColor(PROG[kind][0]))
+            p.drawRoundedRect(r, 3, 3)
+            p.setClipping(False)
         if opt.state & QStyle.State_Selected:
             p.setPen(QColor("#4a8fe0"))
             p.setBrush(Qt.NoBrush)
@@ -55,9 +63,15 @@ class SourceDelegate(QStyledItemDelegate):
         f = QFont(opt.font)
         f.setBold(True)
         p.setFont(f)
-        p.setPen(QColor("#111") if (done and not err) else QColor("#eee"))
+        p.setPen(QColor("#111") if err else QColor("#eee"))
+        rw = 58 + (p.fontMetrics().horizontalAdvance(label) + 10 if label else 0)
         p.drawText(r.adjusted(8, 0, -48, 0), Qt.AlignVCenter | Qt.AlignLeft,
-                   p.fontMetrics().elidedText(s.name, Qt.ElideMiddle, r.width() - 58))
+                   p.fontMetrics().elidedText(s.name, Qt.ElideMiddle, r.width() - rw))
+        if label:
+            f2 = QFont(opt.font)
+            p.setFont(f2)
+            p.setPen(QColor("#b83a2e") if err else QColor(PROG[kind][1]))
+            p.drawText(r.adjusted(0, 0, -48, 0), Qt.AlignVCenter | Qt.AlignRight, label)
         tag = QRect(r.right() - 40, r.top() + 5, 34, r.height() - 10)
         p.setBrush(QColor("#555"))
         p.setPen(Qt.NoPen)
@@ -85,6 +99,7 @@ class SourceList(QListWidget):
         self.customContextMenuRequested.connect(self._menu)
         state.changed.connect(self.refresh)
         state.analysis_changed.connect(lambda *_: self.viewport().update())
+        state.busy_changed.connect(lambda *_: self.viewport().update())
         state.current_changed.connect(self._cur)
 
     def refresh(self):
@@ -124,7 +139,7 @@ class SourceList(QListWidget):
         it = self.itemAt(e.position().toPoint())
         if it is not None and e.button() == Qt.LeftButton:
             s = self.state.project.sources[self.row(it)]
-            if s.path in self.state.errors:        # 빨간 바 클릭 = 다시 시도
+            if s.path in self.state.errors:        # 밝은 회색 바(읽기 실패) 클릭 = 다시 시도
                 self.state.retry(s.path)
         super().mousePressEvent(e)
 

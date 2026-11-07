@@ -1,4 +1,4 @@
-"""시작 창: [AUTO] / [편집]. AUTO = 파일·폴더 고르기 → AUTO 창만 → 보정만 = 본 편집 화면 / 보정+렌더 = 끝나면 종료."""
+"""시작 창: [AUTO] / [편집]. AUTO = 파일·폴더 고르기 → AUTO 창만 → 보정+편집 = 본 편집 화면 / 보정+렌더 = 끝나면 종료."""
 from __future__ import annotations
 
 from PySide6.QtCore import QPoint, Qt
@@ -61,7 +61,7 @@ class StartWindow(QWidget):
             self.run_auto(files)
 
     def run_auto(self, files):
-        """고른 파일을 목록에 넣고 그 파일만 AUTO 창으로. 보정만 → 본 편집 화면, 보정+렌더 → 종료, 취소 → 시작 창."""
+        """고른 파일을 목록에 넣고 그 파일만 AUTO 창으로. 보정+편집 → 본 편집 화면, 보정+렌더 → 종료, 취소 → 시작 창."""
         st = self.mw.state
         st.add_files(files)
         want = set(files)

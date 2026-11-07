@@ -975,6 +975,7 @@ class MainWindow(QMainWindow):
         def started(v):
             it.state = "진행"
             it.p = v
+            self.state.set_busy(it.src.path, "render", v)     # 소스 목록 줄 = 빨강 진행
             self.rpanel.refresh()
         j.signals.progress.connect(started)
         j.signals.done.connect(lambda outs: self._render_done(it, outs))
@@ -984,11 +985,13 @@ class MainWindow(QMainWindow):
 
     def _render_done(self, it, outs):
         it.state, it.p, it.outs = "완료", 1.0, outs
+        self.state.clear_busy(it.src.path, "render")
         self.rpanel.refresh()
         self.flash(f"렌더 완료: {it.src.name}" + (f" — {stat_line(it.stats)}" if it.stats else ""))
 
     def _render_err(self, it, e):
         it.state = "취소" if e == "취소됨" else "오류"
+        self.state.clear_busy(it.src.path, "render")
         it.err = e
         self.rpanel.refresh()
         if it.state == "오류":

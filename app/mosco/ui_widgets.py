@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QIntValidator
-from PySide6.QtWidgets import (QButtonGroup, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSlider,
+from PySide6.QtGui import QColor, QIntValidator, QPainter
+from PySide6.QtWidgets import (QFrame, QButtonGroup, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSlider,
                                QVBoxLayout, QWidget)
 
 BTN = (76, 28)
@@ -74,6 +74,42 @@ def btn(text, tip="", size=BTN, red=False, w=None, on_click=None, shadow=True) -
     if shadow:
         add_shadow(b)
     return b
+
+
+# ------------------------------------------------------------ 진행 표시 색(DTME 와 같음)
+# 단계 → (줄 바탕 채움, 진행 막대·상태 글자). 위 = 줄 바탕 채움 · 아래 = 진행 막대.
+PROG = {
+    "measure": ("#2f3a4a", "#4a8fe0"),   # 측정(AUTO) = 파랑 (DTME 는 프록시)
+    "analyze": ("#24443e", "#3fb8a0"),   # 타원 분석·트랙 = 청록
+    "sample": ("#4a4128", "#d9a646"),    # 샘플 = 호박
+    "render": ("#4a2e2c", "#d9604f"),    # 렌더 = 빨강
+}
+PROG_TXT = {"measure": "측정", "analyze": "분석", "sample": "샘플", "render": "렌더"}
+
+
+class ProgBar(QFrame):
+    """아래 진행 막대(6px) 하나 — 단계(kind)마다 색이 바뀐다."""
+
+    def __init__(self, h=6):
+        super().__init__()
+        self.setFixedHeight(h)
+        self.v, self.kind = 0.0, "measure"
+
+    def set(self, v, kind="measure"):
+        self.v, self.kind = max(0.0, min(1.0, v or 0.0)), kind
+        self.update()
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        r = self.rect()
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor("#2a2a2a"))
+        p.drawRoundedRect(r, 3, 3)
+        if self.v > 0:
+            p.setBrush(QColor(PROG.get(self.kind, PROG["measure"])[1]))
+            p.drawRoundedRect(0, 0, int(r.width() * self.v), r.height(), 3, 3)
+        p.end()
 
 
 class DragMove:

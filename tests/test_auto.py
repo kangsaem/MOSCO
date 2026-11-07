@@ -44,7 +44,16 @@ def main():
 
     dlg = AutoDialog(w, w.state)
     assert len(dlg.clips) == 2 and dlg.width() == 998
+    # v0.7.3: 창을 열 때는 아무 작업도 안 함(버튼을 눌러야 측정)
+    pump(app, 1)
+    assert not dlg._jobs and all(c["prog"] is None and c["measured"] is None for c in dlg.clips), "열자마자 측정함"
+    assert dlg.b_correct.text() == "보정+편집"
+    for c in dlg.clips:                    # 측정은 블러만 → 블러로 바꿔서 측정
+        c["mode"] = "blur"
+    dlg._phase = "measure"
+    dlg._start_detect()
     assert pump(app, 90, lambda: dlg._all_detected()), "측정이 끝나지 않음"
+    dlg._phase = None
     for c in dlg.clips:
         assert c["measured"] is not None and "min_face" in c["measured"]
     print("measure OK:", ad.LABEL.get(dlg.clips[0]["mode"]), dlg.clips[0]["measured"])
@@ -68,15 +77,25 @@ def main():
     print("apply OK")
     dlg.reject()
 
-    # AUTO(개별 보정) → 적용 뒤 분석(트래킹)이 시작돼야 타원이 생긴다
+    # AUTO [보정+편집] → 이 창에서 측정 → 분석 → 트랙까지 끝내고 닫힘(편집 화면에서 다시 안 기다림)
     w.state.settings.render["out_dir"] = str(work)
+    import shutil as _sh
+    from mosco import paths
+    _sh.rmtree(paths.cache_dir() / "analysis", ignore_errors=True)    # 캐시 지움 → 실제 분석 단계를 거치게
+    for k in list(w.state.an):
+        w.state.an.pop(k)
     dlg2 = AutoDialog(w, w.state)
-    assert pump(app, 90, dlg2._all_detected), "측정이 끝나지 않음"
-    dlg2.keep_existing = False       # 두 클립 모두 이미 custom → 재적용해야 분석이 돈다
-    dlg2._go("each")                 # 보정만(렌더 없이 적용+분석)
-    assert pump(app, 30, lambda: w.state.analysis(w.state.project.sources[0]) is not None), \
-        "AUTO 개별 보정인데 분석이 시작되지 않음"
-    print("auto->analyze OK")
+    dlg2.keep_existing = False       # 두 클립 모두 이미 custom → 재적용
+    seen = set()
+    dlg2._go("each")
+    assert pump(app, 600, lambda: (seen.add(dlg2._phase), dlg2.outcome == "each")[1]), \
+        f"보정+편집이 끝나지 않음: {dlg2.status.text()}"
+    assert "analyze" in seen, seen
+    for s in w.state.project.sources:
+        a = w.state.analysis(s)
+        assert a is not None and a["state"] == "done", "분석 안 끝남"
+        assert w.state.has_track(s), "트랙 미리 계산 안 됨"
+    print("auto->analyze->track OK", sorted(x for x in seen if x))
 
     # 샘플 창: 실제 PNG 6장
     import copy
@@ -122,7 +141,7 @@ def main():
             sd.opts["count"] = 6
             sd._go()
         QTimer.singleShot(100, drive_sample)
-        d._sample()                          # 샘플 창 exec → 끝나면 AUTO 창으로 돌아옴
+        d._go("sample")                      # (측정 없음=뷰티) 샘플 창 exec → 끝나면 AUTO 창으로 돌아옴
         log["sample"] = len(set(os.listdir(work)) - before)
         log["open_after_sample"] = d.isVisible()
         d._go("render")
@@ -144,7 +163,9 @@ def main():
         d._go("each")
     QTimer.singleShot(100, drive_each)
     sw.run_auto([vid2])
-    assert w.isVisible() and not sw.isVisible(), "보정만 → 본 편집 화면"
+    assert w.isVisible() and not sw.isVisible(), "보정+편집 → 본 편집 화면"
+    s2 = next(s for s in w.state.project.sources if s.path == vid2)
+    assert w.state.has_track(s2), "보정+편집 뒤 편집 화면에 트랙이 준비돼 있어야 함"
     print("start->auto->each OK")
 
     w.state.dirty = False
