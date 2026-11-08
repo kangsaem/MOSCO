@@ -1,6 +1,6 @@
 # HANDOFF — MOSCO (Mosaic + Cosmo)
 
-다음 대화는 이 문서를 기준으로 이어서 작업한다. **현재 v0.7.10 (2026-11-08). 1단계(DTME UI 통일) 완료 → 지금은 2단계(앱 보완) · B-1 실영상 테스트 대기.**
+다음 대화는 이 문서를 기준으로 이어서 작업한다. **현재 v0.7.11 (2026-11-08). 1단계(DTME UI 통일) 완료 → 지금은 2단계(앱 보완) · B-1 실영상 테스트 대기.**
 
 > ## 진행 순서 (중요 — 지금 여기 = 2단계)
 > **1단계 · DTME에서 UI/버튼 수정 〔완료 v0.6.1〕** → **2단계 · 수정된 UI 위에서 앱 기능 보완 〔지금〕**
@@ -9,6 +9,7 @@
 > - 1단계 점검 결과(v0.6.1 직후 확인): UI 파일만 변경, 슬라이더 키 6개·➜/렌더 시그널·`os._exit(0)` 유지, 엔진/데이터 무수정 — 계약 이상 없음.
 
 ### 변경 이력 (최신순)
+- **v0.7.11 (UI 파일만) 버튼 직각**: 모든 버튼 모서리 둥글림 없앰(`ui_widgets.QSS` 버튼 규칙 8개 `border-radius:3px → 0px` — 일반·빨강·주황·밝은 회색·파랑·반투명·묶음 머리·켜짐). 입체감 명암(그라데이션·위/아래 테두리·눌림 뒤집기) 그대로. 목록 줄·진행 막대·입력칸·창 테두리는 그대로(둥근 채). **DTME 와 다름**: DTME 는 둥근 버튼 유지 — `make_mosco_qss.py` 로 다시 만들 때 **모서리 0 유지**할 것.
 - **v0.7.10 안 쓰는 DLL 지우기**: CI 'Trim unused DLLs' — opencv_videoio_ffmpeg(29MB, cv2.VideoCapture 안 씀) · Qt opengl32sw(20MB) · Qt6Quick/Qml/Pdf/VirtualKeyboard + 그 플러그인(가상 키보드·qpdf) + QtQuick/Qml/Pdf .pyd + qml 폴더. 확인 = Smoke test(exe 실행·창·모델 로드). 지운 크기는 CI 로그.
 - **v0.7.9 빌드 용량**: ffmpeg 정적 GPL → **GPL shared**(ffmpeg/ffprobe.exe 가 bin/ 의 DLL 을 함께 씀), OpenCV **contrib → 일반 headless**(`guidedFilter` 를 쓰던 `fx._smooth_img` 는 어디서도 안 불려서 함수째 삭제 — 결과 동일). CI 'Size report' 단계(전체·폴더별·큰 파일 30) 추가. 결과 숫자는 B-3 참고.
 - **v0.7.8 간판 블러 모드** — 블러 대상 **[얼굴 | 간판]**(소스마다 하나, 동시에 안 함). 내부 모드 `"sign"`(뷰티·블러와 나란히: 분석 캐시·수정·설정값 따로, `Source.sign` · `SIGN_DEFAULT`).
@@ -86,6 +87,7 @@ app/mosco/ui_auto.py      AUTO 팝업·샘플 창 (DTME AUTO_UI 틀)
 - **창 크기 기준은 1920×1080.** 3열 = QSplitter(패널 / 모니터 / 오른쪽), setSizes([350,1250,300]), 패널 setMinimumWidth(340). 비례를 바꿔도 이 합이 화면을 넘지 않게.
 
 ### A-3. 공통 위젯 규칙 (ui_widgets.py)
+- **모서리 = 직각(v0.7.11, MOSCO 만)**: 버튼 QSS 를 DTME 생성기로 다시 만들면 `border-radius` 를 0px 로 바꿔 넣을 것.
 - 크기: 일반 버튼 `BTN=(76,28)`, 큰 버튼 `BTN_MAIN=(88,32)`.
 - **버튼 모양 = DTME 와 같음(v0.6.1)**: `QSS` 의 버튼 줄은 DTME 저장소 `design/mosco/buttons.qss`(DTME `ui_style.py` 값으로 생성 — 손으로 고치지 말고 DTME 쪽 `design/gen/make_mosco_qss.py` 로 다시 만들기). 4점 그라데이션 + 위 테두리 밝게 · 아래 어둡게, 눌림 = 뒤집음, **그림자 없음**, **켜짐 = 파랑 #2f4f78 · 테두리 #4a8fe0**(노랑 켜짐 없음), 꺼짐 = 짙은 회색 쪽으로. 기준서 = DTME `design/BUTTON_UI.md`.
   - 색 이름: `btn(red=True)` 또는 `tone(b, "red"|"orange"|"light"|"blue"|"overlay")`. 묶음 머리 = `setProperty("head", True)`. 켜짐 = `set_on(b, True)` 또는 `:checked`.
