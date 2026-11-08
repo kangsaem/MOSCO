@@ -11,7 +11,7 @@ import numpy as np
 from . import decoder, ff, models
 from .project import BEAUTY_DEFAULT, BLUR_DEFAULT
 
-LABEL = {"beauty": "뷰티", "blur": "블러", "weak": "약", "mid": "중", "strong": "강"}
+LABEL = {"beauty": "뷰티", "blur": "블러", "sign": "간판", "weak": "약", "mid": "중", "strong": "강"}
 STRENGTH = {"weak": 0, "mid": 1, "strong": 2}
 
 DET_W, DET_H = 960, 540      # 측정용 다운스케일
@@ -72,6 +72,11 @@ def to_params(mode, strength="mid", measured=None):
         p["wrinkle"] = [30, 50, 70][s]        # 주름 메우기
         p["texture"] = [55, 40, 28][s]        # 질감 보존
         return "beauty", p
+    if mode == "sign":                        # 간판: 강도만(약·중·강), 나머지는 기본값
+        from .project import SIGN_DEFAULT
+        p = dict(SIGN_DEFAULT)
+        p["strength"] = [60, 72, 85][s]
+        return "sign", p
     p = dict(BLUR_DEFAULT)
     p["strength"] = [60, 72, 85][s]
     p["body"] = True

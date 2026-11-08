@@ -69,6 +69,9 @@ def make_track(src: Source, z, rs=None):
     rs = rs or {}
     if src.mode == "beauty":
         return analyze.beauty_track(z, src.beauty)
+    if src.mode == "sign":
+        from . import sign
+        return sign.sign_track(z, src.sign, rs.get("two_pass", True))
     return analyze.blur_track(z, src.blur, rs.get("two_pass", True))
 
 
@@ -104,7 +107,7 @@ def render(src: Source, rs: dict, out_dir: str, progress=None, cancel=None, work
     try:
         if rs.get("main", True):
             writers["main"] = ff.Writer(str(names["main"]), info, rs.get("prores", "422 HQ"), audio=rs.get("audio", True))
-        if src.mode == "blur" and rs.get("overlay", True):
+        if src.mode in ("blur", "sign") and rs.get("overlay", True):
             writers["overlay"] = ff.Writer(str(names["overlay"]), info, alpha=True, audio=False)
         if rs.get("review"):
             writers["review"] = ff.Writer(str(names["review"]), info, h264=True, audio=rs.get("audio", True))
@@ -130,7 +133,7 @@ def render(src: Source, rs: dict, out_dir: str, progress=None, cancel=None, work
                 writers["overlay"].write(fx.rgba_overlay(out, a))
             if "review" in writers:
                 rv = (out >> 8).astype(np.uint8)
-                fx.draw_review(rv, ells, color=(255, 200, 76), ids=src.mode == "blur")
+                fx.draw_review(rv, ells, color=(255, 200, 76), ids=src.mode in ("blur", "sign"))
                 writers["review"].write(rv)
             done += 1
             if progress and done % 5 == 0:
@@ -170,7 +173,7 @@ def render(src: Source, rs: dict, out_dir: str, progress=None, cancel=None, work
           "렌더초": round(t_r, 1), "렌더fps": round(i / t_r, 2) if t_r > 0 else 0,
           "작업자": workers, "코어": os.cpu_count() or 0, "디코딩": "NVDEC" if hw else "CPU",
           "출력": "+".join(k for k in ("main", "overlay", "review") if k in names and (
-              (k == "main" and rs.get("main", True)) or (k == "overlay" and src.mode == "blur" and rs.get("overlay", True))
+              (k == "main" and rs.get("main", True)) or (k == "overlay" and src.mode in ("blur", "sign") and rs.get("overlay", True))
               or (k == "review" and rs.get("review"))))}
     write_log(st)
     if stats is not None:
@@ -178,4 +181,4 @@ def render(src: Source, rs: dict, out_dir: str, progress=None, cancel=None, work
     if progress:
         progress(1.0)
     return {k: str(v) for k, v in names.items() if (k == "main" and rs.get("main", True)) or
-            (k == "overlay" and src.mode == "blur" and rs.get("overlay", True)) or (k == "review" and rs.get("review"))}
+            (k == "overlay" and src.mode in ("blur", "sign") and rs.get("overlay", True)) or (k == "review" and rs.get("review"))}

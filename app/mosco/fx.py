@@ -290,8 +290,37 @@ def pick_skin(frame16, x, y):
 
 
 # ------------------------------------------------------------ 블러
+def _is_quad(it):
+    """간판 아이템: pts = 4꼭짓점(8값). 뷰티 랜드마크(468점)·얼굴 블러(None)와 구분."""
+    return it.pts is not None and np.asarray(it.pts).size == 8
+
+
+def item_quad(it, p):
+    """간판 4꼭짓점에 타원별 크기 % 적용(중심 기준)."""
+    from .sign import scale_quad
+    return scale_quad(it.pts, it.ov.get("size", 100) / 100)
+
+
+def _shape(it, p, W, H):
+    """아이템 → (표시 ell, roi, 알파, 기준 크기). 간판 = 4꼭짓점, 그 외 = 타원."""
+    fe = it.ov.get("feather", p["feather"])
+    if _is_quad(it):
+        from .sign import quad_alpha, quad_ell
+        q = item_quad(it, p)
+        ell = quad_ell(q)
+        size = min(ell[2], ell[3])                 # 간판: 짧은 쪽(≈ 글자 높이 + 여유) 기준
+        feather = size * fe / 100 / 2
+        roi = ellipse_roi(ell, feather, W, H)
+        return ell, roi, (quad_alpha(q, roi, feather) if roi else None), size
+    ell = _item_ell(it, p)
+    feather = max(ell[2], ell[3]) * fe / 100 / 2
+    roi = ellipse_roi(ell, feather, W, H)
+    return ell, roi, (ellipse_alpha(ell, roi, feather) if roi else None), max(ell[2], ell[3])
+
+
 def blur(frame16, items, p, want_alpha=False):
-    """items: edits.Item 목록. 반환 (out16, alpha(H,W) 또는 None, [(item, ell)])."""
+    """items: edits.Item 목록. 반환 (out16, alpha(H,W) 또는 None, [(item, ell)]).
+    얼굴 블러 = 타원, 간판 블러(v0.7.8) = 4꼭짓점 사각형(it.pts)."""
     H, W = frame16.shape[:2]
     out = frame16.copy() if items else frame16
     full_a = np.zeros((H, W), np.float32) if want_alpha else None
@@ -301,41 +330,34 @@ def blur(frame16, items, p, want_alpha=False):
     for it in items:
         if not getattr(it, "minus", False):
             continue
-        ell = _item_ell(it, p)
+        ell, roi, a, _ = _shape(it, p, W, H)
         ells.append((it, ell))
-        fe = it.ov.get("feather", p["feather"])
-        feather = max(ell[2], ell[3]) * fe / 100 / 2
-        roi = ellipse_roi(ell, feather, W, H)
         if roi is None:
             continue
         if minus is None:
             minus = np.zeros((H, W), np.float32)
         x0, y0, x1, y1 = roi
-        np.maximum(minus[y0:y1, x0:x1], ellipse_alpha(ell, roi, feather) * it.presence, out=minus[y0:y1, x0:x1])
+        np.maximum(minus[y0:y1, x0:x1], a * it.presence, out=minus[y0:y1, x0:x1])
     for it in items:
         if getattr(it, "minus", False):
             continue
-        ell = _item_ell(it, p)
+        ell, roi, a, size = _shape(it, p, W, H)
         ells.append((it, ell))
-        fe = it.ov.get("feather", p["feather"])
-        feather = max(ell[2], ell[3]) * fe / 100 / 2
-        roi = ellipse_roi(ell, feather, W, H)
         if roi is None:
             continue
         x0, y0, x1, y1 = roi
-        a = ellipse_alpha(ell, roi, feather)
         if minus is not None:
             a = a * (1.0 - minus[y0:y1, x0:x1])
         img = out[y0:y1, x0:x1].astype(np.float32)
-        size = max(ell[2], ell[3])
         st = max(1, it.ov.get("strength", p["strength"])) / 100
+        quad = _is_quad(it)
         if p["kind"] == "mosaic":
-            blk = max(3, int(size * st * 0.14))
+            blk = max(3, int(size * st * (0.3 if quad else 0.14)))
             sw, sh = max(1, (x1 - x0) // blk), max(1, (y1 - y0) // blk)
             small = cv2.resize(img, (sw, sh), interpolation=cv2.INTER_AREA)
             bl = cv2.resize(small, (x1 - x0, y1 - y0), interpolation=cv2.INTER_NEAREST)
         else:
-            bl = cv2.GaussianBlur(img, (0, 0), max(1.0, size * st * 0.09))
+            bl = cv2.GaussianBlur(img, (0, 0), max(1.0, size * st * (0.25 if quad else 0.09)))
         res = img + (bl - img) * a[..., None]
         out[y0:y1, x0:x1] = np.clip(res + 0.5, 0, 65535).astype(np.uint16)
         if full_a is not None:
@@ -357,7 +379,11 @@ def draw_review(img, ells, color=(65535, 51400, 19500), ids=True, thick=2):
         mi = getattr(it, "minus", False)
         col = (111, 211, 138) if mi else color                 # 제외 타원 = 초록(8bit 검수본)
         cx, cy, ew, eh, ang = ell
-        cv2.ellipse(img, (int(cx), int(cy)), (int(ew / 2), int(eh / 2)), ang, 0, 360, col, thick, cv2.LINE_AA)
+        if getattr(it, "pts", None) is not None and np.asarray(it.pts).size == 8:      # 간판 4꼭짓점
+            cv2.polylines(img, [np.round(np.asarray(it.pts, np.float32).reshape(4, 2)).astype(np.int32)], True, col,
+                          thick, cv2.LINE_AA)
+        else:
+            cv2.ellipse(img, (int(cx), int(cy)), (int(ew / 2), int(eh / 2)), ang, 0, 360, col, thick, cv2.LINE_AA)
         if ids and (fid is not None or mi):
             cv2.putText(img, ("-" if mi else "") + (str(fid) if fid is not None else ""),
                         (int(cx - ew / 2), int(cy - eh / 2) - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.6, col, 2, cv2.LINE_AA)

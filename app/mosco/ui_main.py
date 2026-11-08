@@ -83,6 +83,12 @@ def temp_items(src, rgb8, scale=1.0):
         pts, _ = analyze.beauty_frame(rgb8, None)
         if pts is not None:
             out.append(edits.Item(("t", 1), 1, analyze.head_ellipse(pts, p["size"], p["neck"]), pts))
+    elif src.mode == "sign":
+        from . import sign
+        for k, row in enumerate(sign.sign_frame(rgb8), 1):
+            if row[4] >= sign.score_thr(p["sensitivity"]) and row[-1] >= p["min_size"] * scale:
+                q = sign.grow(row[-9:-1].reshape(4, 2), p["margin"] / 100 * row[-1])
+                out.append(edits.Item(("t", k), k, sign.quad_ell(q), q))
     else:
         from . import models
         thr = analyze.score_thr(p["sensitivity"])
@@ -110,20 +116,26 @@ def _scale_items(items, scale):
     return out
 
 
-def entries(ells):
-    """[(item, 실제 적용 타원)] → 모니터 표시용."""
+def entries(ells, p=None):
+    """[(item, 실제 적용 타원)] → 모니터 표시용. 간판은 4꼭짓점(quad)도."""
     out = []
     for it, ell in ells:
+        quad = None
+        if fx._is_quad(it):
+            q = fx.item_quad(it, p) if p is not None else np.asarray(it.pts, np.float32).reshape(4, 2)
+            quad = [(float(x), float(y)) for x, y in q]
         lab = str(it.tid) if it.tid is not None else ("+" if it.manual else None)
         if it.minus:
             lab = "−" + (lab if lab and lab != "+" else "")
         out.append({"key": it.key, "label": lab, "ell": tuple(float(v) for v in ell), "manual": it.manual,
-                    "keyed": it.keyed, "minus": it.minus})
+                    "keyed": it.keyed, "minus": it.minus, "quad": quad})
     return out
 
 
 def item_entries(items, p):
-    return entries([(it, fx._item_ell(it, p)) for it in items])
+    from .sign import quad_ell
+    return entries([(it, quad_ell(fx.item_quad(it, p)) if fx._is_quad(it) else fx._item_ell(it, p)) for it in items],
+                   p)
 
 
 def compute_preview(src, frame16, resolver, has_track, i, scale=1.0):
@@ -149,7 +161,7 @@ def compute_preview(src, frame16, resolver, has_track, i, scale=1.0):
     else:
         o, a, ells = fx.blur(frame16, items, p, True)
         out["fx"] = to8(o)
-        out["ells"] = entries(ells)
+        out["ells"] = entries(ells, p)
         out["focus"] = None
         out["alpha"] = out["final"] = gray8(a)
         out["skin"] = out["alpha"]
@@ -500,7 +512,7 @@ class MainWindow(QMainWindow):
 
     def _toggle_minus(self):
         s = self.state.source()
-        if s is None or s.mode != "blur" or self.state.sel is None:
+        if s is None or s.mode not in ("blur", "sign") or self.state.sel is None:
             return
         self.state.set_minus(not self.state.minus_of(self.state.sel, self.f), self.f)
 
@@ -550,10 +562,11 @@ class MainWindow(QMainWindow):
         fps = f"{info.fps_f:.3f}".rstrip("0").rstrip(".")
         t = f"{info.w}×{info.h} {fps} · {ff.frames_to_tc(max(0, info.frames - 1), info.fps)}"
         if self.result is not None:
-            t += f" · 얼굴 {self.result.get('faces', 0)}"
+            cur = self.state.source()
+            t += f" · {'간판' if cur and cur.mode == 'sign' else '얼굴'} {self.result.get('faces', 0)}"
         s = self.state.source()
         tr = self.state.track(s) if s else None
-        if s and s.mode == "blur" and tr is not None:
+        if s and s.mode in ("blur", "sign") and tr is not None:
             t += f" · ID {tr.ids}"
         a = self.state.analysis(s) if s else None
         if a and a["state"] == "run":
@@ -633,7 +646,7 @@ class MainWindow(QMainWindow):
                 cov = np.zeros(tr.n, np.int8)
                 for i, fs in enumerate(tr.frames):
                     if fs:
-                        cov[i] = 1 if all(f[5] for f in fs) else 2
+                        cov[i] = 1 if all(f[-1] for f in fs) else 2      # 마지막 = 관측여부(블러·간판 공통)
         elif a:
             prog = a["p"]
         self.bar.set_data(n, cov, prog, self.state.errors.get(s.path, ""))
@@ -708,6 +721,8 @@ class MainWindow(QMainWindow):
     def _to_full(self, ell):
         """모니터(보기 좌표)에서 받은 타원 → 원본 좌표(편집 저장·렌더용)."""
         sc = self._vscale()
+        if len(ell) >= 8:                       # 간판 4꼭짓점
+            return tuple(v / sc for v in ell[:8])
         cx, cy, w, h = ell[:4]
         return (cx / sc, cy / sc, w / sc, h / sc, ell[4] if len(ell) > 4 else 0.0)
 
@@ -742,7 +757,8 @@ class MainWindow(QMainWindow):
         if s is not None and self.state.track(s) is not None:
             items = _scale_items(self.state.resolver(s).items(i), self._vscale())
             ells = item_entries(items, s.params())
-        self.mon.set_overlay(ells, self.panel.t_ell.isChecked(), s is not None and s.mode == "blur" and
+        self.mon.quad_mode = s is not None and s.mode == "sign"
+        self.mon.set_overlay(ells, self.panel.t_ell.isChecked(), s is not None and s.mode in ("blur", "sign") and
                              self.panel.t_id.isChecked())
 
     def request_full(self):
@@ -801,8 +817,9 @@ class MainWindow(QMainWindow):
         self.mon.set_default("face" if (v == "split" and s.mode == "beauty") else "fit")
         self.mon.set_focus_ellipse(r.get("focus"))
         self.mon.set_images(imgs, self._vsize(info))
+        self.mon.quad_mode = s.mode == "sign"
         self.mon.set_overlay(r["ells"], self.panel.t_ell.isChecked(),
-                             s.mode == "blur" and self.panel.t_id.isChecked())
+                             s.mode in ("blur", "sign") and self.panel.t_id.isChecked())
 
     # ------------------------------------------------------------ 재생
     def toggle_play(self):

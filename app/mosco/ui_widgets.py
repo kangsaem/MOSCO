@@ -303,6 +303,11 @@ class Section(QWidget):
     def toggle(self):
         self.set_open(not self.open)
 
+    def set_title(self, t):
+        if t != self.title:
+            self.title = t
+            self.set_open(self.open)
+
     def set_open(self, v):
         self.open = v
         self.body.setVisible(v)

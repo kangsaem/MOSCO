@@ -55,6 +55,57 @@ def minus_check():
     print("minus OK")
 
 
+def sign_check():
+    """v0.7.8 간판: 가짜 검출(오른쪽으로 이동하는 사다리꼴 1개) → 4꼭짓점 트랙 · 꼭짓점 키(8값) · 사각형 추가 · 저장."""
+    import json
+    from dataclasses import asdict
+    from mosco import sign
+    from mosco.project import Source as Src
+    n = 60
+    rows = []
+    hist = np.zeros(16, np.float32); hist[5] = 1
+    for f in range(n):
+        q = np.float32([[100, 100], [400, 120], [400, 200], [100, 190]]) + (f * 2, 0)
+        x0, y0 = q.min(0); x1, y1 = q.max(0)
+        rows.append(np.r_[np.float32(f), [x0, y0, x1, y1, 0.9, sign.KIND_TEXT], hist, q.reshape(-1), [40.0]])
+    z = {"det": np.array(rows, np.float32), "n": np.array(n)}
+    s = Src("x.mov", "sign")
+    s.sign["margin"] = 0
+    tr = sign.sign_track(z, s.sign)
+    assert tr.ids == 1, tr.ids
+    r = edits.Resolver(s, tr)
+    it = r.items(30)[0]
+    q30 = np.asarray(it.pts)
+    assert np.abs(q30[0] - (160, 100)).max() < 2 and np.abs(q30[2] - (460, 200)).max() < 2, q30
+    # 여유: 변을 바깥으로 평행 이동(글자 높이 40 × 50% = 20px) → 왼쪽 위 꼭짓점이 바깥(왼쪽 위)으로
+    s.sign["margin"] = 50
+    q30m = np.asarray(edits.Resolver(s, sign.sign_track(z, s.sign)).items(30)[0].pts)
+    assert q30m[0][0] < q30[0][0] - 15 and q30m[0][1] < q30[0][1] - 15, q30m
+    s.sign["margin"] = 0
+    # 꼭짓점 키: 30프레임에서 오른쪽 아래 꼭짓점만 +30 → 그 프레임 반영, 키 밖은 서서히 원래대로
+    g = edits.ensure_group(s, it, 30)
+    v = q30.copy(); v[2] += (30, 30)
+    edits.set_key(g, 30, tuple(v.reshape(-1)))
+    assert len(g["keys"]["30"]) == 8
+    r = edits.Resolver(s, tr)
+    k30 = np.asarray(next(i for i in r.items(30) if i.gid == g["gid"]).pts)
+    assert np.abs(k30[2] - v[2]).max() < 0.5 and np.abs(k30[0] - q30[0]).max() < 0.5
+    k50 = np.asarray(next(i for i in r.items(50) if i.gid == g["gid"]).pts)
+    assert np.abs(k50[2] - (q30[2] + (40, 0))).max() < 1, "키 밖은 자동 그대로(이동은 따라감)"
+    # 사각형 추가 → 직사각형 8값, 저장·불러오기 유지
+    gm = edits.add_manual(s, 10, (900, 500, 200, 80))
+    assert len(gm["keys"]["10"]) == 8
+    s2 = Src.from_dict(json.loads(json.dumps(asdict(s))))
+    assert s2.mode == "sign" and s2.sign["max_count"] == s.sign["max_count"]
+    its = edits.Resolver(s2, tr).items(20)
+    man = next(i for i in its if i.manual)
+    assert np.abs(np.asarray(man.pts)[0] - (800, 460)).max() < 0.5
+    # 최대 개수
+    s.sign["max_count"] = 1
+    assert all(len(tr2) <= 1 for tr2 in sign.sign_track(z, s.sign).frames)
+    print("sign edits OK")
+
+
 def main():
     z = fake_det()
     s = Source("x.mov", "blur")
@@ -148,6 +199,7 @@ def main():
     assert len(its) == 2 and {it.tid for it in its} == {1, 2}, f"자동 타원 2개가 아님: {its}"
     print("beauty multiface OK")
     minus_check()
+    sign_check()
     print("EDITS OK")
 
 

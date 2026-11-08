@@ -14,7 +14,7 @@ from . import ff
 from .ui_widgets import BTN_MAIN, PROG, PROG_TXT, DragMove, btn, tone
 
 VIDEO_EXT = {".mov", ".mp4", ".mxf", ".mts", ".m2ts", ".avi", ".mkv"}
-MODE_TXT = {"beauty": "뷰티", "blur": "블러"}
+MODE_TXT = {"beauty": "뷰티", "blur": "블러", "sign": "간판"}
 
 
 class SourceDelegate(QStyledItemDelegate):

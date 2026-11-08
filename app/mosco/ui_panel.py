@@ -58,8 +58,22 @@ class ControlPanel(QWidget):
         outer.addLayout(r)
 
         self.mode = Seg([("beauty", "뷰티"), ("blur", "블러")])
-        self.mode.changed.connect(self.state.set_mode)
+        self.mode.changed.connect(lambda k: self.state.set_mode(
+            "beauty" if k == "beauty" else ("sign" if self.target.value() == "sign" else "blur")))
         outer.addWidget(self.mode)
+        # 블러 대상(v0.7.8): 얼굴 / 간판 — 소스마다 하나만(동시에 안 함)
+        rt = QHBoxLayout()
+        rt.setSpacing(6)
+        lt = QLabel("대상")
+        lt.setStyleSheet("color:#aaa")
+        self.target = Seg([("blur", "얼굴"), ("sign", "간판")])
+        self.target.setToolTip("얼굴 블러 / 간판 블러(글자 검출 → 원근 따라가는 사각형). 둘 중 하나만")
+        self.target.changed.connect(self.state.set_mode)
+        rt.addWidget(lt)
+        rt.addWidget(self.target, 1)
+        self.w_target = QWidget()
+        self.w_target.setLayout(rt)
+        outer.addWidget(self.w_target)
 
         r = QHBoxLayout()
         r.setSpacing(6)
@@ -144,6 +158,17 @@ class ControlPanel(QWidget):
         wf.setLayout(rr2)
         self.sec_beauty.add(wf)
         # 타원 편집(공통)
+        # 간판 블러(얼굴 블러와 같은 구성 + 최대 개수)
+        self.sec_sblur = Section("블러")
+        self.skind = Seg([("blur", "블러"), ("mosaic", "모자이크")])
+        self.skind.changed.connect(lambda k: self.state.set_param("kind", k, undo=True))
+        self.sec_sblur.add(self.skind)
+        self._rows(self.sec_sblur, "sign", P.SIGN_SLIDERS)
+        self.sec_sell = Section("사각형")
+        self._rows(self.sec_sell, "sign", P.SIGN_ELLIPSE)
+        self.sec_sdet = Section("검출")
+        self._rows(self.sec_sdet, "sign", P.SIGN_DETECT)
+        self.sign_secs = (self.sec_sblur, self.sec_sell, self.sec_sdet)
         self.sec_edit = Section("타원 편집")
         r1 = QHBoxLayout()
         r1.setSpacing(4)
@@ -173,7 +198,7 @@ class ControlPanel(QWidget):
         # 블러: 선택 타원 [블러 | 제외] — 제외 = 이 영역은 블러 안 함(4444 알파에서도 빠짐)
         rm = QHBoxLayout()
         rm.setSpacing(6)
-        lm = QLabel("선택 타원")
+        self.l_sel = lm = QLabel("선택 타원")
         lm.setStyleSheet("color:#aaa")
         self.sel_kind = Seg([("blur", "블러"), ("minus", "제외")])
         self.sel_kind.setFixedWidth(120)
@@ -199,7 +224,8 @@ class ControlPanel(QWidget):
         w2 = QWidget()
         w2.setLayout(r2)
         self.sec_edit.add(w2)
-        for s in (self.sec_beauty, self.sec_bell, self.sec_blur, self.sec_xell, self.sec_det, self.sec_edit):
+        for s in (self.sec_beauty, self.sec_bell, self.sec_blur, self.sec_xell, self.sec_det, *self.sign_secs,
+                  self.sec_edit):
             self.bl.addWidget(s)
         self.bl.addStretch(1)
 
@@ -285,15 +311,24 @@ class ControlPanel(QWidget):
     def refresh(self):
         s = self.state.source()
         en = s is not None
-        for w in (self.mode, self.sec_beauty, self.sec_bell, self.sec_blur, self.sec_xell, self.sec_det):
+        for w in (self.mode, self.w_target, self.sec_beauty, self.sec_bell, self.sec_blur, self.sec_xell,
+                  self.sec_det, *self.sign_secs):
             w.setEnabled(en)
         mode = s.mode if s else self.state.settings.d.get("default_mode", "beauty")
-        self.mode.set(mode)
+        self.mode.set("beauty" if mode == "beauty" else "blur")
+        self.target.set("sign" if mode == "sign" else "blur")
         beauty = mode == "beauty"
         for w in (self.sec_beauty, self.sec_bell):
             w.setVisible(beauty)
-        for w in (self.sec_blur, self.sec_xell, self.sec_det, self.w_minus):
+        for w in (self.sec_blur, self.sec_xell, self.sec_det):
+            w.setVisible(mode == "blur")
+        for w in self.sign_secs:
+            w.setVisible(mode == "sign")
+        for w in (self.w_target, self.w_minus):
             w.setVisible(not beauty)
+        self.b_add.setText("사각형 추가" if mode == "sign" else "타원 추가")
+        self.sec_edit.set_title("사각형 편집" if mode == "sign" else "타원 편집")
+        self.l_sel.setText("선택 사각형" if mode == "sign" else "선택 타원")
         self.t_id.setVisible(not beauty)
         if beauty and self.key_mode == "skin":
             pass
@@ -304,8 +339,9 @@ class ControlPanel(QWidget):
         acts[2].setVisible(beauty)
         if s:
             for (m, k), row in self.rows.items():
-                row.set((s.beauty if m == "beauty" else s.blur)[k])
+                row.set(s.params_for(m)[k])
             self.kind.set(s.blur["kind"])
+            self.skind.set(s.sign.get("kind", "blur"))
             for t, v in ((self.t_body, s.blur.get("body", True)), (self.t_feat, s.beauty.get("features", True))):
                 t.blockSignals(True)
                 t.setChecked(bool(v))
@@ -321,7 +357,7 @@ class ControlPanel(QWidget):
     def reset(self):
         s = self.state.source()
         if s:
-            d = dict(P.BEAUTY_DEFAULT if s.mode == "beauty" else P.BLUR_DEFAULT)
+            d = dict({"beauty": P.BEAUTY_DEFAULT, "sign": P.SIGN_DEFAULT}.get(s.mode, P.BLUR_DEFAULT))
             self.state.set_params(s.mode, d)
 
     def to_default(self):
@@ -428,7 +464,7 @@ class PresetGridPopup(DragMove, QDialog):          # 빈 바탕을 끌어 옮김
         super().__init__(parent)
         self.result = None
         self.label = ""
-        self.mode = mode if mode in ("beauty", "blur") else "beauty"
+        self.mode = mode if mode in ("beauty", "blur", "sign") else "beauty"
         self.strength = "mid"
         self.setWindowFlag(Qt.FramelessWindowHint)
         self.setModal(True)
@@ -447,7 +483,7 @@ class PresetGridPopup(DragMove, QDialog):          # 빈 바탕을 끌어 옮김
         wlb = QLabel("작업")
         wlb.setFixedWidth(44)
         wr.addWidget(wlb)
-        self.wseg = Seg([("beauty", "뷰티"), ("blur", "블러")])
+        self.wseg = Seg([("beauty", "뷰티"), ("blur", "얼굴 블러"), ("sign", "간판")])
         self.wseg.set(self.mode)
         self.wseg.changed.connect(lambda v: setattr(self, "mode", v))
         wr.addWidget(self.wseg, 1)

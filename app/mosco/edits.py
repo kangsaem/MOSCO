@@ -89,7 +89,7 @@ class Resolver:
                     t = self.find_tid(*g["anchor"])
                     if t is not None:
                         self.g_tid[g["gid"]] = t
-            if self.mode == "blur":
+            if self.mode in ("blur", "sign"):
                 self._merges()
         self.tid_g = {t: g for g, t in self.g_tid.items()}
         self.groups = {g["gid"]: g for g in self.e["groups"]}
@@ -104,6 +104,18 @@ class Resolver:
         if self.mode == "beauty":
             return [(slot + 1, analyze.head_ellipse(pts, self.p["size"], self.p["neck"]), pts, pres)
                     for slot, pts, pres in tr.at(i)]
+        if self.mode == "sign":         # 간판: pts = 4꼭짓점(여유 포함), ell = 그 상자(표시·선택용)
+            from . import sign
+            out = {}
+            for tid0, q, _ in tr.at(i):
+                tid = self.merge.get(tid0, tid0)
+                if tid not in out:
+                    out[tid] = (tid, sign.quad_ell(q), q, 1.0)
+            for tid, fr in self.bridge.items():
+                if i in fr and tid not in out:
+                    q = np.asarray(fr[i], np.float32).reshape(4, 2)
+                    out[tid] = (tid, sign.quad_ell(q), q, 1.0)
+            return list(out.values())
         out = {}
         for f in tr.at(i):
             tid = self.merge.get(f[0], f[0])
@@ -130,6 +142,9 @@ class Resolver:
         if self.mode == "beauty":
             return [(slot + 1, analyze.head_ellipse(pts, self.p["size"], self.p["neck"]), pts, pres)
                     for slot, pts, pres in tr.at(i)]
+        if self.mode == "sign":
+            from . import sign
+            return [(t, sign.quad_ell(q), q, 1.0) for t, q, _ in tr.at(i)]
         return [(f[0], analyze.face_to_head(*f[1:5], self.p["margin"]), None, 1.0) for f in tr.at(i)]
 
     def _merges(self):
@@ -166,11 +181,20 @@ class Resolver:
         offs = []
         tid = self.g_tid.get(gid)
         for k, v in zip(ks, vals):
-            au = self._auto_tid(tid, k) if tid is not None else None
-            offs.append(None if au is None else v - np.array(au[:4], np.float32))
+            au = self._auto_vec(tid, k) if tid is not None else None
+            offs.append(None if (au is None or len(au) != len(v)) else v - au)
         r = (ks, vals, offs, tid)
         self._prep[gid] = r
         return r
+
+    def _auto_vec(self, tid, i):
+        """키·보정량에 쓰는 값: 간판 = 꼭짓점 8개, 그 외 = 타원 cx, cy, w, h."""
+        for t, ell, pts, _ in self.auto_at(i):
+            if t == tid:
+                if self.mode == "sign":
+                    return np.asarray(pts, np.float32).reshape(-1)
+                return np.array(ell[:4], np.float32)
+        return None
 
     def _auto_tid(self, tid, i):
         for t, ell, _, _ in self.auto_at(i):
@@ -206,7 +230,12 @@ class Resolver:
                 ks, vals, offs, _ = self._g(g)
                 o = self._offset(ks, offs, i)
                 if o is not None:
-                    ell = (*(np.array(ell[:4]) + o), ell[4])
+                    if self.mode == "sign":
+                        from . import sign
+                        pts = (np.asarray(pts, np.float32).reshape(-1) + o).reshape(4, 2)
+                        ell = sign.quad_ell(pts)
+                    else:
+                        ell = (*(np.array(ell[:4]) + o), ell[4])
                 seen.add(gid)
             out.append(Item(("g", gid) if gid is not None else ("t", tid), tid, ell, pts, pres,
                             dict(g.get("ov", {})) if g else {}, False, gid,
@@ -230,7 +259,13 @@ class Resolver:
                 v = _interp_keys(ks, vals, i)
                 if v is None:
                     continue
-            out.append(Item(("g", gid), tid, (*v, 0.0), None, 1.0, dict(g.get("ov", {})), bool(g.get("manual")),
+            if self.mode == "sign":
+                from . import sign
+                q = _as_quad(v)
+                out.append(Item(("g", gid), tid, sign.quad_ell(q), q, 1.0, dict(g.get("ov", {})),
+                                bool(g.get("manual")), gid, str(i) in g.get("keys", {}), bool(g.get("minus"))))
+                continue
+            out.append(Item(("g", gid), tid, (*v[:4], 0.0), None, 1.0, dict(g.get("ov", {})), bool(g.get("manual")),
                             gid, str(i) in g.get("keys", {}), bool(g.get("minus"))))
         return out
 
@@ -256,17 +291,33 @@ def ensure_group(src, item: Item, frame) -> dict:
     return g
 
 
+def _as_quad(v):
+    """키 값 → 4꼭짓점. 8개면 그대로, 4개(cx, cy, w, h — 옛 키·타원)면 직사각형."""
+    v = np.asarray(v, np.float32).reshape(-1)
+    if len(v) >= 8:
+        return v[:8].reshape(4, 2)
+    from . import sign
+    return sign.rect_quad(*v[:4])
+
+
 def add_manual(src, frame, ell) -> dict:
     e = get(src)
-    g = {"gid": e["next"], "manual": True, "anchor": [int(frame), float(ell[0]), float(ell[1])],
-         "keys": {str(int(frame)): [float(v) for v in ell[:4]]}, "off": [], "ov": {}}
+    if src.mode == "sign":       # 간판: 직사각형으로 시작 → 꼭짓점을 끌어 모양 맞춤
+        vec = _as_quad(ell[:4]).reshape(-1) if len(ell) < 8 else np.asarray(ell[:8], np.float32)
+        cx, cy = float(np.mean(vec[0::2])), float(np.mean(vec[1::2]))
+    else:
+        vec, cx, cy = ell[:4], ell[0], ell[1]
+    g = {"gid": e["next"], "manual": True, "anchor": [int(frame), float(cx), float(cy)],
+         "keys": {str(int(frame)): [float(v) for v in vec]}, "off": [], "ov": {}}
     e["next"] += 1
     e["groups"].append(g)
     return g
 
 
 def set_key(g, frame, ell):
-    g.setdefault("keys", {})[str(int(frame))] = [float(v) for v in ell[:4]]
+    """키 = 타원 cx, cy, w, h (4개) 또는 간판 4꼭짓점 (8개)."""
+    v = list(ell[:8]) if len(ell) >= 8 else list(ell[:4])
+    g.setdefault("keys", {})[str(int(frame))] = [float(x) for x in v]
 
 
 def del_key(g, frame):

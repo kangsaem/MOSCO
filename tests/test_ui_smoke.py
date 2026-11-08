@@ -23,6 +23,42 @@ def pump(app, sec, until=None):
     return False
 
 
+def sign_ui(app, w, st, vids, out):
+    """v0.7.8 간판: 대상 [간판] → 분석 → 사각형 표시 → 꼭짓점 끌기(모니터 신호) → 8값 키 저장. signs.mov 있을 때만."""
+    if not vids:
+        return
+    clip = Path(vids[0]).with_name("signs.mov")
+    if not clip.exists():
+        print("sign ui SKIP (signs.mov 없음)")
+        return
+    st.add_files([str(clip)])
+    st.select(len(st.project.sources) - 1)
+    pump(app, 1.0)
+    w.panel.target.btns["sign"].click()
+    s = st.source()
+    assert s.mode == "sign" and w.panel.b_add.text() == "사각형 추가"
+    st.ensure_analysis(s)
+    assert pump(app, 240, lambda: st.analysis(s) is not None and st.analysis(s)["state"] == "done"), "간판 분석 안 끝남"
+    w.seek(15)
+    assert pump(app, 20, lambda: w.result is not None and w.result.get("i") == 15)
+    ents = [e for e in w.mon.ells if e.get("quad")]
+    assert len(ents) >= 3, f"사각형 표시 {len(ents)}"
+    e = ents[0]
+    q = [v for p in e["quad"] for v in p]
+    q[4] += 20
+    q[5] += 15
+    w.mon.edited.emit(e["key"], tuple(q))             # 꼭짓점 하나 끌기 끝(보기 좌표)
+    pump(app, 1.0)
+    from mosco import edits
+    gs = [g for g in edits.get(s)["groups"] if "15" in g.get("keys", {})]
+    assert gs and len(gs[0]["keys"]["15"]) == 8, "꼭짓점 키(8값) 저장 안 됨"
+    it = next(i for i in st.resolver(s).items(15) if i.gid == gs[0]["gid"])
+    sc = w._vscale()
+    assert abs(float(it.pts[2][0]) - q[4] / sc) < 1.5, (it.pts[2], q[4] / sc)
+    w.grab().save(str(out / "9_sign.png"))
+    print("sign ui OK")
+
+
 def main():
     vids = [a for a in sys.argv[1:] if Path(a).suffix.lower() in (".mov", ".mp4")]
     out = Path(next((a for a in sys.argv[1:] if not a.lower().endswith((".mov", ".mp4"))), "ui_shots"))
@@ -156,6 +192,7 @@ def main():
         w.show_result()
         pump(app, 0.3)
         w.grab().save(str(out / "7_blur_split.png"))
+    sign_ui(app, w, st, vids, out)
     print("UI OK", out)
     w.state.dirty = False
     w.close()

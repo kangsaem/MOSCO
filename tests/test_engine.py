@@ -35,6 +35,67 @@ def make_synth(out: Path, n=60):
                     "-c:a", "pcm_s24le", "-timecode", "10:00:00;00", str(out)], check=True)
 
 
+def make_sign_clip(out: Path, n=30):
+    """간판(영문·숫자, cv2 글꼴) 3개가 원근으로 비스듬히 보이는 화면 + 천천히 패닝. ProRes 422 HQ 29.97."""
+    rng = np.random.default_rng(5)
+    bg = cv2.GaussianBlur((rng.random((1080, 1920, 3)) * 255).astype(np.uint8), (0, 0), 25)
+    boards = [("OPEN 24H", (40, 40, 40), (0, 220, 255), [[200, 150], [780, 210], [770, 360], [190, 330]]),
+              ("CAFE 1234", (30, 30, 200), (255, 255, 255), [[1150, 620], [1700, 580], [1720, 760], [1160, 800]]),
+              ("010-555-0101", (250, 250, 250), (20, 20, 20), [[300, 780], [800, 800], [798, 880], [298, 860]])]
+    for t, bgc, fgc, quad in boards:
+        b = np.full((140, 620, 3), bgc, np.uint8)
+        cv2.putText(b, t, (24, 100), cv2.FONT_HERSHEY_DUPLEX, 2.2, fgc, 5, cv2.LINE_AA)
+        M = cv2.getPerspectiveTransform(np.float32([[0, 0], [620, 0], [620, 140], [0, 140]]), np.float32(quad))
+        w = cv2.warpPerspective(b, M, (1920, 1080))
+        m = cv2.warpPerspective(np.ones((140, 620), np.float32), M, (1920, 1080))[..., None]
+        bg = (bg * (1 - m) + w * m).astype(np.uint8)
+    p = subprocess.Popen([paths.ffmpeg(), "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", "1920x1080",
+                          "-r", "30000/1001", "-i", "-", "-c:v", "prores_ks", "-profile:v", "3", "-pix_fmt", "yuv422p10le",
+                          str(out)], stdin=subprocess.PIPE)
+    for i in range(n):
+        M = np.float32([[1, 0, -i * 1.5], [0, 1, 0]])
+        p.stdin.write(cv2.warpAffine(bg, M, (1920, 1080), borderMode=cv2.BORDER_REFLECT).tobytes())
+    p.stdin.close()
+    p.wait()
+    return boards
+
+
+def sign_check(work: Path):
+    """v0.7.8 간판 블러: 글자 검출 → 4꼭짓점 트랙 → 렌더(본편·4444). 사각형 알파 정확도."""
+    from mosco import edits, sign
+    from mosco.render import make_track
+    clip = work / "signs.mov"
+    boards = make_sign_clip(clip)
+    info = ff.probe(str(clip))
+    t = time.time()
+    z = analyze.analyze(info, "sign")
+    s = Source(str(clip), "sign")
+    tr = make_track(s, z)
+    assert tr.ids >= 3, f"간판 트랙 {tr.ids}"
+    items = edits.Resolver(s, tr).items(15)
+    assert len(items) >= 3 and all(it.pts is not None and np.asarray(it.pts).size == 8 for it in items)
+    for _, _, _, quad in boards:              # 간판마다 그 판 중심을 덮는 사각형이 있어야 함(패닝 15f = -22px)
+        c = np.mean(quad, 0) - (22, 0)
+        assert any(cv2.pointPolygonTest(np.asarray(it.pts, np.float32), (float(c[0]), float(c[1])), False) >= 0
+                   for it in items), f"간판 {c} 못 덮음"
+    outs = render(s, dict(RENDER_DEFAULT), str(work))
+    assert ff.probe(outs["main"]).frames == info.frames
+    v2 = [x for x in probe_streams(outs["overlay"])["streams"] if x["codec_type"] == "video"][0]
+    assert "yuva444" in v2["pix_fmt"], v2["pix_fmt"]
+    r = subprocess.run([paths.ffmpeg(), "-v", "error", "-i", outs["overlay"], "-vf", r"select=eq(n\,15),alphaextract",
+                        "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "gray", "-"], capture_output=True, check=True)
+    al = np.frombuffer(r.stdout, np.uint8).reshape(1080, 1920)
+    c = np.mean(boards[1][3], 0) - (22, 0)
+    assert al[int(c[1]), int(c[0])] > 230 and al[540, 960] < 5, "4444 알파: 간판 = 불투명, 바깥 = 투명이어야 함"
+    # 사각형 알파(축소 계산) 대 전체 해상도
+    q = np.float32([[800, 400], [1150, 430], [1140, 560], [810, 520]])
+    m = np.zeros((1080, 1920), np.float32)
+    cv2.fillPoly(m, [np.round(q * 16).astype(np.int32)], 1.0, cv2.LINE_AA, 4)
+    d = float(np.abs(sign.quad_alpha(q, (600, 200, 1350, 760), 40) - cv2.GaussianBlur(m, (0, 0), 40)[200:760, 600:1350]).max())
+    assert d < 0.02, f"사각형 알파 차이 {d}"
+    print(f"sign OK  tracks={tr.ids} {time.time() - t:.1f}s alpha {d:.4f}")
+
+
 def check_output(src, outs, mode):
     si = ff.probe(src)
     j = probe_streams(outs["main"])
@@ -45,7 +106,7 @@ def check_output(src, outs, mode):
     assert oi.frames == si.frames, (oi.frames, si.frames)
     assert oi.timecode == si.timecode, (oi.timecode, si.timecode)
     assert any(s["codec_type"] == "audio" and s["codec_name"] == "pcm_s24le" for s in j["streams"]), "오디오 없음"
-    if mode == "blur":
+    if mode in ("blur", "sign"):
         j2 = probe_streams(outs["overlay"])
         v2 = [s for s in j2["streams"] if s["codec_type"] == "video"][0]
         assert v2["codec_name"] == "prores" and "yuva444" in v2["pix_fmt"], v2["pix_fmt"]
@@ -86,6 +147,7 @@ def main():
         # 얼굴이 없으면 처리 없음 → ProRes 재인코딩 오차만(합성 화면의 날카로운 경계에서 생김)
         assert diff < 200, f"{mode}: 원본과 차이가 큼 {diff}"
         print(f"{mode} OK  {time.time() - t:.1f}s  meandiff16={diff:.1f}  {list(outs.values())}")
+    sign_check(work)
     # v0.7.6 렌더 속도: 큰 페더·주름 저주파를 축소 계산 — 원래(전체 해상도)와 차이가 거의 없어야 함
     from mosco import fx
     rng = np.random.default_rng(3)

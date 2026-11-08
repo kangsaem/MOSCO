@@ -230,7 +230,7 @@ class AutoDialog(DragMove, QDialog):
         div0.setFrameShape(QFrame.HLine)
         div0.setStyleSheet("color:#3a3a3a")
         right.addWidget(div0)
-        self.seg_work, self.set_work = _seg([("beauty", "뷰티"), ("blur", "블러")], "beauty",
+        self.seg_work, self.set_work = _seg([("beauty", "뷰티"), ("blur", "얼굴 블러"), ("sign", "간판")], "beauty",
                                             self._on_work, lw=AUTO_LW, label="작업")
         right.addWidget(self.seg_work)
         div = QFrame()
@@ -335,7 +335,7 @@ class AutoDialog(DragMove, QDialog):
         return c["mode"]
 
     def _out_chip(self, c):
-        return c["outp"] + ("+α" if self._resolved_work(c) == "blur" else "")
+        return c["outp"] + ("+α" if self._resolved_work(c) in ("blur", "sign") else "")
 
     def _on_out(self, k):
         for c in self._targets():
@@ -398,6 +398,12 @@ class AutoDialog(DragMove, QDialog):
                     ("타원 크기", f"{params['size']}%"), ("페더", f"{params['feather']}%"),
                     ("목 확장", params["neck"]), ("떨림 보정", params["stabilize"]),
                     ("눈·입 제외", "켬" if params.get("features", True) else "끔")]
+        elif mode == "sign":
+            keys = [("민감도", params["sensitivity"]), ("최소 글자", f"{params['min_size']}px"),
+                    ("최대 개수", params["max_count"]), ("여유", f"{params['margin']}%"),
+                    ("페더", f"{params['feather']}%"), ("놓침 유지", f"{params['hold']}f"),
+                    ("다시 잇기", f"{params['link']}f"), ("블러 강도", params["strength"]),
+                    ("떨림 보정", params["stabilize"]), ("모자이크", "켬" if params["kind"] == "mosaic" else "끔")]
         else:
             keys = [("민감도", params["sensitivity"]), ("최소 크기", f"{params['min_size']}px"),
                     ("몸으로 머리", "켬" if params["body"] else "끔"), ("타원 여유", f"{params['margin']}%"),
@@ -773,7 +779,7 @@ class AutoDialog(DragMove, QDialog):
             if not (self.keep_existing and c["c"]):
                 mode, params = ad.to_params(c["mode"], self.strength, c["measured"])
                 s.mode = mode
-                (s.beauty if mode == "beauty" else s.blur).update(params)
+                s.params_for(mode).update(params)
             srcs.append(s)
         self._phase = "sample"
         self._sample_clips = inc

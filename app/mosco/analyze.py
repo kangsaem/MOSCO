@@ -327,6 +327,13 @@ def analyze(info: ff.Info, mode: str, progress=None, cancel=None, hw=False, work
             return z
         if mode == "beauty":
             z = analyze_beauty(info, progress, cancel, hw)       # 추적이라 순차(작업자 수 무관) → 여러 클립 동시 가능
+        elif mode == "sign":
+            from . import sign
+            _acquire(_BLUR_SEM, cancel)                          # 안에서 코어를 다 씀 → 블러와 함께 한 번에 하나
+            try:
+                z = sign.analyze_sign(info, progress, cancel, hw, workers)
+            finally:
+                _BLUR_SEM.release()
         else:
             _acquire(_BLUR_SEM, cancel)
             try:
@@ -512,8 +519,8 @@ def _link(tracks, hold, link_max):
         # 끝 속도(마지막 10프레임)
         back = [f for f in fs if f >= b - 10]
         v = (ob[:2] - t["obs"][back[0]][:2]) / max(1, b - back[0])
-        hist_end = np.mean([t["obs"][f][6:] for f in fs[-10:]], 0)
-        hist_start = np.mean([t["obs"][f][6:] for f in fs[:10]], 0)
+        hist_end = np.mean([t["obs"][f][6:6 + HIST] for f in fs[-10:]], 0)       # 간판 행은 뒤에 quad 가 더 있음
+        hist_start = np.mean([t["obs"][f][6:6 + HIST] for f in fs[:10]], 0)
         info.append({"a": a, "b": b, "oa": oa, "ob": ob, "v": v, "he": hist_end, "hs": hist_start, "next": None,
                      "prev": None})
     cand = []

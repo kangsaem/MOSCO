@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import json
+import numpy as np
 
 from PySide6.QtCore import QObject, Signal
 
@@ -61,7 +62,7 @@ class AppState(QObject):
                 continue
             s = self.project.sources[idx]
             s.mode = mode
-            (s.beauty if mode == "beauty" else s.blur).update(copy.deepcopy(params))
+            s.params_for(mode).update(copy.deepcopy(params))
             s.custom = True
             if not keep_keys:
                 s.edits.pop(mode, None)
@@ -107,7 +108,8 @@ class AppState(QObject):
         self.push_undo()
         mode = self.settings.d.get("default_mode", "beauty")
         for f in new:
-            s = Source(f, mode, self.settings.defaults("beauty"), self.settings.defaults("blur"))
+            s = Source(f, mode, self.settings.defaults("beauty"), self.settings.defaults("blur"),
+                       sign=self.settings.defaults("sign"))
             self.project.sources.append(s)
             self._probe(f)
         if self.cur < 0:
@@ -163,7 +165,7 @@ class AppState(QObject):
             return
         self.push_undo()
         s.mode = mode
-        (s.beauty if mode == "beauty" else s.blur).update(copy.deepcopy(params))
+        s.params_for(mode).update(copy.deepcopy(params))
         s.custom = custom
         self.dirty = True
         self.changed.emit()
@@ -288,7 +290,8 @@ class AppState(QObject):
     def _track_sig(self, s: Source):
         p = s.params()
         rs = self.settings.render
-        keys = ("stabilize",) if s.mode == "beauty" else ("stabilize", "sensitivity", "min_size", "hold")
+        keys = ("stabilize",) if s.mode == "beauty" else ("stabilize", "sensitivity", "min_size", "hold") \
+            if s.mode == "blur" else ("stabilize", "sensitivity", "min_size", "hold", "link", "margin", "max_count")
         return json.dumps([p.get(x) for x in keys]) + str(rs.get("two_pass", True))
 
     def track(self, s: Source):
@@ -402,7 +405,11 @@ class AppState(QObject):
             self.undo_stack.pop()
             return
         sz = g.get("ov", {}).get("size", 100) / 100
-        edits.set_key(g, frame, (ell[0], ell[1], ell[2] / sz, ell[3] / sz))
+        if len(ell) >= 8:                     # 간판 4꼭짓점(표시는 크기 % 적용됨 → 되돌려 저장)
+            from . import sign
+            edits.set_key(g, frame, tuple(sign.scale_quad(np.asarray(ell[:8], np.float32), 1 / sz).reshape(-1)))
+        else:
+            edits.set_key(g, frame, (ell[0], ell[1], ell[2] / sz, ell[3] / sz))
         self.sel = ("g", g["gid"])
         self._edited()
 
@@ -510,6 +517,8 @@ class AppState(QObject):
         for f in order:
             it = next((it for it in res.items(f) if it.key == key), None)
             if it is not None:
+                if s.mode == "sign" and it.pts is not None:
+                    return tuple(np.asarray(it.pts, np.float32).reshape(-1)), f
                 return tuple(it.ell[:4]), f
         return None, None
 

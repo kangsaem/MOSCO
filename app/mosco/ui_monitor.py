@@ -75,6 +75,7 @@ class Monitor(QWidget):
         self._draw = None       # (q0, q1) 드래그로 타원 그리는 중(원본 좌표)
         self.show_ell = True
         self.show_ids = False
+        self.quad_mode = False      # 간판 모드: 새로 그리는 모양 = 사각형
         self.focus_ell = None   # 반반 얼굴 자동 확대용
         self.mode = "fit"       # fit | face | manual
         self.default_mode = "fit"
@@ -127,6 +128,11 @@ class Monitor(QWidget):
         for e in self.ells:
             if e["key"] != self.sel:
                 continue
+            if e.get("quad") is not None:          # 간판: 꼭짓점 4개 손잡이
+                for k, (x, y) in enumerate(e["quad"]):
+                    if abs(q.x() - x) <= tol and abs(q.y() - y) <= tol:
+                        return e, f"c{k}"
+                continue
             cx, cy, w, h, ang = e["ell"]
             a = math.radians(ang)
             ux, uy = math.cos(a), math.sin(a)
@@ -137,6 +143,13 @@ class Monitor(QWidget):
         best = None
         for e in self.ells:
             cx, cy, w, h, ang = e["ell"]
+            if e.get("quad") is not None:
+                import numpy as np
+                import cv2
+                inside = cv2.pointPolygonTest(np.asarray(e["quad"], np.float32), (q.x(), q.y()), False) >= 0
+                if inside and (best is None or w * h < best["ell"][2] * best["ell"][3]):
+                    best = e
+                continue
             a = math.radians(-ang)
             x, y = q.x() - cx, q.y() - cy
             xr, yr = x * math.cos(a) - y * math.sin(a), x * math.sin(a) + y * math.cos(a)
@@ -268,7 +281,8 @@ class Monitor(QWidget):
                 if ent["key"] != self.sel:
                     self.sel = ent["key"]
                     self.selected.emit(ent["key"])
-                self._edit = [ent["key"], mode, q, tuple(ent["ell"]), s, False]
+                g0 = tuple(v for p in ent["quad"] for v in p) if ent.get("quad") is not None else tuple(ent["ell"])
+                self._edit = [ent["key"], mode, q, g0, s, False]
                 self.update()
                 return
             if self.sel is not None:
@@ -291,6 +305,23 @@ class Monitor(QWidget):
             key, mode, q0, ell0, s, _ = self._edit
             q, _ = self.to_img(e.position())
             if q is None:
+                return
+            if len(ell0) == 8:                       # 간판 4꼭짓점: 꼭짓점 하나 또는 통째로 이동
+                v = list(ell0)
+                if mode == "move":
+                    dx, dy = q.x() - q0.x(), q.y() - q0.y()
+                    v = [v[i] + (dx if i % 2 == 0 else dy) for i in range(8)]
+                else:
+                    k = int(mode[1])
+                    v[2 * k], v[2 * k + 1] = q.x(), q.y()
+                for ent in self.ells:
+                    if ent["key"] == key:
+                        ent["quad"] = [(v[2 * i], v[2 * i + 1]) for i in range(4)]
+                        xs, ys = v[0::2], v[1::2]
+                        ent["ell"] = ((min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2, max(xs) - min(xs),
+                                      max(ys) - min(ys), 0.0)
+                self._edit[5] = True
+                self.update()
                 return
             cx, cy, w, h, ang = ell0
             if mode == "move":
@@ -334,7 +365,10 @@ class Monitor(QWidget):
             if moved:
                 for ent in self.ells:
                     if ent["key"] == key:
-                        self.edited.emit(key, tuple(ent["ell"]))
+                        if ent.get("quad") is not None:
+                            self.edited.emit(key, tuple(v for p in ent["quad"] for v in p))     # 8값
+                        else:
+                            self.edited.emit(key, tuple(ent["ell"]))
             return
         self._drag = None
 
@@ -377,16 +411,25 @@ class Monitor(QWidget):
                            else QColor("#7fd1ff") if ent.get("manual") else QColor("#f2c94c"))
                     pen = QPen(col, 2 if not sel else 2.5, Qt.SolidLine if sel else Qt.DashLine)
                     p.setPen(pen)
-                    p.save()
-                    p.translate(ox + cx * s, oy + cy * s)
-                    p.rotate(ang)
-                    p.setBrush(Qt.NoBrush)
-                    p.drawEllipse(QPointF(0, 0), ew / 2 * s, eh / 2 * s)
-                    if sel:
-                        p.setBrush(QColor("#ffffff"))
-                        for hx, hy in ((ew / 2, 0), (-ew / 2, 0), (0, eh / 2), (0, -eh / 2)):
-                            p.drawRect(QRectF(hx * s - 4, hy * s - 4, 8, 8))
-                    p.restore()
+                    if ent.get("quad") is not None:          # 간판 4꼭짓점
+                        pts = [QPointF(ox + x * s, oy + y * s) for x, y in ent["quad"]]
+                        p.setBrush(Qt.NoBrush)
+                        p.drawPolygon(pts)
+                        if sel:
+                            p.setBrush(QColor("#ffffff"))
+                            for pt in pts:
+                                p.drawRect(QRectF(pt.x() - 4, pt.y() - 4, 8, 8))
+                    else:
+                        p.save()
+                        p.translate(ox + cx * s, oy + cy * s)
+                        p.rotate(ang)
+                        p.setBrush(Qt.NoBrush)
+                        p.drawEllipse(QPointF(0, 0), ew / 2 * s, eh / 2 * s)
+                        if sel:
+                            p.setBrush(QColor("#ffffff"))
+                            for hx, hy in ((ew / 2, 0), (-ew / 2, 0), (0, eh / 2), (0, -eh / 2)):
+                                p.drawRect(QRectF(hx * s - 4, hy * s - 4, 8, 8))
+                        p.restore()
                     if ent.get("keyed"):
                         p.setPen(Qt.NoPen)
                         p.setBrush(col)
@@ -405,7 +448,10 @@ class Monitor(QWidget):
                 ew, eh = abs(q1.x() - q0.x()), abs(q1.y() - q0.y())
                 p.setPen(QPen(QColor("#7fd1ff"), 2, Qt.DashLine))
                 p.setBrush(Qt.NoBrush)
-                p.drawEllipse(QPointF(ox + cx * s, oy + cy * s), ew / 2 * s, eh / 2 * s)
+                if self.quad_mode:
+                    p.drawRect(QRectF(ox + (cx - ew / 2) * s, oy + (cy - eh / 2) * s, ew * s, eh * s))
+                else:
+                    p.drawEllipse(QPointF(ox + cx * s, oy + cy * s), ew / 2 * s, eh / 2 * s)
             p.restore()
 
 
