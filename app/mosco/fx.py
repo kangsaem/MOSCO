@@ -9,11 +9,6 @@ import numpy as np
 
 from . import models
 
-try:
-    _guided = cv2.ximgproc.guidedFilter
-except AttributeError:      # opencv-contrib 없음 → 양방향 필터로 대체
-    _guided = None
-
 K = 1 / 65535.0
 
 
@@ -153,15 +148,6 @@ def feature_mask(pts, roi, face_w):
     k = max(1, int(face_w * 0.035))
     m = cv2.dilate(m, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * k + 1, 2 * k + 1)))
     return cv2.GaussianBlur(m, (0, 0), max(1.0, face_w * 0.02))
-
-
-def _smooth_img(img, face_w):
-    r = max(2, int(face_w / 45))
-    guide = img[..., 1].copy()
-    if _guided is not None:
-        b = _guided(guide, img, r, 0.004)
-        return _guided(guide, b, r, 0.004)
-    return cv2.bilateralFilter(img, r * 2 + 1, 0.08, r * 1.5)
 
 
 class BeautyResult:

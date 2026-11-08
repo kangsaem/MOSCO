@@ -33,16 +33,18 @@ jobs:
             --exclude-module PySide6.QtMultimedia --exclude-module tkinter `
             app/main.py
 
-      - name: Add FFmpeg (BtbN GPL build) + models
+      - name: Add FFmpeg (BtbN GPL shared build) + models
         shell: pwsh
         run: |
-          $url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+          # v0.7.9: 정적(ffmpeg.exe·ffprobe.exe 가 라이브러리를 각자 통째로) → 공유(DLL 을 함께 씀)
+          $url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl-shared.zip"
           Invoke-WebRequest $url -OutFile ffmpeg.zip
           Expand-Archive ffmpeg.zip -DestinationPath ffmpeg_x
           $bin = Get-ChildItem ffmpeg_x -Recurse -Filter ffmpeg.exe | Select-Object -First 1
           New-Item -ItemType Directory -Force dist/MOSCO/bin | Out-Null
           Copy-Item $bin.FullName dist/MOSCO/bin/
           Copy-Item (Join-Path $bin.DirectoryName "ffprobe.exe") dist/MOSCO/bin/
+          Copy-Item (Join-Path $bin.DirectoryName "*.dll") dist/MOSCO/bin/
           New-Item -ItemType Directory -Force dist/MOSCO/models | Out-Null
           Copy-Item models/* dist/MOSCO/models/
           Copy-Item README.md dist/MOSCO/사용법.md
@@ -92,6 +94,20 @@ jobs:
           Remove-Item -Recurse -Force dist/MOSCO/cache -ErrorAction SilentlyContinue
           Remove-Item -Recurse -Force dist/MOSCO/presets -ErrorAction SilentlyContinue
           Remove-Item -Force dist/MOSCO/settings.json -ErrorAction SilentlyContinue
+
+      - name: Size report (빌드 용량 실측)
+        shell: pwsh
+        run: |
+          $root = (Resolve-Path dist/MOSCO).Path
+          $all = Get-ChildItem $root -Recurse -File
+          "TOTAL {0:N1} MB  files {1}" -f (($all | Measure-Object Length -Sum).Sum / 1MB), $all.Count | Write-Host
+          Write-Host "--- 폴더별(2단계) ---"
+          $all | Group-Object { $r = $_.FullName.Substring($root.Length + 1); $p = $r.Split('\'); if ($p.Length -ge 3) { $p[0] + '\' + $p[1] } else { $p[0] } } |
+            ForEach-Object { [pscustomobject]@{ MB = [math]::Round(($_.Group | Measure-Object Length -Sum).Sum / 1MB, 1); Path = $_.Name } } |
+            Sort-Object MB -Descending | Select-Object -First 25 | Format-Table -AutoSize | Out-String -Width 200 | Write-Host
+          Write-Host "--- 큰 파일 30 ---"
+          $all | Sort-Object Length -Descending | Select-Object -First 30 |
+            ForEach-Object { "{0,8:N1} MB  {1}" -f ($_.Length / 1MB), $_.FullName.Substring($root.Length + 1) } | Write-Host
 
       - uses: actions/upload-artifact@v4
         with:
