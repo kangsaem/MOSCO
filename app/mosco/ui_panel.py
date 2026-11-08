@@ -66,7 +66,7 @@ class ControlPanel(QWidget):
         rt.setSpacing(6)
         lt = QLabel("대상")
         lt.setStyleSheet("color:#aaa")
-        self.target = Seg([("blur", "얼굴"), ("sign", "간판")])
+        self.target = Seg([("blur", "얼굴 블러"), ("sign", "간판 블러")])
         self.target.setToolTip("얼굴 블러 / 간판 블러(글자 검출 → 원근 따라가는 사각형). 둘 중 하나만")
         self.target.changed.connect(self.state.set_mode)
         rt.addWidget(lt)

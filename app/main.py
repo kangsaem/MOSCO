@@ -35,7 +35,7 @@ def main():
     models.set_gpu(w.state.settings.render.get("gpu", False))
     args = [a for a in sys.argv[1:] if Path(a).suffix.lower() in VIDEO_EXT]
     if os.environ.get("MOSCO_SELFTEST") or args:
-        w.show()                               # 빌드 점검·파일을 끌어다 실행 = 바로 편집 화면
+        w.showMaximized()                      # 빌드 점검·파일을 끌어다 실행 = 바로 편집 화면(전체 창)
     else:
         # 시작 창 [AUTO]/[편집]. 창 사이를 오가므로 '마지막 창 닫힘 = 종료'는 끄고 직접 종료
         from mosco.ui_start import StartWindow

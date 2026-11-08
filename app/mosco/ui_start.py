@@ -41,7 +41,7 @@ class StartWindow(QWidget):
     def edit(self):
         self._going = True
         self.hide()
-        self.mw.show()
+        self.mw.showMaximized()                # 편집 화면 = 전체 창(v0.7.13)
 
     # ------------------------------------------------------------ AUTO
     def auto(self):
