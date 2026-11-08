@@ -143,7 +143,7 @@ app/mosco/ui_auto.py      AUTO 팝업·샘플 창 (DTME AUTO_UI 틀)
 - (선택·보류) 배포본을 **비번 7z** 로 한 번 더 묶기(비번은 GitHub Secrets). 파일 전달 중 유출 대비용. A(비공개) 없이는 의미 없음.
 
 ### B-3. 알려진 한계·개선 후보
-- **빌드 용량 점검(급하지 않음, 사용자 '나중에')**: 압축 316MB, DTME 보다 약 100MB 큼. 모델은 21MB 뿐. 추정 원인 = ffmpeg 3중(정적 GPL ffmpeg/ffprobe.exe · PyAV 자체 ffmpeg · OpenCV videoio) + OpenCV contrib(쓰는 건 `cv2.ximgproc.guidedFilter` 하나). 순서: (A) Actions 에서 폴더별 크기 실측 + DTME 빌드 설정과 비교 → (B) ffmpeg gpl-shared → (C) contrib 빼고 guidedFilter 직접 구현.
+- **빌드 용량**: v0.7.8 압축 320MB → **v0.7.9 256MB**(압축 전 616MB, CI 'Size report'). 큰 것: bin(ffmpeg shared DLL) 185MB(avcodec 115) · cv2 111MB(cv2.pyd 82 + **opencv_videoio_ffmpeg 29 — 안 씀**) · PySide6 93MB(**opengl32sw 20**·Qt6Quick 6·Qml 5·Pdf 4 — 안 씀) · onnxruntime 67 · PyAV av.libs 64(재생용 ffmpeg 한 벌 더) · models 25 · numpy.libs 20. 다음 후보: (E) 안 쓰는 DLL 지우기(~-55MB 압축 전, 위험 낮음) / (D) ffmpeg 한 벌로(bin 또는 PyAV 하나만 — 큰 작업).
 - 몸→머리 추정은 실제 뒤통수 영상으로 미검증(합성 시험만). 겹친 군중에선 틀릴 수 있음 → 수정 기능으로 보완.
 - 아주 작은 얼굴 10px 정면까지 합성 통과, 실제 압축·흔들림 영상 미확인.
 - 뷰티 자동 검출은 큰 얼굴 위주(나머지는 타원 추가). 키는 가로·세로·위치만(기울기 없음).
