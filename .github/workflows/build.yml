@@ -33,6 +33,26 @@ jobs:
             --exclude-module PySide6.QtMultimedia --exclude-module tkinter `
             app/main.py
 
+      - name: Trim unused DLLs (안 쓰는 것 지우기)
+        shell: pwsh
+        run: |
+          # v0.7.10: OpenCV 영상 입출력(ffmpeg 내장 — 우리는 cv2.VideoCapture 안 씀), Qt 소프트웨어 OpenGL·Quick·Qml·Pdf
+          # 와 그것들을 끌어오는 플러그인(가상 키보드·PDF 그림 형식). 남은 것은 아래 Smoke test(exe 실행)로 확인.
+          $root = (Resolve-Path dist/MOSCO).Path
+          $pats = @("opencv_videoio_ffmpeg*.dll", "opengl32sw.dll", "Qt6Quick*.dll", "Qt6Qml*.dll", "Qt6Pdf*.dll",
+                    "Qt6VirtualKeyboard*.dll", "qtvirtualkeyboardplugin.dll", "qpdf.dll", "QtQuick*.pyd", "QtQml*.pyd",
+                    "QtPdf*.pyd")
+          $sum = 0
+          foreach ($p in $pats) {
+            Get-ChildItem $root -Recurse -File -Filter $p | ForEach-Object {
+              $sum += $_.Length
+              Write-Host ("del {0,7:N1} MB  {1}" -f ($_.Length / 1MB), $_.FullName.Substring($root.Length + 1))
+              Remove-Item $_.FullName -Force
+            }
+          }
+          Get-ChildItem $root -Recurse -Directory -Filter qml | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+          "removed {0:N1} MB" -f ($sum / 1MB) | Write-Host
+
       - name: Add FFmpeg (BtbN GPL shared build) + models
         shell: pwsh
         run: |
