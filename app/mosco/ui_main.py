@@ -105,7 +105,7 @@ def _scale_items(items, scale):
         cx, cy, w, h, ang = it.ell
         ni = edits.Item(it.key, it.tid, (cx * scale, cy * scale, w * scale, h * scale, ang),
                         it.pts * scale if it.pts is not None else None, it.presence, dict(it.ov), it.manual,
-                        it.gid, it.keyed)
+                        it.gid, it.keyed, it.minus)
         out.append(ni)
     return out
 
@@ -115,8 +115,10 @@ def entries(ells):
     out = []
     for it, ell in ells:
         lab = str(it.tid) if it.tid is not None else ("+" if it.manual else None)
+        if it.minus:
+            lab = "−" + (lab if lab and lab != "+" else "")
         out.append({"key": it.key, "label": lab, "ell": tuple(float(v) for v in ell), "manual": it.manual,
-                    "keyed": it.keyed})
+                    "keyed": it.keyed, "minus": it.minus})
     return out
 
 
@@ -388,6 +390,7 @@ class MainWindow(QMainWindow):
         self.mon.merge_with.connect(self.on_merge)
         self.panel.del_key.connect(lambda: self.state.delete_key(self.f) or self.flash("이 프레임에 키가 없습니다"))
         self.panel.off.connect(lambda how: self.state.off(how, self.f, self._n()))
+        self.panel.minus.connect(lambda v: self.state.set_minus(v, self.f))
         self.panel.ov_pressed.connect(self.state.push_undo)
         self.panel.ov_changed.connect(self.on_ov)
         self._merge_anchor = None
@@ -424,6 +427,7 @@ class MainWindow(QMainWindow):
         sc(Qt.Key_Delete, self._del)
         sc(QKeySequence(Qt.SHIFT | Qt.Key_Delete), self._delete_keyframe)
         sc(Qt.Key_A, lambda: self.panel.b_add.toggle())
+        sc(Qt.Key_X, self._toggle_minus)
         sc(Qt.Key_Escape, self._esc)
 
     # ------------------------------------------------------------ 타원 편집
@@ -491,7 +495,14 @@ class MainWindow(QMainWindow):
         self.bar.set_keys(r.keys_of(sel))
         self.lanes.sel = sel
         self.lanes.update()
-        self.panel.show_selection(self.state.ov_of(sel, self.f) if sel else None, s.params())
+        self.panel.show_selection(self.state.ov_of(sel, self.f) if sel else None, s.params(),
+                                  self.state.minus_of(sel, self.f) if sel else False)
+
+    def _toggle_minus(self):
+        s = self.state.source()
+        if s is None or s.mode != "blur" or self.state.sel is None:
+            return
+        self.state.set_minus(not self.state.minus_of(self.state.sel, self.f), self.f)
 
     def _esc(self):
         self.panel.stop_pick()
@@ -677,7 +688,8 @@ class MainWindow(QMainWindow):
         self.lanes.set_cur(i)
         self.ruler.set_cur(i)
         if self.state.sel is not None:
-            self.panel.show_selection(self.state.ov_of(self.state.sel, i), self.state.source().params())
+            self.panel.show_selection(self.state.ov_of(self.state.sel, i), self.state.source().params(),
+                                      self.state.minus_of(self.state.sel, i))
         self.tc.setText(ff.frames_to_tc(ff.tc_to_frames(info.timecode, info.fps) + i, info.fps))
         self._quick(i)
         self._full_t.start()

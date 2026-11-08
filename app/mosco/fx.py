@@ -296,7 +296,25 @@ def blur(frame16, items, p, want_alpha=False):
     out = frame16.copy() if items else frame16
     full_a = np.zeros((H, W), np.float32) if want_alpha else None
     ells = []
+    # v0.7.7 제외 타원: 그 영역은 어떤 블러도 안 함(4444 알파에서도 빠짐). 가장자리 = 그 타원의 페더.
+    minus = None
     for it in items:
+        if not getattr(it, "minus", False):
+            continue
+        ell = _item_ell(it, p)
+        ells.append((it, ell))
+        fe = it.ov.get("feather", p["feather"])
+        feather = max(ell[2], ell[3]) * fe / 100 / 2
+        roi = ellipse_roi(ell, feather, W, H)
+        if roi is None:
+            continue
+        if minus is None:
+            minus = np.zeros((H, W), np.float32)
+        x0, y0, x1, y1 = roi
+        np.maximum(minus[y0:y1, x0:x1], ellipse_alpha(ell, roi, feather) * it.presence, out=minus[y0:y1, x0:x1])
+    for it in items:
+        if getattr(it, "minus", False):
+            continue
         ell = _item_ell(it, p)
         ells.append((it, ell))
         fe = it.ov.get("feather", p["feather"])
@@ -306,6 +324,8 @@ def blur(frame16, items, p, want_alpha=False):
             continue
         x0, y0, x1, y1 = roi
         a = ellipse_alpha(ell, roi, feather)
+        if minus is not None:
+            a = a * (1.0 - minus[y0:y1, x0:x1])
         img = out[y0:y1, x0:x1].astype(np.float32)
         size = max(ell[2], ell[3])
         st = max(1, it.ov.get("strength", p["strength"])) / 100
@@ -334,9 +354,11 @@ def draw_review(img, ells, color=(65535, 51400, 19500), ids=True, thick=2):
     """img uint8 RGB 위에 타원·ID. ells: [(item 또는 id, ell)]"""
     for it, ell in ells:
         fid = getattr(it, "tid", it)
+        mi = getattr(it, "minus", False)
+        col = (111, 211, 138) if mi else color                 # 제외 타원 = 초록(8bit 검수본)
         cx, cy, ew, eh, ang = ell
-        cv2.ellipse(img, (int(cx), int(cy)), (int(ew / 2), int(eh / 2)), ang, 0, 360, color, thick, cv2.LINE_AA)
-        if ids and fid is not None:
-            cv2.putText(img, str(fid), (int(cx - ew / 2), int(cy - eh / 2) - 4), cv2.FONT_HERSHEY_SIMPLEX,
-                        0.6, color, 2, cv2.LINE_AA)
+        cv2.ellipse(img, (int(cx), int(cy)), (int(ew / 2), int(eh / 2)), ang, 0, 360, col, thick, cv2.LINE_AA)
+        if ids and (fid is not None or mi):
+            cv2.putText(img, ("-" if mi else "") + (str(fid) if fid is not None else ""),
+                        (int(cx - ew / 2), int(cy - eh / 2) - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.6, col, 2, cv2.LINE_AA)
     return img

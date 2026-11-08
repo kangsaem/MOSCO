@@ -471,6 +471,22 @@ class AppState(QObject):
         self.sel = ("g", g["gid"]) if self.sel is not None and how != "remove" else self.sel
         self._edited()
 
+    def set_minus(self, v, frame):
+        """선택 타원을 블러 제외(True) / 블러(False)로. 자동 타원도 그룹을 만들어 트랙을 따라감."""
+        self.push_undo()
+        s, g = self._group_for(self.sel, frame)
+        if g is None or bool(g.get("minus")) == bool(v):
+            self.undo_stack.pop()
+            return
+        g["minus"] = bool(v)
+        self.sel = ("g", g["gid"])
+        self._edited()
+
+    def minus_of(self, key, frame):
+        s = self.source()
+        it = self._item(s, key, frame) if (s and key) else None
+        return bool(it and it.minus)
+
     def merge(self, key_a, anchor_a, key_b, frame_b):
         s = self.source()
         it = self._item(s, key_b, frame_b) if s else None
@@ -514,7 +530,9 @@ class AppState(QObject):
                 k = it.key
                 if k not in seen:
                     lbl = str(it.tid) if it.tid is not None else ("+" if it.manual else "·")
-                    seen[k] = {"label": lbl, "frames": []}
+                    if it.minus:
+                        lbl = "−" + (lbl if lbl not in ("+", "·") else "")
+                    seen[k] = {"label": lbl, "frames": [], "minus": it.minus}
                     order.append(k)
                 seen[k]["frames"].append(i)
         out = []
@@ -529,7 +547,8 @@ class AppState(QObject):
                 prev = f
             intervals.append((a, prev))
             keys = sorted(int(x) for x in groups[k[1]].get("keys", {})) if k[0] == "g" and k[1] in groups else []
-            out.append({"key": k, "label": seen[k]["label"], "intervals": intervals, "keys": keys, "n": n})
+            out.append({"key": k, "label": seen[k]["label"], "intervals": intervals, "keys": keys, "n": n,
+                        "minus": seen[k]["minus"]})
         self._spans_cache = (sig, out)
         return out
 

@@ -24,6 +24,37 @@ def fake_det(n=120):
     return {"det": np.array(rows, np.float32), "n": np.array(n)}
 
 
+def minus_check():
+    """v0.7.7 제외 타원: 그 안은 블러 안 함(겹친 타원이 있어도) · 4444 알파 0 · 저장·불러오기 유지."""
+    import json
+    from mosco import fx
+    from mosco.project import Source as Src
+    z = fake_det()
+    s = Src("x.mov", "blur")
+    tr = analyze.blur_track(z, s.blur)
+    r = edits.Resolver(s, tr)
+    a = min(r.items(20), key=lambda it: it.ell[0])
+    g = edits.ensure_group(s, a, 20)
+    g["minus"] = True
+    cx, cy = a.ell[0], a.ell[1]
+    edits.add_manual(s, 0, (cx + 25, cy, 120, 120))          # 겹치는 블러 타원
+    from dataclasses import asdict
+    s2 = Src.from_dict(json.loads(json.dumps(asdict(s))))       # 저장·불러오기(Project.save 와 같은 방식)
+    items = edits.Resolver(s2, tr).items(20)
+    assert sum(it.minus for it in items) == 1 and any(not it.minus for it in items), "제외 표시가 유지되지 않음"
+    rng = np.random.default_rng(0)
+    f = (rng.random((720, 1280, 3)) * 65535).astype(np.uint16)
+    out, alpha, ells = fx.blur(f, items, s2.blur, True)
+    m = next(it for it in items if it.minus)
+    mx, my = int(m.ell[0]), int(m.ell[1])
+    assert np.array_equal(out[my - 3:my + 3, mx - 3:mx + 3], f[my - 3:my + 3, mx - 3:mx + 3]), "제외 영역이 블러됨"
+    assert alpha[my - 3:my + 3, mx - 3:mx + 3].max() < 1e-3, "제외 영역 알파가 0 이 아님"
+    ox = int(cx + 25 + 45)                                      # 겹친 타원의 제외 바깥 쪽
+    assert alpha[int(cy), ox] > 0.5, "제외 밖 블러가 사라짐"
+    assert len(ells) == len(items)
+    print("minus OK")
+
+
 def main():
     z = fake_det()
     s = Source("x.mov", "blur")
@@ -116,6 +147,7 @@ def main():
     its = rbm.items(15)
     assert len(its) == 2 and {it.tid for it in its} == {1, 2}, f"자동 타원 2개가 아님: {its}"
     print("beauty multiface OK")
+    minus_check()
     print("EDITS OK")
 
 

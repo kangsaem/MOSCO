@@ -3,7 +3,8 @@
 데이터(Source.edits[mode]):
   {"groups": [Group...], "merges": [[앵커A, 앵커B], ...], "next": 다음 gid}
   Group = {"gid", "manual": bool, "anchor": [f, cx, cy], "keys": {"f": [cx, cy, w, h]},
-           "off": [[a, b], ...], "ov": {"size": %, "feather": %, "strength": 0~100}}
+           "off": [[a, b], ...], "ov": {"size": %, "feather": %, "strength": 0~100},
+           "minus": bool}   # v0.7.7 블러: 제외 타원(이 영역은 블러 안 함 · 4444 알파에서도 빠짐)
 
 - 자동 타원의 키 = 그 프레임에서 고친 결과(절대값). 적용할 때 자동값과의 차이(보정량)를 키 사이에 보간하고,
   첫/마지막 키 밖으로는 FADE 프레임 동안 0 으로 줄어듦 → 틀린 몇 프레임만 고치면 나머지는 계속 따라감
@@ -34,6 +35,7 @@ class Item:
     manual: bool = False
     gid: int | None = None
     keyed: bool = False        # 이 프레임에 키 있음
+    minus: bool = False        # 블러 제외 타원
 
 
 def empty():
@@ -208,7 +210,7 @@ class Resolver:
                 seen.add(gid)
             out.append(Item(("g", gid) if gid is not None else ("t", tid), tid, ell, pts, pres,
                             dict(g.get("ov", {})) if g else {}, False, gid,
-                            bool(g and str(i) in g.get("keys", {}))))
+                            bool(g and str(i) in g.get("keys", {})), bool(g and g.get("minus"))))
         for g in self.e["groups"]:
             gid = g["gid"]
             if gid in seen or g.get("off_all") or _off(g, i):
@@ -229,7 +231,7 @@ class Resolver:
                 if v is None:
                     continue
             out.append(Item(("g", gid), tid, (*v, 0.0), None, 1.0, dict(g.get("ov", {})), bool(g.get("manual")),
-                            gid, str(i) in g.get("keys", {})))
+                            gid, str(i) in g.get("keys", {}), bool(g.get("minus"))))
         return out
 
     def keys_of(self, key):

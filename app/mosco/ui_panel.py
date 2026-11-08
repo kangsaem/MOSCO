@@ -21,6 +21,7 @@ class ControlPanel(QWidget):
     tool = Signal(object)            # None | "add" | "merge"
     del_key = Signal()
     off = Signal(str)                # from | to | all | on | remove
+    minus = Signal(bool)             # 선택 타원: 블러 제외(True) / 블러(False)
     ov_pressed = Signal()
     ov_changed = Signal(str, object)
 
@@ -169,6 +170,21 @@ class ControlPanel(QWidget):
         w1 = QWidget()
         w1.setLayout(r1)
         self.sec_edit.add(w1)
+        # 블러: 선택 타원 [블러 | 제외] — 제외 = 이 영역은 블러 안 함(4444 알파에서도 빠짐)
+        rm = QHBoxLayout()
+        rm.setSpacing(6)
+        lm = QLabel("선택 타원")
+        lm.setStyleSheet("color:#aaa")
+        self.sel_kind = Seg([("blur", "블러"), ("minus", "제외")])
+        self.sel_kind.setFixedWidth(120)
+        self.sel_kind.setToolTip("제외 = 이 타원 영역은 블러하지 않음(다른 타원이 겹쳐도). 4444 알파에서도 빠짐 (X)")
+        self.sel_kind.changed.connect(lambda k: self.minus.emit(k == "minus"))
+        rm.addWidget(lm)
+        rm.addStretch(1)
+        rm.addWidget(self.sel_kind)
+        self.w_minus = QWidget()
+        self.w_minus.setLayout(rm)
+        self.sec_edit.add(self.w_minus)
         self.ov_rows = {}
         for key, label, lo, hi, unit in OV_SLIDERS:
             row = SliderRow(key, label, lo, hi, unit)
@@ -247,9 +263,13 @@ class ControlPanel(QWidget):
                 b.blockSignals(False)
         self.tool.emit(None)
 
-    def show_selection(self, ov, p):
+    def show_selection(self, ov, p, minus=False):
         """선택한 타원의 값(없으면 전체 값으로 표시, 비활성)."""
         en = ov is not None
+        self.sel_kind.setEnabled(en)
+        self.sel_kind.blockSignals(True)
+        self.sel_kind.set("minus" if (en and minus) else "blur")
+        self.sel_kind.blockSignals(False)
         for k, row in self.ov_rows.items():
             row.setEnabled(en)
             if k == "size":
@@ -272,7 +292,7 @@ class ControlPanel(QWidget):
         beauty = mode == "beauty"
         for w in (self.sec_beauty, self.sec_bell):
             w.setVisible(beauty)
-        for w in (self.sec_blur, self.sec_xell, self.sec_det):
+        for w in (self.sec_blur, self.sec_xell, self.sec_det, self.w_minus):
             w.setVisible(not beauty)
         self.t_id.setVisible(not beauty)
         if beauty and self.key_mode == "skin":

@@ -373,7 +373,8 @@ class Monitor(QWidget):
                 for ent in self.ells:
                     cx, cy, ew, eh, ang = ent["ell"]
                     sel = ent["key"] == self.sel and self.sel is not None
-                    col = QColor("#ffffff") if sel else (QColor("#7fd1ff") if ent.get("manual") else QColor("#f2c94c"))
+                    col = (QColor("#ffffff") if sel else QColor("#6fd38a") if ent.get("minus")       # 제외 = 초록
+                           else QColor("#7fd1ff") if ent.get("manual") else QColor("#f2c94c"))
                     pen = QPen(col, 2 if not sel else 2.5, Qt.SolidLine if sel else Qt.DashLine)
                     p.setPen(pen)
                     p.save()
@@ -607,7 +608,8 @@ class EllipseLanes(QWidget):
             for (a, b) in d["intervals"]:
                 xa, xb = self._x(a), self._x(b + 1)
                 p.fillRect(QRectF(xa, y0, max(2, xb - xa), y1 - y0),
-                           QColor("#4a8fe0") if sel else QColor("#3d6690"))
+                           (QColor("#6fd38a") if sel else QColor("#3f7a52")) if d.get("minus")      # 제외 = 초록
+                           else (QColor("#4a8fe0") if sel else QColor("#3d6690")))
             if pv:                                  # 드래그 미리보기(연장 구간)
                 xa, xb = self._x(pv[1]), self._x(pv[2] + 1)
                 p.setPen(QPen(QColor("#f2c94c"), 1, Qt.DashLine))
