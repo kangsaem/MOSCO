@@ -11,6 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 
+import cv2
 import numpy as np  # noqa: E402
 
 from mosco import analyze, ff, models, paths  # noqa: E402
@@ -85,6 +86,38 @@ def main():
         # 얼굴이 없으면 처리 없음 → ProRes 재인코딩 오차만(합성 화면의 날카로운 경계에서 생김)
         assert diff < 200, f"{mode}: 원본과 차이가 큼 {diff}"
         print(f"{mode} OK  {time.time() - t:.1f}s  meandiff16={diff:.1f}  {list(outs.values())}")
+    # v0.7.6 렌더 속도: 큰 페더·주름 저주파를 축소 계산 — 원래(전체 해상도)와 차이가 거의 없어야 함
+    from mosco import fx
+    rng = np.random.default_rng(3)
+    worst = 0.0
+    for _ in range(12):
+        ew, eh = rng.uniform(150, 700), rng.uniform(200, 900)
+        ell = (rng.uniform(300, 1600), rng.uniform(200, 900), ew, eh, rng.uniform(-30, 30))
+        fp = max(ew, eh) * rng.uniform(0.05, 0.3) / 2
+        roi = fx.ellipse_roi(ell, fp, 1920, 1080)
+        if roi is None:
+            continue
+        # 기준 = 정확한 타원(수식, 화소당 2×2 점) 전체 해상도 + 화면 밖까지 이어진 채로 블러 → 화면 안만.
+        # (예전 cv2.ellipse 는 면적 ~0.4% 크고 다각형 오차 → 기준으로 안 씀)
+        cx, cy = ell[0], ell[1]
+        r = max(ew, eh) / 2 + fp * 4 + 4
+        ux0, uy0 = int(cx - r), int(cy - r)
+        yy, xx = np.mgrid[0:int(2 * r) + 2, 0:int(2 * r) + 2].astype(np.float32)
+        ref = np.zeros(xx.shape, np.float32)
+        a_ = np.deg2rad(ell[4])
+        for oy in (-0.25, 0.25):
+            for ox in (-0.25, 0.25):
+                X, Y = xx + ox + ux0 - cx, yy + oy + uy0 - cy
+                u = (X * np.cos(a_) + Y * np.sin(a_)) / (ew / 2)
+                v = (-X * np.sin(a_) + Y * np.cos(a_)) / (eh / 2)
+                ref += ((u * u + v * v) <= 1) * 0.25
+        ref = cv2.GaussianBlur(ref, (0, 0), fp)[roi[1] - uy0:roi[3] - uy0, roi[0] - ux0:roi[2] - ux0]
+        worst = max(worst, float(np.abs(fx.ellipse_alpha(ell, roi, fp) - ref).max()))
+    assert worst < 0.01, f"페더 축소 계산 차이 큼 {worst}"          # 알파 1% 이내
+    img = cv2.GaussianBlur(rng.random((600, 640, 3)).astype(np.float32), (0, 0), 3)
+    d = float(np.abs(fx.low_pass(img, 14) - cv2.GaussianBlur(img, (0, 0), 14)).max())
+    assert d < 0.008, f"저주파 축소 계산 차이 큼 {d}"      # 잡음 영상 기준(실제 얼굴 결과 차이는 8bit 1단계 미만)
+    print(f"fast blur OK  alpha {worst:.4f} low {d:.4f}")
     # v0.7.4 분석 하한(블러): 하한별 캐시 · 낮은 하한 캐시는 높은 요구에도 씀 · 같은 분석 동시 요청 = 한 번만
     import threading
     info = ff.probe(str(syn))

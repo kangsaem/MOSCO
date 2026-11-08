@@ -28,8 +28,8 @@ def ellipse_roi(ell, feather_px, w, h):
     return x0, y0, x1, y1
 
 
-def ellipse_alpha(ell, roi, feather_px):
-    """ROI 안의 타원 알파(0~1). 페더 = 가장자리 가우시안 폭(px). 4배 해상도로 그린 뒤 줄여 계단 없음."""
+def _ellipse_alpha_full(ell, roi, feather_px):
+    """원래 방식(전체 해상도). 페더가 작을 때 + 테스트 기준값."""
     x0, y0, x1, y1 = roi
     cx, cy, ew, eh, ang = ell
     m = np.zeros((y1 - y0, x1 - x0), np.float32)
@@ -39,6 +39,56 @@ def ellipse_alpha(ell, roi, feather_px):
     if feather_px > 0.5:
         m = cv2.GaussianBlur(m, (0, 0), feather_px)
     return m
+
+
+ALPHA_SMALL_FROM = 8.0     # 페더가 이보다 크면 축소해서 계산
+
+
+def ellipse_alpha(ell, roi, feather_px):
+    """ROI 안의 타원 알파(0~1). 페더 = 가장자리 가우시안 폭(px).
+    v0.7.6: 페더가 크면(뷰티 기본 σ≈70px) 1/q 크기에서 그리고 흐린 뒤 키움 — 원래 부드러운 신호라 차이 ≈0
+    (8bit 기준 최대 ~1단계). 예전엔 이 블러 하나가 뷰티 렌더 1프레임 시간의 ~55%."""
+    if feather_px <= ALPHA_SMALL_FROM:
+        return _ellipse_alpha_full(ell, roi, feather_px)
+    x0, y0, x1, y1 = roi
+    W, H = x1 - x0, y1 - y0
+    q = int(max(2, min(8, feather_px / 6)))
+    cx, cy, ew, eh, ang = ell
+    # 화면 가장자리에서 잘린 타원도 '화면 밖으로 이어지는' 그대로 흐리도록, 잘리기 전 범위로 격자를 잡고
+    # 나중에 ROI 만 잘라 씀(예전 전체 해상도 방식은 잘린 경계에서 반사로 채움).
+    R = max(ew, eh) / 2 + 3 * feather_px + 2 * q
+    lx = int(np.ceil(max(0.0, x0 - (cx - R)) / q))
+    ty = int(np.ceil(max(0.0, y0 - (cy - R)) / q))
+    gx0, gy0 = x0 - lx * q, y0 - ty * q
+    w = -(-(int(max(x1, cx + R)) - gx0) // q) + 1
+    h = -(-(int(max(y1, cy + R)) - gy0) // q) + 1
+    x0, y0 = gx0, gy0
+    # 작은 격자 화소 j 의 중심 = 원래 좌표 j*q + (q-1)/2 (resize INTER_LINEAR 와 정렬).
+    # cv2.ellipse 를 작은 격자에 그리면 AA 테두리(≈0.5화소)가 q 배로 커져 타원이 부풀므로 →
+    # 화소마다 4×4 점을 찍어 타원 안쪽 비율(면적)을 직접 계산.
+    ss = 4
+    off = (np.arange(ss, dtype=np.float32) + 0.5) * (q / ss) - q / 2
+    gx = (np.arange(w, dtype=np.float32) * q + (q - 1) / 2 - (cx - x0))[:, None] + off[None, :]   # (w, ss)
+    gy = (np.arange(h, dtype=np.float32) * q + (q - 1) / 2 - (cy - y0))[:, None] + off[None, :]   # (h, ss)
+    a = np.deg2rad(ang)
+    ca, sa = np.float32(np.cos(a)), np.float32(np.sin(a))
+    X = gx[None, None, :, :]            # (1,1,w,ss)
+    Y = gy[:, :, None, None]            # (h,ss,1,1)
+    u = (X * ca + Y * sa) / max(ew / 2, 1e-3)
+    v = (-X * sa + Y * ca) / max(eh / 2, 1e-3)
+    m = ((u * u + v * v) <= 1.0).mean(axis=(1, 3)).astype(np.float32)      # (h, w)
+    m = cv2.GaussianBlur(m, (0, 0), feather_px / q)
+    big = cv2.resize(m, (w * q, h * q), interpolation=cv2.INTER_LINEAR)
+    return big[ty * q:ty * q + H, lx * q:lx * q + W]
+
+
+def low_pass(img, sig, q=4):
+    """큰 σ 가우시안(저주파) — 1/q 크기에서 계산 후 키움(v0.7.6, 주름 메우기). σ 가 작으면 그대로."""
+    if sig < 8:
+        return cv2.GaussianBlur(img, (0, 0), sig)
+    h, w = img.shape[:2]
+    sm = cv2.resize(img, (max(1, w // q), max(1, h // q)), interpolation=cv2.INTER_AREA)
+    return cv2.resize(cv2.GaussianBlur(sm, (0, 0), sig / q), (w, h), interpolation=cv2.INTER_LINEAR)
 
 
 def _ycc(rgb):
@@ -199,10 +249,11 @@ def beauty(frame16, items, p, frame_no=0, want_keys=False) -> BeautyResult:
             # ② 주름 메우기: 주름은 어두운 골 → 그 음영만 끌어올림(블러 없음)
             if wf > 0:
                 sig = max(2.0, face_w / 22)
-                low = cv2.GaussianBlur(target, (0, 0), sig)
+                low = low_pass(target, sig)
                 detail = target - low
                 g = cv2.cvtColor((np.clip(target, 0, 1) * 255).astype(np.uint8), cv2.COLOR_RGB2GRAY)
-                gd = g.astype(np.float32) / 255 - cv2.GaussianBlur(g.astype(np.float32) / 255, (0, 0), sig)
+                gf = g.astype(np.float32) / 255
+                gd = gf - low_pass(gf, sig)
                 dark = np.clip(-gd * 6, 0, 1)[..., None]
                 target = target + (-np.minimum(detail, 0)) * dark * wf
             if p["grain"] > 0:
