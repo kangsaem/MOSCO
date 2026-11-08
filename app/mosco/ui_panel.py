@@ -483,7 +483,7 @@ class PresetGridPopup(DragMove, QDialog):          # 빈 바탕을 끌어 옮김
         wlb = QLabel("작업")
         wlb.setFixedWidth(44)
         wr.addWidget(wlb)
-        self.wseg = Seg([("beauty", "뷰티"), ("blur", "얼굴 블러"), ("sign", "간판")])
+        self.wseg = Seg([("beauty", "뷰티"), ("blur", "얼굴 블러"), ("sign", "간판 블러")])
         self.wseg.set(self.mode)
         self.wseg.changed.connect(lambda v: setattr(self, "mode", v))
         wr.addWidget(self.wseg, 1)

@@ -230,7 +230,7 @@ class AutoDialog(DragMove, QDialog):
         div0.setFrameShape(QFrame.HLine)
         div0.setStyleSheet("color:#3a3a3a")
         right.addWidget(div0)
-        self.seg_work, self.set_work = _seg([("beauty", "뷰티"), ("blur", "얼굴 블러"), ("sign", "간판")], "beauty",
+        self.seg_work, self.set_work = _seg([("beauty", "뷰티"), ("blur", "얼굴 블러"), ("sign", "간판 블러")], "beauty",
                                             self._on_work, lw=AUTO_LW, label="작업")
         right.addWidget(self.seg_work)
         div = QFrame()
