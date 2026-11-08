@@ -53,12 +53,56 @@ jobs:
           Get-ChildItem $root -Recurse -Directory -Filter qml | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
           "removed {0:N1} MB" -f ($sum / 1MB) | Write-Host
 
-      - name: Add FFmpeg (BtbN GPL shared build) + models
+      # FFmpeg: 정상일 때 받아서 캐시를 새로 저장, 다운로드 장애(504/503 등)면 마지막으로 저장한 캐시를 씀
+      - name: Download FFmpeg (BtbN GPL shared build)
+        id: dl
         shell: pwsh
         run: |
           # v0.7.9: 정적(ffmpeg.exe·ffprobe.exe 가 라이브러리를 각자 통째로) → 공유(DLL 을 함께 씀)
           $url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl-shared.zip"
-          Invoke-WebRequest $url -OutFile ffmpeg.zip
+          $ok = $false
+          foreach ($i in 1..3) {
+            try {
+              Invoke-WebRequest $url -OutFile ffmpeg.zip -TimeoutSec 300
+              Expand-Archive ffmpeg.zip -DestinationPath ffmpeg_test -Force      # 받다 끊긴 zip 걸러냄
+              Remove-Item ffmpeg_test -Recurse -Force
+              $ok = $true; break
+            } catch {
+              Write-Host "download try $i failed: $($_.Exception.Message)"
+              Remove-Item ffmpeg.zip, ffmpeg_test -Recurse -Force -ErrorAction SilentlyContinue
+              if ($i -lt 3) { Start-Sleep -Seconds 20 }
+            }
+          }
+          if ($ok) {
+            $h = (Get-FileHash ffmpeg.zip -Algorithm SHA256).Hash.Substring(0, 16)
+            "ok=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            "hash=$h" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            Write-Host "FFmpeg: 새로 받음 ($h)"
+          } else {
+            "ok=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            Write-Host "::warning::FFmpeg 다운로드 실패 → 마지막 캐시 사용"
+          }
+
+      - name: Save FFmpeg cache (정상일 때 새로 저장)
+        if: steps.dl.outputs.ok == 'true'
+        continue-on-error: true            # 같은 빌드(같은 해시)가 이미 저장돼 있으면 건너뜀
+        uses: actions/cache/save@v4
+        with:
+          path: ffmpeg.zip
+          key: ffmpeg-gpl-shared-${{ steps.dl.outputs.hash }}
+
+      - name: Restore FFmpeg cache (다운로드 장애 때)
+        if: steps.dl.outputs.ok != 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: ffmpeg.zip
+          key: ffmpeg-gpl-shared-none
+          restore-keys: ffmpeg-gpl-shared-      # 가장 최근에 저장한 것
+          fail-on-cache-miss: true
+
+      - name: Add FFmpeg + models
+        shell: pwsh
+        run: |
           Expand-Archive ffmpeg.zip -DestinationPath ffmpeg_x
           $bin = Get-ChildItem ffmpeg_x -Recurse -Filter ffmpeg.exe | Select-Object -First 1
           New-Item -ItemType Directory -Force dist/MOSCO/bin | Out-Null
