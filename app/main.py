@@ -56,18 +56,33 @@ def main():
     if args:
         w.state.add_files(args)
     code = app.exec()
-    # 종료 시 프로세스를 확실히 끝냄: 남은 ffmpeg·상주 디코더 정리 후 os._exit.
-    # (데몬/네이티브 스레드·onnxruntime GPU 컨텍스트가 남아 프로세스가 안 죽고 GPU·화면이 계속 점유되던 것 방지.
-    #  PyAV/Qt teardown 경쟁으로 종료 때 세그폴트 나던 것도 함께 우회 — 테스트의 os._exit 과 같은 이유.)
+    _hard_exit(code if isinstance(code, int) else 0)
+
+
+def _hard_exit(code):
+    """종료 시 프로세스를 확실히·즉시 끝낸다. 남은 ffmpeg·상주 디코더를 먼저 정리.
+    (데몬/네이티브 스레드·onnxruntime·ffmpeg(GPU 포함)가 남아 프로세스가 안 죽고 GPU·화면을 계속 점유하던 것 방지.)
+    윈도우에서 os._exit 은 무거운 네이티브 DLL(onnxruntime·ffmpeg·Qt) 해제 중 로더 락 교착을 일으킬 수 있어
+    TerminateProcess 로 DLL 해제를 건너뛰고 즉시 종료한다(PyAV/Qt teardown 세그폴트도 함께 우회)."""
     try:
         from mosco import decoder, ff
         decoder.close_all()
         ff.kill_all()
     except Exception:  # noqa: BLE001
         pass
-    sys.stdout.flush()
-    sys.stderr.flush()
-    os._exit(code if isinstance(code, int) else 0)
+    try:
+        sys.stdout.flush()
+        sys.stderr.flush()
+    except Exception:  # noqa: BLE001
+        pass
+    if os.name == "nt":
+        try:
+            import ctypes
+            k = ctypes.windll.kernel32
+            k.TerminateProcess(k.GetCurrentProcess(), code)
+        except Exception:  # noqa: BLE001
+            pass
+    os._exit(code)
 
 
 if __name__ == "__main__":
