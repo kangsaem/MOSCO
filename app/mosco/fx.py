@@ -129,12 +129,26 @@ def skin_mask(rgbf, ref, rng):
 
 
 def skin_mask_soft(rgbf, ref, rng, face_w):
-    """주름 골(어둡고 색이 다른 가는 선)이 빠지지 않게: 흐린 영상으로 색 판정 → 구멍 메움 → 부드럽게."""
+    """주름 골(어둡고 색이 다른 가는 선)이 빠지지 않게: 흐린 영상으로 색 판정 → 구멍 메움 → 부드럽게.
+    v0.7.17: 피부로 판정된 안쪽은 음영이 있어도 고르게 희게(ease-out), 바깥(0)은 그대로."""
     sig = max(1.0, face_w / 70)
     m = skin_mask(cv2.GaussianBlur(rgbf, (0, 0), sig), ref, rng)
     k = max(3, int(face_w / 30) | 1)
     m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
-    return cv2.GaussianBlur(m, (0, 0), sig)
+    m = cv2.GaussianBlur(m, (0, 0), sig)
+    return m * (2.0 - m)      # 흰 영역 음영 줄이기: 중간값을 흰쪽으로 밀되 0·1 은 유지(경계 보존)
+
+
+def face_region_mask(pts, roi, face_w):
+    """얼굴 윤곽(랜드마크) 안쪽만 1 — 머리카락·배경 제외. 턱 아래로 조금 넓혀 목·턱 피부 유지."""
+    x0, y0, x1, y1 = roi
+    m = np.zeros((y1 - y0, x1 - x0), np.float32)
+    off = np.array([x0, y0], np.float32)
+    oval = ((pts[models.FACE_OVAL] - off) * 16).astype(np.int32)
+    cv2.fillConvexPoly(m, cv2.convexHull(oval), 1.0, cv2.LINE_AA, 4)
+    k = max(1, int(face_w * 0.04))        # 윤곽 바로 바깥 약간 포함(경계 여유)
+    m = cv2.dilate(m, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * k + 1, 2 * k + 1)))
+    return cv2.GaussianBlur(m, (0, 0), max(1.0, face_w * 0.03))
 
 
 def feature_mask(pts, roi, face_w):
@@ -211,6 +225,8 @@ def beauty(frame16, items, p, frame_no=0, want_keys=False) -> BeautyResult:
             ref = (-0.06, 0.07)
         res.ref = res.ref or ref
         skin = skin_mask_soft(img, ref, p["skin_range"], face_w)
+        if pts is not None:
+            skin = skin * face_region_mask(pts, roi, face_w)      # 머리카락·배경 제외(얼굴 윤곽 안)
         region = alpha * skin
         if pts is not None and p.get("features", True):
             region = region * (1 - feature_mask(pts, roi, face_w))
