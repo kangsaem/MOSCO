@@ -139,13 +139,24 @@ def skin_mask_soft(rgbf, ref, rng, face_w):
     return m * (2.0 - m)      # 흰 영역 음영 줄이기: 중간값을 흰쪽으로 밀되 0·1 은 유지(경계 보존)
 
 
-def face_region_mask(pts, roi, face_w):
-    """얼굴 윤곽(랜드마크) 안쪽만 1 — 머리카락·배경 제외. 턱 아래로 조금 넓혀 목·턱 피부 유지."""
+def face_region_mask(pts, roi, face_w, neck=0):
+    """얼굴 윤곽(랜드마크) 안쪽만 1 — 머리카락·배경 제외. 목 확장(neck)만큼 턱 아래로 내려 목 피부 유지."""
     x0, y0, x1, y1 = roi
     m = np.zeros((y1 - y0, x1 - x0), np.float32)
     off = np.array([x0, y0], np.float32)
-    oval = ((pts[models.FACE_OVAL] - off) * 16).astype(np.int32)
-    cv2.fillConvexPoly(m, cv2.convexHull(oval), 1.0, cv2.LINE_AA, 4)
+    oval = (pts[models.FACE_OVAL] - off).astype(np.float32)
+    polys = [oval]
+    top, chin = pts[10] - off, pts[152] - off     # 이마 위·턱 끝
+    axis = chin - top
+    flen = float(np.hypot(*axis))
+    if neck > 0 and flen > 1:                      # 아래쪽(턱) 윤곽점을 얼굴 축 방향으로 내려 목 사다리꼴 추가
+        d = axis / flen
+        proj = (oval - top) @ d
+        low = oval[proj > flen * 0.6]
+        if len(low):
+            polys.append(low + d * (flen * neck / 100 * 0.6))
+    hull = cv2.convexHull((np.vstack(polys) * 16).astype(np.int32))
+    cv2.fillConvexPoly(m, hull, 1.0, cv2.LINE_AA, 4)
     k = max(1, int(face_w * 0.04))        # 윤곽 바로 바깥 약간 포함(경계 여유)
     m = cv2.dilate(m, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * k + 1, 2 * k + 1)))
     return cv2.GaussianBlur(m, (0, 0), max(1.0, face_w * 0.03))
@@ -226,7 +237,10 @@ def beauty(frame16, items, p, frame_no=0, want_keys=False) -> BeautyResult:
         res.ref = res.ref or ref
         skin = skin_mask_soft(img, ref, p["skin_range"], face_w)
         if pts is not None:
-            skin = skin * face_region_mask(pts, roi, face_w)      # 머리카락·배경 제외(얼굴 윤곽 안)
+            skin = skin * face_region_mask(pts, roi, face_w, p.get("neck", 0))   # 머리카락·배경 제외(목은 유지)
+        # 콧구멍·깊은 구멍 같은 아주 어두운 화소 보호(밝아짐 방지) — 흐리지 않은 원래 밝기로 판정
+        yimg = 0.2126 * img[..., 0] + 0.7152 * img[..., 1] + 0.0722 * img[..., 2]
+        skin = skin * np.clip((yimg - 0.04) / 0.07, 0, 1)
         region = alpha * skin
         if pts is not None and p.get("features", True):
             region = region * (1 - feature_mask(pts, roi, face_w))

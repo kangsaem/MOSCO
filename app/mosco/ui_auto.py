@@ -17,6 +17,8 @@ from .ui_widgets import PROG, PROG_TXT, QSS, DragMove, ProgBar, add_shadow, btn,
 # 버튼 색 이름 — 모양은 ui_widgets.QSS(DTME buttons.qss) 한 곳
 RED, ORANGE, GREY = "red", "orange", "light"
 AUTO_LW = 40               # AUTO 창 이름칸 폭(작업·강도·출력·이름 = 두 글자)
+LIST_MAX = 20              # 클립 목록 최대 표시 줄(넘으면 스크롤)
+CLIP_ROW = 34              # ClipRow 높이 30 + 간격 4
 LEFT_PAD = AUTO_LW + 5     # _seg 이름칸 폭 + 간격 = [약|중|강] 첫 버튼 왼쪽 끝
 
 
@@ -152,7 +154,6 @@ class AutoDialog(DragMove, QDialog):
         self.setStyleSheet(("" if parent is not None else QSS) +
                            "AutoDialog{background:#262626;border:1px solid #555;border-radius:6px}"
                            "QLabel{color:#ddd;font-size:12px}")
-        self.setFixedSize(998, 720)          # 이름칸 76→40·가운데 간격 16→10 만큼 줄임(목록·버튼 크기 그대로)
         # 클립 상태
         rs = state.settings.render
         self.name = (rs.get("name") or "").strip()
@@ -166,6 +167,11 @@ class AutoDialog(DragMove, QDialog):
                 continue
             self.clips.append({"idx": i, "name": s.name, "inc": True, "mode": s.mode,
                                "measured": None, "prog": None, "c": s.custom, "outp": "HQ"})
+        # 창 높이: 클립 수에 맞춰 늘리되 최대 LIST_MAX 줄(넘으면 목록만 스크롤). 폭은 고정.
+        rows = min(len(self.clips), LIST_MAX)
+        list_h = rows * CLIP_ROW + 12                    # 목록 몸통(ClipRow 30 + 간격 4 ≈ CLIP_ROW)
+        h = max(720, list_h + 128)                       # 아래 진행막대·버튼·여백
+        self.setFixedSize(998, h)
         self.selected = {self.clips[0]["idx"]} if self.clips else set()
         self.rows = []
         self._jobs = {}
@@ -191,6 +197,7 @@ class AutoDialog(DragMove, QDialog):
         sc.setWidgetResizable(True)
         sc.setFrameShape(QScrollArea.NoFrame)
         sc.setStyleSheet("QScrollArea{background:#1e1e1e;border:1px solid #333;border-radius:3px}")
+        sc.setMaximumHeight(LIST_MAX * CLIP_ROW + 14)      # 20줄 넘으면 목록만 스크롤(버튼은 항상 보이게)
         body = QWidget()
         body.setStyleSheet("background:#1e1e1e")
         bl = QVBoxLayout(body)
