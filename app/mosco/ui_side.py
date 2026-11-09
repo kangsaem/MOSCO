@@ -34,9 +34,12 @@ class SourceDelegate(QStyledItemDelegate):
         r = opt.rect.adjusted(0, 1, 0, -2)
         err = self.state.errors.get(s.path)
         a = self.state.analysis(s)
-        # 진행 단계: 렌더·샘플(state.busy) > 분석(진행 중) — 색 = ui_widgets.PROG(DTME 와 같음)
+        # 진행 단계: 샘플(state.busy) > 분석(진행 중) — 색 = ui_widgets.PROG(DTME 와 같음)
+        # 렌더 진행은 소스목록에 표시하지 않음(렌더목록 바에만, v0.7.37)
         kind, prog, label = None, None, ""
         b = self.state.busy.get(s.path)
+        if b and b[0] == "render":
+            b = None
         if b:
             kind, prog = b[0], b[1]
             label = b[2] if len(b) > 2 and b[2] else f"{PROG_TXT[kind]} {int(prog * 100)}%"
@@ -60,11 +63,11 @@ class SourceDelegate(QStyledItemDelegate):
             p.setBrush(QColor(PROG[kind][0]))
             p.drawRoundedRect(r, 3, 3)
             p.setClipping(False)
-        elif not err and not b:                            # 분석 완료 = 아래 가장자리 청록 줄(끝까지 간 뒤 남김)
+        elif not err and not b:                            # 분석 완료 = 줄 전체를 분석색(어두운 청록)으로 채움
             modes = s.blur_kinds() or [s.mode]
             if all((self.state.analysis(s, m) or {}).get("state") == "done" for m in modes):
-                p.setBrush(QColor(PROG["analyze"][1]))
-                p.drawRoundedRect(QRect(r.left() + 2, r.bottom() - 3, r.width() - 4, 3), 1, 1)
+                p.setBrush(QColor(PROG["analyze"][0]))
+                p.drawRoundedRect(r, 3, 3)
         if opt.state & QStyle.State_Selected:
             p.setPen(QColor("#4a8fe0"))
             p.setBrush(Qt.NoBrush)
@@ -193,11 +196,13 @@ class RenderDelegate(QStyledItemDelegate):
         p.save()
         p.setRenderHint(QPainter.Antialiasing)
         p.setPen(Qt.NoPen)
-        p.setBrush(QColor("#c9c9c9") if done else (QColor("#6a2a24") if it.state == "오류" else QColor("#3c3c3c")))
+        # 대기 진회색 · 완료 연회색 · 실패 진빨강 (DTME RenderDelegate 기준)
+        p.setBrush(QColor("#6b6b6b") if done else (QColor("#7a2a22") if it.state == "오류" else QColor("#3c3c3c")))
         p.drawRoundedRect(r, 3, 3)
-        if it.state == "진행":
-            p.setBrush(QColor("#cf3b2b"))
-            p.drawRect(QRect(r.left(), r.bottom() - 2, int(r.width() * it.p), 3))
+        if it.state == "진행" and it.p > 0:                 # 진행 = 막대 전체가 비율만큼 빨강으로 차오름
+            pr = QRect(r.left(), r.top(), int(r.width() * max(0.0, min(1.0, it.p))), r.height())
+            p.setBrush(QColor("#c0392b"))
+            p.drawRoundedRect(pr, 3, 3)
         if opt.state & QStyle.State_Selected:
             p.setPen(QColor("#4a8fe0"))
             p.setBrush(Qt.NoBrush)
@@ -205,7 +210,7 @@ class RenderDelegate(QStyledItemDelegate):
         f = QFont(opt.font)
         f.setPointSize(max(7, f.pointSize() - 1))
         p.setFont(f)
-        p.setPen(QColor("#111") if done else QColor("#ddd"))
+        p.setPen(QColor("#f2f2f2") if done else QColor("#e6e6e6"))
         st = f"{int(it.p * 100)}%" if it.state == "진행" else it.state
         p.drawText(r.adjusted(6, 0, -6, 0), Qt.AlignVCenter | Qt.AlignRight, st)
         f.setBold(True)
@@ -231,6 +236,7 @@ class RenderPanel(QWidget):
         r.setSpacing(4)
         self.b_queue = btn("▼", "선택한 소스를 렌더 대기목록으로 보내기 (소스 목록 우클릭에도 있음). 실제 렌더는 [렌더]",
                            size=BTN_MAIN, on_click=self.queue_clicked.emit)
+        tone(self.b_queue, "blue")              # ▼ = DTME 네이비 (타임라인으로 보내기)
         self.b_set = btn("⚙", "렌더 설정", size=BTN_MAIN, w=40, on_click=self.settings_clicked.emit)
         self.b_render = btn("렌더", "렌더 목록(대기)을 모두 렌더 (Ctrl+R). ⬓ 로 목록에 보낸 뒤 사용", size=BTN_MAIN, red=True, on_click=self.render_clicked.emit)
         self.b_ae = btn("AE", "에펙으로 보내기 — 현재 소스의 타원·사각형 트랙을 마스크 키프레임 스크립트(.jsx)로 저장.\n"

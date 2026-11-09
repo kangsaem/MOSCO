@@ -1026,13 +1026,17 @@ class MainWindow(QMainWindow):
         self.flash(f"렌더 목록에 {len(rows)}개 추가 — [렌더]로 실행")
 
     def render_all(self):
-        """[렌더] : 렌더 목록의 '대기' 항목을 모두 렌더(소스 선택이 아니라 목록 기준)."""
-        waiting = [it for it in self.rpanel.items if it.state in ("대기", "취소")]
-        if not waiting:
+        """[렌더] : 렌더 목록을 모두 렌더 — 완료·진행 중이 아닌 항목 전부(대기·취소·오류). 소스 선택과 무관."""
+        if not self.rpanel.items:
             self.flash("렌더 목록이 비어 있습니다 — ➜ 로 먼저 보내세요")
             return
-        for it in waiting:
+        todo = [it for it in self.rpanel.items if it.state in ("대기", "취소", "오류")]
+        if not todo:
+            self.flash("이미 모두 렌더됨 — 다시 하려면 우클릭 '다시 렌더'")
+            return
+        for it in todo:
             it.state, it.p, it.err = "대기", 0.0, ""
+        for it in todo:
             self._start_render(it)
 
     # ------------------------------------------------------------ AE 보내기(v0.7.14)
@@ -1139,11 +1143,12 @@ class MainWindow(QMainWindow):
         j = jobs.Job(fn, with_progress=True)
         it.job = j
 
+        self._render_batch = True            # 완료 팝업용: 렌더가 한 번이라도 시작됨
+
         def started(v):
             it.state = "진행"
             it.p = v
-            self.state.set_busy(it.src.path, "render", v)     # 소스 목록 줄 = 빨강 진행
-            self.rpanel.refresh()
+            self.rpanel.refresh()             # 진행은 렌더목록 바에만(소스목록 아님)
         j.signals.progress.connect(started)
         j.signals.done.connect(lambda outs: self._render_done(it, outs))
         j.signals.error.connect(lambda e: self._render_err(it, e))
@@ -1152,17 +1157,34 @@ class MainWindow(QMainWindow):
 
     def _render_done(self, it, outs):
         it.state, it.p, it.outs = "완료", 1.0, outs
-        self.state.clear_busy(it.src.path, "render")
         self.rpanel.refresh()
         self.flash(f"렌더 완료: {it.src.name}" + (f" — {stat_line(it.stats)}" if it.stats else ""))
+        self._render_check_all_done()
 
     def _render_err(self, it, e):
         it.state = "취소" if e == "취소됨" else "오류"
-        self.state.clear_busy(it.src.path, "render")
         it.err = e
         self.rpanel.refresh()
         if it.state == "오류":
             self.flash(f"렌더 오류: {it.src.name} — {e[:200]}")
+        self._render_check_all_done()
+
+    def _render_check_all_done(self):
+        """진행·대기 중인 렌더가 하나도 없으면(= 전부 끝남) 결과 팝업 1번."""
+        if not getattr(self, "_render_batch", False):
+            return
+        if any(it.state in ("진행", "대기") for it in self.rpanel.items):
+            return
+        self._render_batch = False
+        done = sum(it.state == "완료" for it in self.rpanel.items)
+        err = sum(it.state == "오류" for it in self.rpanel.items)
+        cancel = sum(it.state == "취소" for it in self.rpanel.items)
+        msg = f"렌더 완료: {done}개"
+        if err:
+            msg += f" · 오류 {err}개"
+        if cancel:
+            msg += f" · 취소 {cancel}개"
+        QMessageBox.information(self, "렌더 완료", msg)
 
     # ------------------------------------------------------------ 프로젝트
     def undo(self):
