@@ -681,6 +681,51 @@ class AppState(QObject):
         self.sel = ("g", g["gid"])
         self._edited()
 
+    def set_spans(self, key, segments):
+        """타원을 여러 구간 [(in,out), …] 에만 존재하게(구간 양끝 홀드, 틈·바깥은 끄기).
+        맞닿거나 겹친 구간은 합쳐짐(틈 메우기). 구간별 양끝을 각각 끌어 편집."""
+        s = self.source()
+        tr = self.track(s)
+        if s is None or tr is None or key is None or not segments:
+            return
+        n = tr.n
+        segs = []
+        for a, b in segments:
+            a = max(0, min(int(a), n - 1))
+            b = max(a, min(int(b), n - 1))
+            segs.append((a, b))
+        segs.sort()
+        merged = []
+        for a, b in segs:                      # 맞닿음(+1 이내)·겹침 → 합침
+            if merged and a <= merged[-1][1] + 1:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], b))
+            else:
+                merged.append((a, b))
+        e0, af = self._present_ell(s, key, merged[0][0], n)
+        if e0 is None:
+            return
+        self.push_undo()
+        _, g = self._group_for(key, af)
+        if g is None:
+            self.undo_stack.pop()
+            return
+        for a, b in merged:                    # 각 구간 양끝 위치 홀드
+            ea, _ = self._present_ell(s, key, a, n)
+            eb, _ = self._present_ell(s, key, b, n)
+            edits.set_key(g, a, ea or e0)
+            edits.set_key(g, b, eb or ea or e0)
+        g["off_all"] = False
+        g["off"] = []
+        prev = 0
+        for a, b in merged:                    # 틈·바깥 = 끄기(여집합)
+            if a > prev:
+                edits.off_range(g, prev, a - 1)
+            prev = b + 1
+        if prev <= n - 1:
+            edits.off_range(g, prev, n - 1)
+        self.sel = ("g", g["gid"])
+        self._edited()
+
     def set_ov(self, key, frame, k, v, *, undo=True):
         if undo:
             self.push_undo()

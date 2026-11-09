@@ -116,8 +116,8 @@ def _scale_items(items, scale):
     return out
 
 
-def entries(ells, p=None):
-    """[(item, 실제 적용 타원)] → 모니터 표시용. 간판은 4꼭짓점(quad)도."""
+def entries(ells, p=None, mode=None):
+    """[(item, 실제 적용 타원)] → 모니터 표시용. 간판은 4꼭짓점(quad)도. mode = 이 타원이 속한 종류(동시 블러 라우팅용)."""
     out = []
     for it, ell in ells:
         quad = None
@@ -128,14 +128,14 @@ def entries(ells, p=None):
         if it.minus:
             lab = "−" + (lab if lab and lab != "+" else "")
         out.append({"key": it.key, "label": lab, "ell": tuple(float(v) for v in ell), "manual": it.manual,
-                    "keyed": it.keyed, "minus": it.minus, "quad": quad})
+                    "keyed": it.keyed, "minus": it.minus, "quad": quad, "mode": mode})
     return out
 
 
-def item_entries(items, p):
+def item_entries(items, p, mode=None):
     from .sign import quad_ell
     return entries([(it, quad_ell(fx.item_quad(it, p)) if fx._is_quad(it) else fx._item_ell(it, p)) for it in items],
-                   p)
+                   p, mode)
 
 
 def compute_preview(src, frame16, plan, has_track, i, scale=1.0):
@@ -158,16 +158,16 @@ def compute_preview(src, frame16, plan, has_track, i, scale=1.0):
         out["skin"] = gray8(fx.skin_key_full(frame16, p, r.ref, fw))
         out["faces"] = len(items)
     else:
-        o, a_all, all_ells, nfac = frame16, None, [], 0
+        o, a_all, all_entries, nfac = frame16, None, [], 0
         for res, mode in plan:                          # 얼굴 → 간판 순으로 이어서 블러
             items = _scale_items(res.items(i), scale)
             o, a, ells = fx.blur(o, items, src.params_for(mode), True)
-            all_ells += ells
+            all_entries += entries(ells, src.params_for(mode), mode)
             nfac += len(items)
             if a is not None:
                 a_all = a if a_all is None else np.maximum(a_all, a)
         out["fx"] = to8(o)
-        out["ells"] = entries(all_ells, src.blur)
+        out["ells"] = all_entries
         out["focus"] = None
         a_all = a_all if a_all is not None else np.zeros((H, W), np.float32)
         out["alpha"] = out["final"] = out["skin"] = gray8(a_all)
@@ -306,6 +306,7 @@ class MainWindow(QMainWindow):
         self.lanes_box.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.lanes_box.setWidget(self.lanes)
         self.lanes_box.setMinimumHeight(EllipseLanes.PAD * 2 + 2 * EllipseLanes.LANE_H)   # 최소 2레인
+        self.lanes_box.setMaximumHeight(EllipseLanes.PAD * 2 + 30 * EllipseLanes.LANE_H)  # 30레인까지, 넘으면 스크롤
         self.lanes_box.setStyleSheet("QScrollArea{background:#1a1a1a}")
         self.ruler = TimeRuler()
         # 모니터 ↕ (바+레인+눈금) 사이 드래그 — 레인 창을 높게 볼 수 있음(여기서 키프레임·타원 수정 후 AE)
@@ -321,7 +322,8 @@ class MainWindow(QMainWindow):
         self.vsplit.addWidget(self.mon)
         self.vsplit.addWidget(_bot)
         self.vsplit.setStretchFactor(0, 1)       # 기본은 모니터가 큼
-        self.vsplit.setSizes([640, EllipseLanes.PAD * 2 + 8 * EllipseLanes.LANE_H + 60])
+        self._vsplit_user = False                # 사용자가 직접 끌면 자동 높이 멈춤
+        self.vsplit.splitterMoved.connect(lambda *_: setattr(self, "_vsplit_user", True))
         mid.addWidget(self.vsplit, 1)
         tr = QHBoxLayout()
         tr.setSpacing(4)
@@ -433,14 +435,14 @@ class MainWindow(QMainWindow):
         self.bar.seek.connect(self.seek)
         self.bar.del_key.connect(lambda k: self.state.delete_key(k))
         self.lanes.select.connect(self.on_select)
-        self.lanes.span_changed.connect(self._on_span)
+        self.lanes.segments_changed.connect(self._on_segments)
         self.ruler.seek.connect(self.seek)
         self.panel.tool.connect(self.on_tool)
         self.mon.add_at.connect(self.on_add)
         self.mon.drawn.connect(self.on_draw)
         self.mon.delete_ell.connect(self.on_delete)
         self.mon.selected.connect(self.on_select)
-        self.mon.edited.connect(lambda key, ell: self.state.edit_ellipse(key, self.f, self._to_full(ell)))
+        self.mon.edited.connect(self.on_edited)
         self.mon.merge_with.connect(self.on_merge)
         self.panel.del_key.connect(lambda: self.state.delete_key(self.f) or self.flash("이 프레임에 키가 없습니다"))
         self.panel.off.connect(lambda how: self.state.off(how, self.f, self._n()))
@@ -514,11 +516,20 @@ class MainWindow(QMainWindow):
         self.state.add_ellipse_box(self.f, cx / sc, cy / sc, w / sc, h / sc)
         # 연속 그리기: 그린 뒤에도 계속 그릴 수 있게 도구 유지
 
-    def on_delete(self, key):
+    def on_delete(self, key, mode=None):
+        if mode in ("blur", "sign"):
+            self.state.set_active(mode)      # 동시 블러: 그 타원이 속한 종류로 전환해 삭제
         self.state.delete_ellipse(key, self.f)
         # 삭제 모드 유지(여러 개 연속 삭제)
 
-    def on_merge(self, key_b):
+    def on_edited(self, key, ell, mode=None):
+        if mode in ("blur", "sign"):
+            self.state.set_active(mode)
+        self.state.edit_ellipse(key, self.f, self._to_full(ell))
+
+    def on_merge(self, key_b, mode=None):
+        if mode in ("blur", "sign"):
+            self.state.set_active(mode)
         if self.state.merge(self.state.sel, self._merge_anchor, key_b, self.f):
             self.flash("같은 사람으로 합쳤습니다")
         self.panel.stop_tool()
@@ -704,9 +715,22 @@ class MainWindow(QMainWindow):
         spans = self.state.ellipse_spans(s) if s else []    # 동시 블러면 두 종류 레인 포함
         n = spans[0]["n"] if spans else 0
         self.lanes.set_data(spans, n, self.f, self.state.sel)
+        self._autosize_lanes(len(spans))
 
-    def _on_span(self, key, f_in, f_out):
-        self.state.set_span(key, f_in, f_out)
+    def _autosize_lanes(self, count):
+        """기본은 레이어가 다 보이게(최대 30레인), 넘으면 스크롤. 사용자가 스플리터를 직접 끌면 멈춤."""
+        if self._vsplit_user or count <= 0:
+            return
+        from .ui_monitor import EllipseLanes as _EL
+        want = _EL.PAD * 2 + min(count, 30) * _EL.LANE_H + self.bar.height() + self.ruler.height() + 10
+        total = sum(self.vsplit.sizes()) or self.vsplit.height()
+        want = min(want, max(120, total - 240))          # 모니터 최소 240 확보
+        self.vsplit.blockSignals(True)                   # 자동 조정은 'user' 플래그 안 켜지게
+        self.vsplit.setSizes([max(120, total - want), want])
+        self.vsplit.blockSignals(False)
+
+    def _on_segments(self, key, segments):
+        self.state.set_spans(key, segments)      # 구간별 양끝 편집·틈 메우기
         self._bar()
         self._sel_refresh()
 
@@ -797,12 +821,11 @@ class MainWindow(QMainWindow):
         s = self.state.source()
         ells = []
         if s is not None:
-            items = []
             for res, _m in self.state.blur_resolvers(s):
                 if res.track is not None:
-                    items += res.items(i)
-            if items:
-                ells = item_entries(_scale_items(items, self._vscale()), s.params())
+                    its = res.items(i)
+                    if its:
+                        ells += item_entries(_scale_items(its, self._vscale()), s.params_for(_m), _m)
         self.mon.quad_mode = s is not None and s.mode == "sign"
         self.mon.set_overlay(ells, self.panel.t_ell.isChecked(), s is not None and s.mode in ("blur", "sign") and
                              self.panel.t_id.isChecked())

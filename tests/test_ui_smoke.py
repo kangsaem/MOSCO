@@ -47,7 +47,7 @@ def sign_ui(app, w, st, vids, out):
     q = [v for p in e["quad"] for v in p]
     q[4] += 20
     q[5] += 15
-    w.mon.edited.emit(e["key"], tuple(q))             # 꼭짓점 하나 끌기 끝(보기 좌표)
+    w.mon.edited.emit(e["key"], tuple(q), e.get("mode"))   # 꼭짓점 하나 끌기 끝(보기 좌표)
     pump(app, 1.0)
     from mosco import edits
     gs = [g for g in edits.get(s)["groups"] if "15" in g.get("keys", {})]

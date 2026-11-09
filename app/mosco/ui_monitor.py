@@ -54,12 +54,12 @@ class ZoomBox(QWidget):
 class Monitor(QWidget):
     picked = Signal(float, float)       # 원본 좌표
     view_changed = Signal()
-    selected = Signal(object)           # 타원 key 또는 None
-    edited = Signal(object, object)     # key, (cx, cy, w, h, ang)  — 드래그 끝
+    selected = Signal(object, object)   # 타원 key(또는 None), 소스 모드(blur/sign/None)
+    edited = Signal(object, object, object)  # key, (cx, cy, w, h, ang), 소스 모드  — 드래그 끝
     add_at = Signal(float, float)       # 타원 추가 위치(클릭)
     drawn = Signal(float, float, float, float)   # 드래그로 그린 새 타원 cx,cy,w,h(원본 좌표)
-    delete_ell = Signal(object)         # 삭제할 타원 key
-    merge_with = Signal(object)         # 합치기 상대 key
+    delete_ell = Signal(object, object)  # 삭제할 타원 key, 소스 모드
+    merge_with = Signal(object, object)  # 합치기 상대 key, 소스 모드
 
     def __init__(self):
         super().__init__()
@@ -269,26 +269,26 @@ class Monitor(QWidget):
             s, _ = self.xform(pane)
             ent, _ = self._hit(q, s)
             if ent is not None:
-                self.delete_ell.emit(ent["key"])
+                self.delete_ell.emit(ent["key"], ent.get("mode"))
             return
         if e.button() == Qt.LeftButton and q is not None and self.show_ell:
             s, _ = self.xform(pane)
             ent, mode = self._hit(q, s)
             if self.tool == "merge":
                 if ent is not None:
-                    self.merge_with.emit(ent["key"])
+                    self.merge_with.emit(ent["key"], ent.get("mode"))
                 return
             if ent is not None:
                 if ent["key"] != self.sel:
                     self.sel = ent["key"]
-                    self.selected.emit(ent["key"])
+                    self.selected.emit(ent["key"], ent.get("mode"))
                 g0 = tuple(v for p in ent["quad"] for v in p) if ent.get("quad") is not None else tuple(ent["ell"])
-                self._edit = [ent["key"], mode, q, g0, s, False]
+                self._edit = [ent["key"], mode, q, g0, s, False, ent.get("mode")]
                 self.update()
                 return
             if self.sel is not None:
                 self.sel = None
-                self.selected.emit(None)
+                self.selected.emit(None, None)
         if e.button() in (Qt.LeftButton, Qt.MiddleButton):
             pane = self.panes()[0]
             s, c = self.xform(pane)
@@ -303,7 +303,7 @@ class Monitor(QWidget):
             return
         if self._edit:
             import math
-            key, mode, q0, ell0, s, _ = self._edit
+            key, mode, q0, ell0, s, _, _smode = self._edit
             q, _ = self.to_img(e.position())
             if q is None:
                 return
@@ -361,15 +361,15 @@ class Monitor(QWidget):
             self.update()
             return
         if self._edit:
-            key, mode, q0, ell0, s, moved = self._edit
+            key, mode, q0, ell0, s, moved, smode = self._edit
             self._edit = None
             if moved:
                 for ent in self.ells:
                     if ent["key"] == key:
                         if ent.get("quad") is not None:
-                            self.edited.emit(key, tuple(v for p in ent["quad"] for v in p))     # 8값
+                            self.edited.emit(key, tuple(v for p in ent["quad"] for v in p), smode)     # 8값
                         else:
-                            self.edited.emit(key, tuple(ent["ell"]))
+                            self.edited.emit(key, tuple(ent["ell"]), smode)
             return
         self._drag = None
 
@@ -577,7 +577,7 @@ class EllipseLanes(QWidget):
     """타원마다 가는 레인: 존재 구간 바 + 키 ◆ + 재생선. 양 끝 핸들 드래그로 in/out(처음/끝까지).
     레인(바 가운데) 클릭 = 그 타원 선택."""
     select = Signal(object, object)          # (타원 key, mode) — 동시 블러 때 그 종류로 전환
-    span_changed = Signal(object, int, int)  # key, f_in, f_out
+    segments_changed = Signal(object, object)  # key, [(in, out), ...] — 구간별 양끝 편집·틈 메우기
 
     LANE_H = 16
     PAD = 3
@@ -622,16 +622,16 @@ class EllipseLanes(QWidget):
         return y, y + self.LANE_H - 3
 
     def _hit(self, pos):
+        """→ (lane_idx, ("seg_in"|"seg_out", 구간번호) 또는 'mid')."""
         idx = int((pos.y() - self.PAD) // self.LANE_H)
         if not (0 <= idx < len(self.spans)):
             return None, None
         d = self.spans[idx]
-        f0, f1 = self._span_of(d)
-        x0, x1 = self._x(f0), self._x(f1 + 1)
-        if abs(pos.x() - x0) <= 7:
-            return idx, "in"
-        if abs(pos.x() - x1) <= 7:
-            return idx, "out"
+        for si, (a, b) in enumerate(d["intervals"]):     # 구간마다 양끝 손잡이
+            if abs(pos.x() - self._x(a)) <= 7:
+                return idx, ("seg_in", si)
+            if abs(pos.x() - self._x(b + 1)) <= 7:
+                return idx, ("seg_out", si)
         return idx, "mid"
 
     def mousePressEvent(self, e):
@@ -639,7 +639,7 @@ class EllipseLanes(QWidget):
         if idx is None:
             return
         d = self.spans[idx]
-        if where in ("in", "out"):
+        if isinstance(where, tuple):                     # 구간 끝 끌기
             self._drag = (idx, where)
         else:
             self.sel = d["key"]
@@ -649,20 +649,40 @@ class EllipseLanes(QWidget):
     def mouseMoveEvent(self, e):
         if self._drag is None:
             return
-        idx, where = self._drag
+        idx, (edge, si) = self._drag
         d = self.spans[idx]
-        f0, f1 = self._span_of(d)
+        segs = [list(iv) for iv in d["intervals"]]
+        n = self.n
         f = self._frame(e.position().x())
-        f_in, f_out = (min(f, f1), f1) if where == "in" else (f0, max(f, f0))
-        self._preview = (d["key"], f_in, f_out)
+        a, b = segs[si]
+        if edge == "seg_in":
+            lo = (segs[si - 1][1] + 1) if si > 0 else 0   # 앞 구간은 넘지 않게(넘으면 합쳐짐)
+            segs[si][0] = max(lo, min(f, b))
+        else:
+            hi = (segs[si + 1][0] - 1) if si + 1 < len(segs) else (n - 1)
+            segs[si][1] = min(hi, max(f, a))
+        self._preview = (d["key"], [tuple(x) for x in segs])
         self.update()
 
     def mouseReleaseEvent(self, e):
         if self._drag is not None and self._preview is not None:
-            key, f_in, f_out = self._preview
-            self.span_changed.emit(key, f_in, f_out)
+            key, segs = self._preview
+            self.segments_changed.emit(key, segs)
         self._drag = None
         self._preview = None
+
+    def contextMenuEvent(self, e):
+        from PySide6.QtWidgets import QMenu
+        idx, _ = self._hit(e.pos())
+        if idx is None:
+            return
+        d = self.spans[idx]
+        if len(d["intervals"]) < 2:
+            return
+        m = QMenu(self)
+        m.addAction("구간 합치기 (틈 메우기)",
+                    lambda: self.segments_changed.emit(d["key"], [(d["intervals"][0][0], d["intervals"][-1][1])]))
+        m.exec(e.globalPos())
 
     def paintEvent(self, e):
         p = QPainter(self)
@@ -679,20 +699,22 @@ class EllipseLanes(QWidget):
             p.fillRect(QRectF(0, y0 - 1, self.width(), self.LANE_H - 1), QColor("#242424" if idx % 2 else "#202020"))
             pv = self._preview if (self._preview and self._preview[0] == d["key"]) else None
             bar = _lane_color(d, sel)       # 종류별 색: 얼굴=노랑·간판=청록·추가=파랑·제외=초록
+            ivs = pv[1] if pv else d["intervals"]       # 드래그 중이면 미리보기 구간
             for (a, b) in d["intervals"]:
                 xa, xb = self._x(a), self._x(b + 1)
                 p.fillRect(QRectF(xa, y0, max(2, xb - xa), y1 - y0), bar)
-            if pv:                                  # 드래그 미리보기(연장 구간)
-                xa, xb = self._x(pv[1]), self._x(pv[2] + 1)
+            if pv:                                  # 드래그 미리보기(구간 양끝 이동)
                 p.setPen(QPen(QColor("#f2c94c"), 1, Qt.DashLine))
                 p.setBrush(Qt.NoBrush)
-                p.drawRect(QRectF(xa, y0, max(2, xb - xa), y1 - y0 - 1))
-            # in/out 핸들
-            f0, f1 = self._span_of(d)
+                for (a, b) in ivs:
+                    xa, xb = self._x(a), self._x(b + 1)
+                    p.drawRect(QRectF(xa, y0, max(2, xb - xa), y1 - y0 - 1))
+            # 구간마다 양끝 손잡이
             p.setPen(Qt.NoPen)
             p.setBrush(QColor("#cfe0f0") if sel else QColor("#8aa6c4"))
-            for fx in (self._x(f0), self._x(f1 + 1)):
-                p.drawRect(QRectF(fx - 2, y0, 4, y1 - y0))
+            for (a, b) in ivs:
+                for fx in (self._x(a), self._x(b + 1)):
+                    p.drawRect(QRectF(fx - 2, y0, 4, y1 - y0))
             # 키 ◆
             p.setBrush(QColor("#ffffff"))
             for k in d["keys"]:

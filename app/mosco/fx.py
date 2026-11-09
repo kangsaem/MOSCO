@@ -269,9 +269,9 @@ def beauty(frame16, items, p, frame_no=0, want_keys=False) -> BeautyResult:
             target = img
             # ① 매끈: 양방향 필터(엣지 보존 → 구조 안 뭉개짐) + 질감 되살리기
             if st > 0:
-                r = max(3, int(face_w / 28))
+                r = max(3, int(face_w / 26))                    # v0.7.36 반경 ↑(매끈 강화)
                 base = cv2.bilateralFilter((np.clip(img, 0, 1) * 255).astype(np.uint8),
-                                           d=(r | 1), sigmaColor=42, sigmaSpace=r).astype(np.float32) / 255
+                                           d=(r | 1), sigmaColor=54, sigmaSpace=r).astype(np.float32) / 255
                 fine = img - cv2.GaussianBlur(img, (0, 0), max(0.8, face_w / 350))
                 sm = base + (p["texture"] / 100) * fine
                 target = img + (sm - img) * st
@@ -283,8 +283,8 @@ def beauty(frame16, items, p, frame_no=0, want_keys=False) -> BeautyResult:
                 g = cv2.cvtColor((np.clip(target, 0, 1) * 255).astype(np.uint8), cv2.COLOR_RGB2GRAY)
                 gf = g.astype(np.float32) / 255
                 gd = gf - low_pass(gf, sig)
-                dark = np.clip(-gd * 6, 0, 1)[..., None]
-                target = target + (-np.minimum(detail, 0)) * dark * wf
+                dark = np.clip(-gd * 8, 0, 1)[..., None]        # v0.7.36 골 검출 ↑(더 많은 주름 포착)
+                target = target + (-np.minimum(detail, 0)) * dark * wf * 1.4   # v0.7.36 메우기량 ×1.4
             if p["grain"] > 0:
                 rng = np.random.default_rng(frame_no * 131 + x0)
                 target = target + rng.normal(0, p["grain"] / 100 * 0.03, img.shape[:2]).astype(np.float32)[..., None]
