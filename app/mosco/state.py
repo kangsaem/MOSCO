@@ -114,8 +114,17 @@ class AppState(QObject):
             self._probe(f)
         if self.cur < 0:
             self.cur = 0
+        self._apply_disk_mode()
         self.dirty = True
         self.changed.emit()
+
+    def _apply_disk_mode(self):
+        """원본이 HDD 면 읽는 풀 동시성을 낮춤(같은 디스크 동시 읽기로 느려지는 것 방지)."""
+        try:
+            from . import disk
+            jobs.set_disk_mode(disk.any_hdd([s.path for s in self.project.sources]))
+        except Exception:  # noqa: BLE001
+            pass
         self.current_changed.emit()
 
     def remove(self, idxs):
@@ -263,10 +272,38 @@ class AppState(QObject):
 
     def _an_done(self, key, z):
         if key in self.an:
+            self._log_analyze(key, z, "done")
             self.an[key].update(z=z, p=1.0, state="done", level=_z_level(z, key[1]))
             self._tracks.pop(key, None)
             self.analysis_changed.emit(key[0])
             self.params_changed.emit()
+
+    def _log_analyze(self, key, z, how, err=""):
+        """단계별 시간 로그(logs/analyze_log.csv) — HDD 효과를 사용자 PC 로그로 숫자 확인용."""
+        try:
+            import csv
+            import time as _t
+            from . import disk, jobs, paths
+            path, mode = key
+            rec = self.an.get(key) or {}
+            j = rec.get("job")
+            now = _t.perf_counter()
+            wait = round((j.start_t - j.submit_t), 2) if (j and j.submit_t and j.start_t) else ""
+            run = round((now - j.start_t), 2) if (j and j.start_t) else ""
+            frames = int(z["n"]) if (z is not None and "n" in z) else ""
+            fp = paths.log_dir() / "analyze_log.csv"
+            head = not fp.exists()
+            with open(fp, "a", newline="", encoding="utf-8-sig") as f:
+                w = csv.writer(f)
+                if head:
+                    w.writerow(["시각", "소스", "모드", "디스크", "결과", "대기초", "분석초", "프레임",
+                                "분석fps", "동시(분석풀)"])
+                fps = round(frames / run, 2) if (frames and run) else ""
+                w.writerow([_t.strftime("%Y-%m-%d %H:%M:%S"), __import__("os").path.basename(path), mode,
+                            "HDD" if disk.is_hdd(path) else "SSD", how if not err else f"{how}:{err}",
+                            wait, run, frames, fps, jobs.ANALYZE_POOL.maxThreadCount()])
+        except Exception:  # noqa: BLE001
+            pass
 
     def _an_err(self, key, e):
         if e == "취소됨":                          # 취소는 오류 아님 → 다음에 다시 분석

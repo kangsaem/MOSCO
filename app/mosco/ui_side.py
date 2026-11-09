@@ -42,7 +42,11 @@ class SourceDelegate(QStyledItemDelegate):
             label = b[2] if len(b) > 2 and b[2] else f"{PROG_TXT[kind]} {int(prog * 100)}%"
         elif a is not None and a["state"] == "run":
             kind, prog = "analyze", a["p"]
-            label = f"분석 {int(prog * 100)}%"
+            j = a.get("job")
+            if j is not None and not j.started:           # 아직 차례를 기다리는 중(풀이 꽉 참)
+                prog, label = 0.0, "분석 대기"
+            else:
+                label = f"분석 {int(prog * 100)}%"
         if err:
             kind, prog, label = None, None, ("분석 실패" if str(err).startswith("분석 실패") else "읽기 실패")
         base = QColor("#c9c9c9") if err else QColor("#2d2d2c")     # 읽기 실패 = 밝은 회색(누르면 다시 읽기)

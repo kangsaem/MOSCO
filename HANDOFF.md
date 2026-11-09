@@ -1,6 +1,6 @@
 # HANDOFF — MOSCO (Mosaic + Cosmo)
 
-다음 대화는 이 문서를 기준으로 이어서 작업한다. **현재 v0.7.27 (2026-11-09). 1단계(DTME UI 통일) 완료 → 지금은 2단계(앱 보완) · B-1 실영상 테스트 대기.**
+다음 대화는 이 문서를 기준으로 이어서 작업한다. **현재 v0.7.28 (2026-11-09). 1단계(DTME UI 통일) 완료 → 지금은 2단계(앱 보완) · B-1 실영상 테스트 대기.**
 
 > ## 진행 순서 (중요 — 지금 여기 = 2단계)
 > **1단계 · DTME에서 UI/버튼 수정 〔완료 v0.6.1〕** → **2단계 · 수정된 UI 위에서 앱 기능 보완 〔지금〕**
@@ -9,6 +9,12 @@
 > - 1단계 점검 결과(v0.6.1 직후 확인): UI 파일만 변경, 슬라이더 키 6개·➜/렌더 시그널·`os._exit(0)` 유지, 엔진/데이터 무수정 — 계약 이상 없음.
 
 ### 변경 이력 (최신순)
+- **v0.7.28 HDD 속도(로그+디스크제한+표시)** — DTME 분석 참고(MOSCO 는 상주 디코더로 '19번 읽기'는 이미 피함, 동시성·대기표시가 문제).
+  - **디스크 감지** `disk.py`: 윈도우 = 볼륨 SeekPenalty(IOCTL_STORAGE_QUERY_PROPERTY) → HDD 여부, 리눅스 = rotational, 실패 시 SSD(제한 없음). 드라이브별 캐시.
+  - **디스크 동시성 제한** `jobs.set_disk_mode(hdd)`: HDD 면 읽는 풀 축소(probe 4→2·분석 3→1·미리보기 4→2·측정 2→1 / SSD 는 기본). `state.add_files` 에서 소스 디스크 감지해 적용(`any_hdd`). 같은 HDD 동시 읽기로 헤드 왕복 급락 방지.
+  - **단계별 로그** `logs/analyze_log.csv`(utf-8-sig): 시각·소스·모드·디스크·결과·**대기초·분석초**·프레임·분석fps·동시(분석풀). Job 에 submit_t/start_t 추가(대기=실행시작−제출). 실제 분석만 기록(캐시는 제외). 사용자 HDD 로그로 전후 숫자 비교용.
+  - **표시(D)**: 분석 풀이 꽉 차 차례 기다리는 소스는 '분석 1%' 대신 **'분석 대기'**(job.started=False). `ui_side` 소스 목록.
+  - 보류(효과 작음): B(한 번에 읽기 — 상주 디코더가 이미 재사용), C(판정 줄이기 — 측정이 이미 8장으로 가벼움).
 - **v0.7.26 우선순위 '보통'으로**: 예전 '보통 이하'(v0.7.5)는 다른 작업 중일 때 양보가 과해 **진행이 멈춤** → 되돌림. `ff.NOWIN` 에서 BELOW_NORMAL 제거(CREATE_NO_WINDOW 만), `main.py` 의 `ff.low_priority()` 호출 삭제(프로세스 기본=보통). `low_priority()` 함수는 남겨둠(미사용). `test_priority` = ffmpeg 가 **부모와 같은 우선순위를 물려받는지**로 변경(v0.7.27 — CI 러너 자체가 '보통 이하'라 NORMAL 고정값으론 실패). (멈춤·화면 깨짐은 GPU 검출 설정/코어 포화 별도 확인 — B-1.)
 - **v0.7.24~0.7.25 종료 시 프로세스 확실히 끝냄**: `main.py` `_hard_exit()` — `app.exec()` 뒤 상주 디코더·ffmpeg 정리 후 즉시 종료. 종료했는데도 데몬/네이티브 스레드·onnxruntime·ffmpeg(GPU 포함)가 남아 프로세스가 안 죽고 GPU·화면 계속 점유(종료 후 다른 창 움직일 때 화면 깨짐)하던 것 해결.
   - **윈도우: `TerminateProcess`** (v0.7.25). v0.7.24 의 `os._exit` 는 무거운 네이티브 DLL(onnxruntime·ffmpeg·Qt) 해제(DllMain) 중 **로더 락 교착**으로 CI smoke test(exe)가 안 끝남 → `kernel32.TerminateProcess(현재 프로세스, code)` 로 DLL 해제를 건너뛰고 즉시 종료. 리눅스는 `os._exit`. PyAV/Qt teardown 세그폴트도 함께 우회. closeEvent 정리(autosave·kill_all)는 그대로.
