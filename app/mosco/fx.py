@@ -181,7 +181,7 @@ def feature_mask(pts, roi, face_w):
     off = np.array([x0, y0], np.float32)
     _fill_groups(m, pts, off, (models.LEFT_EYE, models.RIGHT_EYE), face_w * 0.012)   # 눈: 아주 작게
     _fill_groups(m, pts, off, (models.LEFT_BROW, models.RIGHT_BROW), face_w * 0.015)  # 눈썹: 작게
-    _fill_groups(m, pts, off, (models.LIPS,), face_w * 0.03)                          # 입: 그대로
+    _fill_groups(m, pts, off, (models.LIPS,), face_w * 0.015)                         # 입: 작게(입가·팔자 주름 살림, 입술만 가림)
     return cv2.GaussianBlur(m, (0, 0), max(1.0, face_w * 0.012))
 
 
