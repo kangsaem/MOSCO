@@ -57,20 +57,23 @@ class ControlPanel(QWidget):
         r.addWidget(btn("저장…", "현재 값을 프리셋으로", w=56, on_click=self._preset_save))
         outer.addLayout(r)
 
+        self._sync = False               # refresh 중 토글 신호 무시
         self.mode = Seg([("beauty", "뷰티"), ("blur", "블러")])
-        self.mode.changed.connect(lambda k: self.state.set_mode(
-            "beauty" if k == "beauty" else ("sign" if self.target.value() == "sign" else "blur")))
+        self.mode.changed.connect(self._on_workmode)
         outer.addWidget(self.mode)
-        # 블러 대상(v0.7.8): 얼굴 / 간판 — 소스마다 하나만(동시에 안 함)
+        # 블러 대상(v0.7.31): 얼굴 / 간판 — 둘 다 켤 수 있음(동시 블러). 활성 편집 종류 = 마지막 켠 쪽.
         rt = QHBoxLayout()
         rt.setSpacing(6)
         lt = QLabel("대상")
         lt.setStyleSheet("color:#aaa")
-        self.target = Seg([("blur", "얼굴 블러"), ("sign", "간판 블러")])
-        self.target.setToolTip("얼굴 블러 / 간판 블러(글자 검출 → 원근 따라가는 사각형). 둘 중 하나만")
-        self.target.changed.connect(self.state.set_mode)
+        self.t_face = Toggle("얼굴", w=66, tip="얼굴 블러")
+        self.t_sign = Toggle("간판", w=66, tip="간판 블러(글자 검출 → 원근 사각형). 얼굴과 함께 켤 수 있음")
+        self.t_face.toggled2.connect(lambda on: self._set_target("blur", on))
+        self.t_sign.toggled2.connect(lambda on: self._set_target("sign", on))
         rt.addWidget(lt)
-        rt.addWidget(self.target, 1)
+        rt.addWidget(self.t_face)
+        rt.addWidget(self.t_sign)
+        rt.addStretch(1)
         self.w_target = QWidget()
         self.w_target.setLayout(rt)
         outer.addWidget(self.w_target)
@@ -308,6 +311,26 @@ class ControlPanel(QWidget):
         self.b_merge.setEnabled(en or self.b_merge.isChecked())
 
     # ------------------------------------------------------------ 갱신
+    def _on_workmode(self, k):
+        if k == "beauty":
+            self.state.set_mode("beauty")
+        else:
+            face, sign = self.t_face.isChecked(), self.t_sign.isChecked()
+            if not face and not sign:
+                face = True
+            self.state.set_blur(face, sign, active=("sign" if (sign and not face) else "blur"))
+
+    def _set_target(self, which, on):
+        if self._sync:
+            return
+        face, sign = self.t_face.isChecked(), self.t_sign.isChecked()
+        if not face and not sign:                 # 마지막 하나는 못 끔
+            self._sync = True
+            (self.t_face if which == "blur" else self.t_sign).setChecked(True)
+            self._sync = False
+            return
+        self.state.set_blur(face, sign, active=which)
+
     def refresh(self):
         s = self.state.source()
         en = s is not None
@@ -316,7 +339,10 @@ class ControlPanel(QWidget):
             w.setEnabled(en)
         mode = s.mode if s else self.state.settings.d.get("default_mode", "beauty")
         self.mode.set("beauty" if mode == "beauty" else "blur")
-        self.target.set("sign" if mode == "sign" else "blur")
+        self._sync = True                 # 토글 상태 = s.mode/both 반영(신호 무시)
+        self.t_face.setChecked(bool(s) and (mode == "blur" or s.both))
+        self.t_sign.setChecked(bool(s) and (mode == "sign" or s.both))
+        self._sync = False
         beauty = mode == "beauty"
         for w in (self.sec_beauty, self.sec_bell):
             w.setVisible(beauty)

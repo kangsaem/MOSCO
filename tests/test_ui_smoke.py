@@ -34,7 +34,7 @@ def sign_ui(app, w, st, vids, out):
     st.add_files([str(clip)])
     st.select(len(st.project.sources) - 1)
     pump(app, 1.0)
-    w.panel.target.btns["sign"].click()
+    w.panel.t_sign.setChecked(True)      # v0.7.31: 대상 = 독립 토글(간판 켜기)
     s = st.source()
     assert s.mode == "sign" and w.panel.b_add.text() == "사각형 추가"
     st.ensure_analysis(s)

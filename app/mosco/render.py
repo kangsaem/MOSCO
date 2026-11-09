@@ -65,23 +65,70 @@ def out_names(src: Source, rs: dict, out_dir: str):
             "review": unique(d / f"{stem}_CHECK.mp4")}
 
 
-def make_track(src: Source, z, rs=None):
+def make_track(src: Source, z, rs=None, mode=None):
     rs = rs or {}
-    if src.mode == "beauty":
+    mode = mode or src.mode
+    if mode == "beauty":
         return analyze.beauty_track(z, src.beauty)
-    if src.mode == "sign":
+    if mode == "sign":
         from . import sign
         return sign.sign_track(z, src.sign, rs.get("two_pass", True))
     return analyze.blur_track(z, src.blur, rs.get("two_pass", True))
 
 
-def process(src: Source, resolver, frame16, i, want_alpha=False):
-    """프레임 1장 처리 → (out16, alpha 또는 None, 검수용 타원 [(item, ell)])."""
-    items = resolver.items(i)
-    if src.mode == "beauty":
-        r = fx.beauty(frame16, items, src.beauty, i)
+def process(src: Source, plan, frame16, i, want_alpha=False):
+    """프레임 1장 처리 → (out16, alpha 또는 None, 검수용 타원 [(item, ell)]).
+    plan = ("beauty", resolver) 또는 ("blur", [(resolver, params), ...]) — 동시 블러는 종류별로 이어서 블러."""
+    kind0, data = plan
+    if kind0 == "beauty":
+        r = fx.beauty(frame16, data.items(i), src.beauty, i)
         return r.out, None, r.ells
-    return fx.blur(frame16, items, src.blur, want_alpha)
+    out, a_all, ells = frame16, None, []
+    for res, p in data:
+        out, a, e = fx.blur(out, res.items(i), p, want_alpha)
+        ells += e
+        if a is not None:
+            a_all = a if a_all is None else np.maximum(a_all, a)
+    return out, a_all, ells
+
+
+def build_plan(src: Source, info, rs, progress=None, cancel=None, workers=None):
+    """분석(종류별 순차)·트랙·리졸버를 만들어 plan 과 (n, 분석초, 분석fps모드) 반환."""
+    hw = bool(rs.get("hw"))
+    use_w = workers if int(rs.get("workers") or 0) > 0 else None
+    kinds = src.blur_kinds()
+    t_an = 0.0
+    if not kinds:                                  # 뷰티
+        level = analyze.level_for("beauty", src.beauty)
+        cached = analyze.load(info, "beauty", level) is not None
+        w = 0.0 if cached else 0.35
+
+        def p_an(v):
+            if progress:
+                progress(v * w)
+        t0 = time.perf_counter()
+        z = analyze.analyze(info, "beauty", p_an, cancel, hw, use_w, level=level)
+        if not cached:
+            t_an += time.perf_counter() - t0
+        track = make_track(src, z, rs, "beauty")
+        return ("beauty", edits.Resolver(src, track, "beauty")), int(z["n"]), t_an, w
+    plan_list, n, any_un = [], 0, False
+    for ki, kind in enumerate(kinds):              # 블러: 얼굴·간판 순차 분석(한꺼번에 코어·디스크 안 뺏음)
+        level = analyze.level_for(kind, src.params_for(kind))
+        cached = analyze.load(info, kind, level) is not None
+        any_un = any_un or not cached
+
+        def p_an(v, ki=ki):
+            if progress:
+                progress(0.35 * (ki + v) / len(kinds))
+        t0 = time.perf_counter()
+        z = analyze.analyze(info, kind, p_an, cancel, hw, use_w, level=level)
+        if not cached:
+            t_an += time.perf_counter() - t0
+        n = max(n, int(z["n"]))
+        track = make_track(src, z, rs, kind)
+        plan_list.append((edits.Resolver(src, track, kind), src.params_for(kind)))
+    return ("blur", plan_list), n, t_an, (0.35 if any_un else 0.0)
 
 
 def render(src: Source, rs: dict, out_dir: str, progress=None, cancel=None, workers=None, stats=None):
@@ -89,19 +136,8 @@ def render(src: Source, rs: dict, out_dir: str, progress=None, cancel=None, work
     info = ff.probe(src.path)
     hw = bool(rs.get("hw"))
     workers = workers or pick_workers(rs)
-    level = analyze.level_for(src.mode, src.params())
-    cached = analyze.load(info, src.mode, level) is not None
-    w_an = 0.0 if cached else 0.35
-
-    def p_an(v):
-        if progress:
-            progress(v * w_an)
     t0 = time.perf_counter()
-    z = analyze.analyze(info, src.mode, p_an, cancel, hw, workers if int(rs.get("workers") or 0) > 0 else None,
-                        level=level)
-    t_an = 0.0 if cached else time.perf_counter() - t0
-    track = make_track(src, z, rs)
-    resolver = edits.Resolver(src, track)
+    plan, n_plan, t_an, w_an = build_plan(src, info, rs, progress, cancel, workers)
     names = out_names(src, rs, out_dir)
     writers = {}
     try:
@@ -115,7 +151,7 @@ def render(src: Source, rs: dict, out_dir: str, progress=None, cancel=None, work
             raise RuntimeError("출력할 파일이 없습니다(렌더 설정)")
         want_a = "overlay" in writers
         reader = ff.Reader(info, 0, 16, hw=hw)
-        n = int(z["n"])
+        n = n_plan
         t1 = time.perf_counter()
         pool = ThreadPoolExecutor(workers)
         q = deque()
@@ -145,7 +181,7 @@ def render(src: Source, rs: dict, out_dir: str, progress=None, cancel=None, work
                 fr = reader.read()
                 if fr is None:
                     break
-                q.append(pool.submit(process, src, resolver, fr, i, want_a))
+                q.append(pool.submit(process, src, plan, fr, i, want_a))
                 i += 1
                 while len(q) >= workers * 2:
                     emit(q.popleft())
@@ -168,7 +204,7 @@ def render(src: Source, rs: dict, out_dir: str, progress=None, cancel=None, work
             except Exception:  # noqa: BLE001
                 pass
         raise
-    st = {"시각": time.strftime("%Y-%m-%d %H:%M:%S"), "버전": __version__, "소스": src.name, "모드": src.mode,
+    st = {"시각": time.strftime("%Y-%m-%d %H:%M:%S"), "버전": __version__, "소스": src.name, "모드": "+".join(src.blur_kinds()) if src.blur_kinds() else src.mode,
           "프레임": i, "분석초": round(t_an, 1), "분석fps": round(i / t_an, 2) if t_an > 0 else "캐시",
           "렌더초": round(t_r, 1), "렌더fps": round(i / t_r, 2) if t_r > 0 else 0,
           "작업자": workers, "코어": os.cpu_count() or 0, "디코딩": "NVDEC" if hw else "CPU",

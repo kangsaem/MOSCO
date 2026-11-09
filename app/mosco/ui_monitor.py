@@ -576,7 +576,7 @@ def _lane_color(d, sel):
 class EllipseLanes(QWidget):
     """타원마다 가는 레인: 존재 구간 바 + 키 ◆ + 재생선. 양 끝 핸들 드래그로 in/out(처음/끝까지).
     레인(바 가운데) 클릭 = 그 타원 선택."""
-    select = Signal(object)                 # 타원 key
+    select = Signal(object, object)          # (타원 key, mode) — 동시 블러 때 그 종류로 전환
     span_changed = Signal(object, int, int)  # key, f_in, f_out
 
     LANE_H = 16
@@ -643,7 +643,7 @@ class EllipseLanes(QWidget):
             self._drag = (idx, where)
         else:
             self.sel = d["key"]
-            self.select.emit(d["key"])
+            self.select.emit(d["key"], d.get("mode"))
             self.update()
 
     def mouseMoveEvent(self, e):

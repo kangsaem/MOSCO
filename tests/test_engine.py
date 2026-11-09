@@ -94,6 +94,19 @@ def sign_check(work: Path):
     d = float(np.abs(sign.quad_alpha(q, (600, 200, 1350, 760), 40) - cv2.GaussianBlur(m, (0, 0), 40)[200:760, 600:1350]).max())
     assert d < 0.02, f"사각형 알파 차이 {d}"
     print(f"sign OK  tracks={tr.ids} {time.time() - t:.1f}s alpha {d:.4f}")
+    # v0.7.31 얼굴+간판 동시 블러: 한 소스가 두 종류를 함께(순차 분석 → 이어서 블러)
+    from mosco.render import build_plan, process
+    sb = Source(str(clip), "blur")
+    sb.both = True
+    assert sb.blur_kinds() == ["blur", "sign"], sb.blur_kinds()
+    plan, n, _, _ = build_plan(sb, info, dict(RENDER_DEFAULT))
+    assert plan[0] == "blur" and len(plan[1]) == 2, "두 종류 plan 아님"
+    o, a, ells = process(sb, plan, ff.grab(info, 15, 16), 15, True)
+    nsign = sum(1 for it, _ in ells if getattr(it, "pts", None) is not None and np.asarray(it.pts).size == 8)
+    assert nsign >= 3, f"동시 블러에 간판 {nsign}"      # 합성 간판 3개
+    outs2 = render(sb, dict(RENDER_DEFAULT), str(work))
+    assert ff.probe(outs2["main"]).frames == info.frames
+    print(f"both OK  동시 블러 간판 {nsign}")
 
 
 def check_output(src, outs, mode):

@@ -73,12 +73,12 @@ def _interp_keys(ks, vals, i):
 class Resolver:
     """한 소스·한 트랙에 대한 최종 타원 목록(프레임별)."""
 
-    def __init__(self, src, track):
+    def __init__(self, src, track, mode=None):
         self.src = src
-        self.mode = src.mode
-        self.p = src.params()
+        self.mode = mode or src.mode          # 동시 블러: 종류(blur/sign)별로 따로 리졸브
+        self.p = src.params_for(self.mode)
         self.track = track
-        self.e = get(src)
+        self.e = get(src, self.mode)
         self.n = track.n if track is not None else 0
         self.g_tid = {}            # gid -> tid
         self.merge = {}            # tid_b -> tid_a

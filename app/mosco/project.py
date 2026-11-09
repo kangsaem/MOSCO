@@ -58,6 +58,7 @@ class Source:
     sign: dict = field(default_factory=lambda: dict(SIGN_DEFAULT))
     custom: bool = False                     # 기본값에서 바뀜(C)
     edits: dict = field(default_factory=dict)   # 모드별 타원 수정(edits.py)
+    both: bool = False                       # 블러: 얼굴·간판 둘 다(활성 편집 = mode, 나머지 한 종류도 처리)
 
     @property
     def name(self) -> str:
@@ -69,6 +70,15 @@ class Source:
     def params_for(self, mode) -> dict:
         return {"beauty": self.beauty, "blur": self.blur, "sign": self.sign}.get(mode, self.blur)
 
+    def other_mode(self) -> str:
+        return "sign" if self.mode == "blur" else "blur"
+
+    def blur_kinds(self) -> list:
+        """처리할 블러 종류(활성 mode 먼저, both 면 나머지도). 뷰티면 빈 목록."""
+        if self.mode not in ("blur", "sign"):
+            return []
+        return [self.mode, self.other_mode()] if self.both else [self.mode]
+
     @staticmethod
     def from_dict(d) -> "Source":
         s = Source(d["path"], d.get("mode", "beauty"))
@@ -77,6 +87,7 @@ class Source:
         s.sign.update(d.get("sign", {}))
         s.custom = d.get("custom", False)
         s.edits = d.get("edits", {}) or {}
+        s.both = bool(d.get("both", False))
         return s
 
 

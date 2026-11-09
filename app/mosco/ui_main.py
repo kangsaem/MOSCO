@@ -138,15 +138,14 @@ def item_entries(items, p):
                    p)
 
 
-def compute_preview(src, frame16, resolver, has_track, i, scale=1.0):
-    """한 프레임: 원본·보정·키 3종·타원. frame16 은 보기 화질 크기, 좌표계도 그에 맞춤."""
+def compute_preview(src, frame16, plan, has_track, i, scale=1.0):
+    """한 프레임: 원본·보정·키 3종·타원. plan = [(resolver, mode), ...] — 동시 블러는 종류별로 이어서 블러."""
     H, W = frame16.shape[:2]
     out = {"orig": to8(frame16)}
-    p = src.params()
-    items = _scale_items(resolver.items(i), scale)      # 트랙·수정값은 원본 좌표 → 보기 좌표로
-    # 분석/AUTO 전에는 매 프레임 단발 검출을 하지 않는다(부하·느림). 원본만, 수동 타원만 표시.
     _ = has_track
     if src.mode == "beauty":
+        p = src.beauty
+        items = _scale_items(plan[0][0].items(i), scale)
         r = fx.beauty(frame16, items, p, i, want_keys=True)
         out["fx"] = to8(r.out)
         out["ells"] = entries(r.ells)
@@ -159,13 +158,20 @@ def compute_preview(src, frame16, resolver, has_track, i, scale=1.0):
         out["skin"] = gray8(fx.skin_key_full(frame16, p, r.ref, fw))
         out["faces"] = len(items)
     else:
-        o, a, ells = fx.blur(frame16, items, p, True)
+        o, a_all, all_ells, nfac = frame16, None, [], 0
+        for res, mode in plan:                          # 얼굴 → 간판 순으로 이어서 블러
+            items = _scale_items(res.items(i), scale)
+            o, a, ells = fx.blur(o, items, src.params_for(mode), True)
+            all_ells += ells
+            nfac += len(items)
+            if a is not None:
+                a_all = a if a_all is None else np.maximum(a_all, a)
         out["fx"] = to8(o)
-        out["ells"] = entries(ells, p)
+        out["ells"] = entries(all_ells, src.blur)
         out["focus"] = None
-        out["alpha"] = out["final"] = gray8(a)
-        out["skin"] = out["alpha"]
-        out["faces"] = len(items)
+        a_all = a_all if a_all is not None else np.zeros((H, W), np.float32)
+        out["alpha"] = out["final"] = out["skin"] = gray8(a_all)
+        out["faces"] = nfac
     return out
 
 
@@ -489,7 +495,9 @@ class MainWindow(QMainWindow):
             self.flash("같은 사람으로 합쳤습니다")
         self.panel.stop_tool()
 
-    def on_select(self, key):
+    def on_select(self, key, mode=None):
+        if mode and mode in ("blur", "sign"):
+            self.state.set_active(mode)      # 다른 종류 레인 클릭 = 그 종류로 전환(편집 가능)
         self.state.sel = key
         self._sel_refresh()
 
@@ -665,11 +673,9 @@ class MainWindow(QMainWindow):
 
     def _refresh_lanes(self):
         s = self.state.source()
-        a = self.state.analysis(s) if s else None
-        if s is None or not (a and a["state"] == "done"):
-            self.lanes.set_data([], 0, self.f, self.state.sel)
-            return
-        self.lanes.set_data(self.state.ellipse_spans(s), self.state.track(s).n, self.f, self.state.sel)
+        spans = self.state.ellipse_spans(s) if s else []    # 동시 블러면 두 종류 레인 포함
+        n = spans[0]["n"] if spans else 0
+        self.lanes.set_data(spans, n, self.f, self.state.sel)
 
     def _on_span(self, key, f_in, f_out):
         self.state.set_span(key, f_in, f_out)
@@ -762,9 +768,13 @@ class MainWindow(QMainWindow):
     def _overlay_from_track(self, i):
         s = self.state.source()
         ells = []
-        if s is not None and self.state.track(s) is not None:
-            items = _scale_items(self.state.resolver(s).items(i), self._vscale())
-            ells = item_entries(items, s.params())
+        if s is not None:
+            items = []
+            for res, _m in self.state.blur_resolvers(s):
+                if res.track is not None:
+                    items += res.items(i)
+            if items:
+                ells = item_entries(_scale_items(items, self._vscale()), s.params())
         self.mon.quad_mode = s is not None and s.mode == "sign"
         self.mon.set_overlay(ells, self.panel.t_ell.isChecked(), s is not None and s.mode in ("blur", "sign") and
                              self.panel.t_id.isChecked())
@@ -779,15 +789,16 @@ class MainWindow(QMainWindow):
         i = self.f
         import copy
         src = copy.deepcopy(s)
-        track = self.state.track(s)
-        res_ = edits.Resolver(src, track)
+        # 동시 블러: 종류별 (리졸버, mode) 목록. 미리보기가 종류별로 이어서 블러.
+        plan = [(edits.Resolver(src, self.state.track(s, m), m), m) for _r, m in self.state.blur_resolvers(s)]
+        has_tr = any(r.track is not None for r, _ in plan)
         sc = self._vscale()
         sz = self._vsize(info)
         fc = self.frame_cache if (self.frame_cache and self.frame_cache[:3] == (info.path, i, sc)) else None
 
         def fn():
             fr = fc[3] if fc else decoder.grab(info, i, 16, sz)
-            res = compute_preview(src, fr, res_, track is not None, i, sc)
+            res = compute_preview(src, fr, plan, has_tr, i, sc)
             res["frame16"] = fr
             res["i"] = i
             return res

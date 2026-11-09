@@ -74,11 +74,13 @@ class AppState(QObject):
         self.params_changed.emit()
 
     def analyze_now(self, s: Source = None):
-        """명시적으로 분석 시작(없으면 현재 소스). 이미 하는 중/끝났으면 그대로."""
+        """명시적으로 분석 시작(없으면 현재 소스). 동시 블러면 종류별로(얼굴·간판) 다. 이미 하는 중/끝났으면 그대로."""
         s = s or self.source()
-        if s is not None:
-            self.ensure_analysis(s)
-        return s is not None and self.analysis(s) is not None
+        if s is None:
+            return False
+        for m in (s.blur_kinds() or [s.mode]):
+            self.ensure_analysis(s, m)
+        return self.analysis(s) is not None
 
     # ------------------------------------------------------------ 소스
     def source(self) -> Source | None:
@@ -168,6 +170,33 @@ class AppState(QObject):
         self.changed.emit()
         self.params_changed.emit()
 
+    def set_blur(self, face, sign, active=None):
+        """동시 블러: 어떤 종류를 켤지(얼굴·간판). 둘 다면 both=True, 활성 편집 = active. 최소 하나는 켬."""
+        s = self.source()
+        if s is None:
+            return
+        if not face and not sign:
+            face = True
+        self.push_undo()
+        if face and sign:
+            s.both = True
+            s.mode = active if active in ("blur", "sign") else (s.mode if s.mode in ("blur", "sign") else "blur")
+        else:
+            s.both = False
+            s.mode = "blur" if face else "sign"
+        self.dirty = True
+        self.changed.emit()
+        self.params_changed.emit()
+
+    def set_active(self, mode):
+        """동시 블러: 편집 활성 종류만 바꿈(되돌리기·dirty 없음, 보기는 둘 다 유지)."""
+        s = self.source()
+        if s is None or s.mode == mode or mode not in ("blur", "sign"):
+            return
+        s.mode = mode
+        self.changed.emit()
+        self.params_changed.emit()
+
     def set_params(self, mode, params, *, custom=True):
         s = self.source()
         if s is None:
@@ -231,12 +260,13 @@ class AppState(QObject):
             self.an.pop(k)
         self._probe(path)
 
-    def ensure_analysis(self, s: Source):
+    def ensure_analysis(self, s: Source, mode=None):
+        mode = mode or s.mode
         info = self.infos.get(s.path)
         if info is None:
             return
-        key = (s.path, s.mode)
-        level = analyze.level_for(s.mode, s.params())
+        key = (s.path, mode)
+        level = analyze.level_for(mode, s.params_for(mode))
         a = self.an.get(key)
         if a and a["state"] in ("run", "done"):
             if a.get("level", 0) <= level:
@@ -245,15 +275,14 @@ class AppState(QObject):
             if a.get("job") is not None:
                 a["job"].cancel.set()
             self.an.pop(key, None)
-        z = analyze.load(info, s.mode, level)
+        z = analyze.load(info, mode, level)
         if z is not None:
-            self.an[key] = {"z": z, "p": 1.0, "state": "done", "err": "", "level": _z_level(z, s.mode)}
+            self.an[key] = {"z": z, "p": 1.0, "state": "done", "err": "", "level": _z_level(z, mode)}
             self.analysis_changed.emit(s.path)
             return
         rec = {"z": None, "p": 0.0, "state": "run", "err": "", "level": level}
         self.an[key] = rec
         hw = bool(self.settings.render.get("hw"))
-        mode = s.mode
 
         def fn(prog, cancel):
             return analyze.analyze(info, mode, prog, cancel, hw, level=level)
@@ -317,39 +346,50 @@ class AppState(QObject):
             self.analysis_changed.emit(key[0])
             self.changed.emit()
 
-    def analysis(self, s: Source):
+    def analysis(self, s: Source, mode=None):
         """지금 값에 쓸 수 있는 분석(블러: 분석 하한이 [최소 크기] 기준 이하). 아니면 None → 다시 분석 대상."""
-        a = self.an.get((s.path, s.mode))
-        if a is not None and a.get("level", 0) > analyze.level_for(s.mode, s.params()):
+        mode = mode or s.mode
+        a = self.an.get((s.path, mode))
+        if a is not None and a.get("level", 0) > analyze.level_for(mode, s.params_for(mode)):
             return None
         return a
 
-    def _track_sig(self, s: Source):
-        p = s.params()
+    def _track_sig(self, s: Source, mode=None):
+        mode = mode or s.mode
+        p = s.params_for(mode)
         rs = self.settings.render
-        keys = ("stabilize",) if s.mode == "beauty" else ("stabilize", "sensitivity", "min_size", "hold") \
-            if s.mode == "blur" else ("stabilize", "sensitivity", "min_size", "hold", "link", "margin", "max_count")
+        keys = ("stabilize",) if mode == "beauty" else ("stabilize", "sensitivity", "min_size", "hold") \
+            if mode == "blur" else ("stabilize", "sensitivity", "min_size", "hold", "link", "margin", "max_count")
         return json.dumps([p.get(x) for x in keys]) + str(rs.get("two_pass", True))
 
-    def track(self, s: Source):
+    def track(self, s: Source, mode=None):
         """현재 값 기준 트랙(캐시). 분석 전이면 None.
         캐시 = 소스·모드마다 최신 1개(예전: 전체 8개 넘으면 통째로 비움 → AUTO 로 9개 넘게 미리 만든 트랙이 지워졌음)."""
-        a = self.analysis(s)
+        mode = mode or s.mode
+        a = self.analysis(s, mode)
         if not a or a["state"] != "done":
             return None
-        sig = self._track_sig(s)
-        k = (s.path, s.mode)
+        sig = self._track_sig(s, mode)
+        k = (s.path, mode)
         hit = self._tracks.get(k)
         if hit is not None and hit[0] == sig:
             return hit[1]
         from .render import make_track
-        t = make_track(s, a["z"], self.settings.render)
+        t = make_track(s, a["z"], self.settings.render, mode)
         self._tracks[k] = (sig, t)
         return t
 
-    def has_track(self, s: Source) -> bool:
-        hit = self._tracks.get((s.path, s.mode))
-        return hit is not None and hit[0] == self._track_sig(s)
+    def has_track(self, s: Source, mode=None) -> bool:
+        mode = mode or s.mode
+        hit = self._tracks.get((s.path, mode))
+        return hit is not None and hit[0] == self._track_sig(s, mode)
+
+    def blur_resolvers(self, s: Source):
+        """동시 블러: 처리할 각 종류의 (Resolver, mode). 트랙 없는 종류는 track=None 으로 포함(표시만).
+        뷰티는 단일. 미리보기·오버레이·레인이 공통으로 씀."""
+        if s.mode == "beauty":
+            return [(edits.Resolver(s, self.track(s), "beauty"), "beauty")]
+        return [(edits.Resolver(s, self.track(s, m), m), m) for m in s.blur_kinds()]
 
     def prepare_track(self, s: Source, on_done=None, on_error=None):
         """분석이 끝난 소스의 트랙을 백그라운드에서 미리 계산해 캐시에 넣는다(AUTO [보정+편집])."""
@@ -560,33 +600,35 @@ class AppState(QObject):
         return None, None
 
     def ellipse_spans(self, s):
-        """현재 소스의 타원별 {key,label,intervals,keys,n}. 리졸버 바뀌면 다시 계산(캐시)."""
-        tr = self.track(s)
-        if tr is None:
+        """타원별 {key,mode,label,intervals,keys,n}. 동시 블러면 두 종류(얼굴·간판) 레인을 함께. 캐시."""
+        resolvers = [(r, m) for r, m in self.blur_resolvers(s) if r.track is not None]
+        if not resolvers:
             return []
-        n = tr.n
-        res = self.resolver(s)
-        sig = (s.path, s.mode, id(res), n)
+        n = max(r.n for r, _ in resolvers)
+        sig = (s.path, tuple((m, id(r.track)) for r, m in resolvers), n,
+               tuple(json.dumps(edits.get(s, m), sort_keys=True) for _, m in resolvers))
         if getattr(self, "_spans_cache", (None,))[0] == sig:
             return self._spans_cache[1]
         step = max(1, n // 800)
         seen, order = {}, []
-        for i in range(0, n, step):
-            for it in res.items(i):
-                k = it.key
-                if k not in seen:
-                    lbl = str(it.tid) if it.tid is not None else ("+" if it.manual else "·")
-                    if it.minus:
-                        lbl = "−" + (lbl if lbl not in ("+", "·") else "")
-                    seen[k] = {"label": lbl, "frames": [], "minus": it.minus,
-                               "quad": bool(getattr(it, "pts", None) is not None
-                                            and np.asarray(it.pts).size == 8), "manual": it.manual}
-                    order.append(k)
-                seen[k]["frames"].append(i)
+        for res, mode in resolvers:
+            for i in range(0, n, step):
+                for it in res.items(i):
+                    sk = (mode, it.key)                 # 종류로 구분(얼굴·간판 키가 겹칠 수 있음)
+                    if sk not in seen:
+                        lbl = str(it.tid) if it.tid is not None else ("+" if it.manual else "·")
+                        if it.minus:
+                            lbl = "−" + (lbl if lbl not in ("+", "·") else "")
+                        seen[sk] = {"label": lbl, "frames": [], "minus": it.minus, "mode": mode,
+                                    "quad": bool(getattr(it, "pts", None) is not None
+                                                 and np.asarray(it.pts).size == 8), "manual": it.manual}
+                        order.append(sk)
+                    seen[sk]["frames"].append(i)
         out = []
-        groups = {g["gid"]: g for g in edits.get(s)["groups"]}
-        for k in order:
-            fr = seen[k]["frames"]
+        for sk in order:
+            mode, k = sk
+            d = seen[sk]
+            fr = d["frames"]
             intervals, a, prev = [], fr[0], fr[0]
             for f in fr[1:]:
                 if f - prev > step * 2:
@@ -594,9 +636,10 @@ class AppState(QObject):
                     a = f
                 prev = f
             intervals.append((a, prev))
+            groups = {g["gid"]: g for g in edits.get(s, mode)["groups"]}
             keys = sorted(int(x) for x in groups[k[1]].get("keys", {})) if k[0] == "g" and k[1] in groups else []
-            out.append({"key": k, "label": seen[k]["label"], "intervals": intervals, "keys": keys, "n": n,
-                        "minus": seen[k]["minus"], "quad": seen[k]["quad"], "manual": seen[k]["manual"]})
+            out.append({"key": k, "mode": mode, "label": d["label"], "intervals": intervals, "keys": keys, "n": n,
+                        "minus": d["minus"], "quad": d["quad"], "manual": d["manual"]})
         self._spans_cache = (sig, out)
         return out
 
