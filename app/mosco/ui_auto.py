@@ -298,7 +298,7 @@ class AutoDialog(DragMove, QDialog):
         # 오른쪽 그룹에 같은 간격으로: [취소][AE][샘플][보정+편집][보정+렌더]. AE 는 취소와 같은 크기(v0.7.18)
         self.b_cancel = _b("취소", w=88, h=32, on=self._cancel)
         btmrow.addWidget(self.b_cancel)
-        self.b_ae = _b("AE", w=88, h=32, tip="적용 + 분석 후 각 클립의 타원·간판 트랙을 에펙 마스크 스크립트(.jsx)로 저장\n"
+        self.b_ae = _b("AE", w=88, h=32, style=RED, tip="적용 + 분석 후 각 클립의 타원·간판 트랙을 에펙 마스크 스크립트(.jsx)로 저장\n"
                        "(렌더 안 함 · 저장폴더 선택)", on=lambda: self._go("ae"))
         btmrow.addWidget(self.b_ae)
         self.b_sample = _b("샘플", w=88, h=32, style=ORANGE, tip="렌더 없이 샘플 PNG 만 (마지막 샘플 설정)",

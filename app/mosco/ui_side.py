@@ -218,7 +218,7 @@ class RenderPanel(QWidget):
         self.b_set = btn("⚙", "렌더 설정", size=BTN_MAIN, w=40, on_click=self.settings_clicked.emit)
         self.b_render = btn("렌더", "렌더 목록(대기)을 모두 렌더 (Ctrl+R). ➜ 로 목록에 보낸 뒤 사용", size=BTN_MAIN, red=True, on_click=self.render_clicked.emit)
         self.b_ae = btn("AE", "에펙으로 보내기 — 현재 소스의 타원·사각형 트랙을 마스크 키프레임 스크립트(.jsx)로 저장.\n"
-                        "에펙: 소스 레이어 선택 → 파일 › 스크립트 › 스크립트 파일 실행", size=BTN_MAIN, w=48,
+                        "에펙: 소스 레이어 선택 → 파일 › 스크립트 › 스크립트 파일 실행", size=BTN_MAIN, w=48, red=True,
                         on_click=self.ae_clicked.emit)
         r.addWidget(self.b_set)
         r.addWidget(self.b_ae)
