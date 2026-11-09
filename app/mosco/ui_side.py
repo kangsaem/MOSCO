@@ -60,6 +60,11 @@ class SourceDelegate(QStyledItemDelegate):
             p.setBrush(QColor(PROG[kind][0]))
             p.drawRoundedRect(r, 3, 3)
             p.setClipping(False)
+        elif not err and not b:                            # 분석 완료 = 아래 가장자리 청록 줄(끝까지 간 뒤 남김)
+            modes = s.blur_kinds() or [s.mode]
+            if all((self.state.analysis(s, m) or {}).get("state") == "done" for m in modes):
+                p.setBrush(QColor(PROG["analyze"][1]))
+                p.drawRoundedRect(QRect(r.left() + 2, r.bottom() - 3, r.width() - 4, 3), 1, 1)
         if opt.state & QStyle.State_Selected:
             p.setPen(QColor("#4a8fe0"))
             p.setBrush(Qt.NoBrush)
