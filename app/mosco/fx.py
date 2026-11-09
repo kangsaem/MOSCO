@@ -162,17 +162,27 @@ def face_region_mask(pts, roi, face_w, neck=0):
     return cv2.GaussianBlur(m, (0, 0), max(1.0, face_w * 0.03))
 
 
+def _fill_groups(m, pts, off, groups, pad_px):
+    """groups 각 볼록다각형 → m 에 채우고 pad_px 만큼만 넓힘."""
+    g = np.zeros_like(m)
+    for grp in groups:
+        p = ((pts[grp] - off) * 16).astype(np.int32)
+        cv2.fillPoly(g, [cv2.convexHull(p)], 1.0, cv2.LINE_AA, 4)
+    k = max(1, int(pad_px))
+    g = cv2.dilate(g, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * k + 1, 2 * k + 1)))
+    np.maximum(m, g, out=m)
+
+
 def feature_mask(pts, roi, face_w):
-    """눈·눈썹·입 제외 마스크(1=제외)."""
+    """눈·눈썹·입 제외 마스크(1=제외). v0.7.21: 눈·눈썹 제외 영역을 작게 — 눈가·눈밑 주름은 보정에 포함.
+    (눈꺼풀 자체만 가리고, 바깥쪽 crow's feet·눈밑은 살림. 입은 그대로.)"""
     x0, y0, x1, y1 = roi
     m = np.zeros((y1 - y0, x1 - x0), np.float32)
     off = np.array([x0, y0], np.float32)
-    for grp in models.FEATURES:
-        p = ((pts[grp] - off) * 16).astype(np.int32)
-        cv2.fillPoly(m, [cv2.convexHull(p)], 1.0, cv2.LINE_AA, 4)
-    k = max(1, int(face_w * 0.035))
-    m = cv2.dilate(m, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * k + 1, 2 * k + 1)))
-    return cv2.GaussianBlur(m, (0, 0), max(1.0, face_w * 0.02))
+    _fill_groups(m, pts, off, (models.LEFT_EYE, models.RIGHT_EYE), face_w * 0.012)   # 눈: 아주 작게
+    _fill_groups(m, pts, off, (models.LEFT_BROW, models.RIGHT_BROW), face_w * 0.015)  # 눈썹: 작게
+    _fill_groups(m, pts, off, (models.LIPS,), face_w * 0.03)                          # 입: 그대로
+    return cv2.GaussianBlur(m, (0, 0), max(1.0, face_w * 0.012))
 
 
 class BeautyResult:
