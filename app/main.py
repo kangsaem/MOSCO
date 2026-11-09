@@ -55,7 +55,19 @@ def main():
         QTimer.singleShot(2000, lambda: app.exit(0 if ok else 3))
     if args:
         w.state.add_files(args)
-    sys.exit(app.exec())
+    code = app.exec()
+    # 종료 시 프로세스를 확실히 끝냄: 남은 ffmpeg·상주 디코더 정리 후 os._exit.
+    # (데몬/네이티브 스레드·onnxruntime GPU 컨텍스트가 남아 프로세스가 안 죽고 GPU·화면이 계속 점유되던 것 방지.
+    #  PyAV/Qt teardown 경쟁으로 종료 때 세그폴트 나던 것도 함께 우회 — 테스트의 os._exit 과 같은 이유.)
+    try:
+        from mosco import decoder, ff
+        decoder.close_all()
+        ff.kill_all()
+    except Exception:  # noqa: BLE001
+        pass
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(code if isinstance(code, int) else 0)
 
 
 if __name__ == "__main__":
