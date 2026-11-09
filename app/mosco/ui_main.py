@@ -836,6 +836,7 @@ class MainWindow(QMainWindow):
         self.result = None
         self.gen += 1
         self.mon.set_default("fit")
+        self.mon.playing = True                # 재생 중 부드러운 확대 끔(빠르게)
         self.player = Player(info, self.f, self._play_frame, self._play_end, self._vsize(info))
         self.b_play.setProperty("on", True)
         self.b_play.style().polish(self.b_play)
@@ -854,6 +855,7 @@ class MainWindow(QMainWindow):
 
     def _play_end(self):
         self.player = None
+        self.mon.playing = False
         self._unplay_btn()
         self.seek(self.f, force=True)
 
@@ -861,6 +863,7 @@ class MainWindow(QMainWindow):
         if self.player:
             self.player.stop()
             self.player = None
+            self.mon.playing = False
             self._unplay_btn()
 
     def _unplay_btn(self):

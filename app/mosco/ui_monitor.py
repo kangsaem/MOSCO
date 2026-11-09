@@ -83,6 +83,7 @@ class Monitor(QWidget):
         self.c = QPointF(960, 540)
         self.loading = False
         self.picking = False
+        self.playing = False        # 재생 중에는 부드러운 확대 끔(빠르게)
         self._drag = None
         self.zoom = ZoomBox(self)
         self.zoom.step.connect(self.zoom_step)
@@ -384,7 +385,7 @@ class Monitor(QWidget):
     def paintEvent(self, e):
         p = QPainter(self)
         p.fillRect(self.rect(), QColor("#0e0e0e"))
-        p.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        p.setRenderHint(QPainter.SmoothPixmapTransform, not self.playing)   # 재생 중 = 빠른 확대
         W, H = self.full
         if not self.imgs:
             if self.loading:
