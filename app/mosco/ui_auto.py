@@ -287,9 +287,13 @@ class AutoDialog(DragMove, QDialog):
         self.status = QLabel("")
         self.status.setStyleSheet("color:#7fd18b")
         btmrow.addWidget(self.status)
-        btmrow.addStretch(1)                       # 취소도 오른쪽 그룹에(DTME: 취소·샘플·보정+편집·보정+렌더)
+        # 취소는 왼쪽으로, 그 오른쪽에 [AE](v0.7.15). 샘플·보정+편집·보정+렌더는 오른쪽 그룹.
         self.b_cancel = _b("취소", w=88, h=32, on=self._cancel)
         btmrow.addWidget(self.b_cancel)
+        self.b_ae = _b("AE", w=60, h=32, tip="적용 + 분석 후 각 클립의 타원·간판 트랙을 에펙 마스크 스크립트(.jsx)로 저장\n"
+                       "(렌더 안 함 · 저장폴더 선택)", on=lambda: self._go("ae"))
+        btmrow.addWidget(self.b_ae)
+        btmrow.addStretch(1)
         self.b_sample = _b("샘플", w=88, h=32, style=ORANGE, tip="렌더 없이 샘플 PNG 만 (마지막 샘플 설정)",
                            on=lambda: self._go("sample"))
         btmrow.addWidget(self.b_sample)
@@ -556,7 +560,7 @@ class AutoDialog(DragMove, QDialog):
         self.state.settings.save()
 
     def _busy(self, on):
-        for b in (self.b_sample, self.b_correct, self.b_render):
+        for b in (self.b_sample, self.b_correct, self.b_render, self.b_ae):
             b.setEnabled(not on)
 
     def _cancel(self):
@@ -568,7 +572,7 @@ class AutoDialog(DragMove, QDialog):
                     it.job.cancel.set()
             self.status.setText("렌더 취소 중…")
             return
-        if self._phase in ("measure", "analyze"):
+        if self._phase in ("measure", "analyze", "ae"):
             self._stop_phase()
             self._status("취소됨", None)
             self.status.setStyleSheet("color:#c8c8c8")
@@ -583,6 +587,9 @@ class AutoDialog(DragMove, QDialog):
                 tm.stop()
         self._cancel_detect()
         self._cancel_analysis()
+        j = getattr(self, "_ae_job", None)
+        if j is not None:
+            j.cancel.set()
         self._phase = None
         for c in self.clips:
             c["prog"] = None
@@ -591,7 +598,7 @@ class AutoDialog(DragMove, QDialog):
         self._refresh()
 
     def reject(self):
-        if any(it.state in ("대기", "진행") for it in self._renders) or self._phase in ("measure", "analyze"):
+        if any(it.state in ("대기", "진행") for it in self._renders) or self._phase in ("measure", "analyze", "ae"):
             self._cancel()                        # 진행 중 Esc = 그 작업 취소(창은 유지)
             return
         super().reject()
@@ -602,7 +609,7 @@ class AutoDialog(DragMove, QDialog):
         if self._phase is not None or not any(c["inc"] for c in self.clips):
             return
         out_dir = None
-        if after in ("render", "sample"):
+        if after in ("render", "sample", "ae"):
             out_dir = self.mw._out_dir()
             if not out_dir:
                 return
@@ -644,7 +651,8 @@ class AutoDialog(DragMove, QDialog):
             self._rt.start()
             self._render_tick()
             return
-        # 보정+편집: 이 창에서 타원 분석 + 트랙 계산까지 끝내고 편집 화면으로(편집 화면에서 다시 기다리지 않게)
+        # 보정+편집 / AE: 이 창에서 타원 분석 + 트랙 계산까지 끝냄. each = 편집 화면, ae = .jsx 저장
+        self._ae_dir = out_dir if self.after == "ae" else None
         self._phase = "analyze"
         srcs = self.state.project.sources
         self._an = [[c, srcs[c["idx"]], False] for c in self.clips if c["inc"] and c["idx"] < len(srcs)]
@@ -703,12 +711,72 @@ class AutoDialog(DragMove, QDialog):
             self.pbar.set(0.0)
             self._busy(False)
             return
+        if getattr(self, "_ae_dir", None):
+            self._export_ae(self._ae_dir)
+            return
         self.outcome = "each"
         idxs = [c["idx"] for c, _, _ in self._an]
         self.accept()
         mw = self.mw
         mw.state.select(idxs[0] if idxs else 0)
         mw.flash("AUTO 적용 완료 — 타원 준비됨")
+
+    def _export_ae(self, out_dir):
+        """분석·트랙이 끝난 각 클립 → .jsx 저장(백그라운드). 창은 유지."""
+        import copy
+        from pathlib import Path
+
+        from . import aefx, jobs
+        jobsq, taken = [], set()
+        for c, s, _ in self._an:
+            if s.path in self.state.errors:
+                continue
+            track = self.state.track(s)
+            info = self.state.info(s.path)
+            if info is None:
+                continue
+            base = (self.name + "_" if self.name else "") + Path(s.path).stem + "_MOSCO_AE"
+            path = Path(out_dir) / (base + ".jsx")
+            k = 2
+            while str(path) in taken or path.exists():      # 이름 겹치면 _2, _3 … (덮어쓰기 방지)
+                path = Path(out_dir) / f"{base}_{k}.jsx"
+                k += 1
+            taken.add(str(path))
+            jobsq.append((copy.deepcopy(s), info, track, str(path)))
+        if not jobsq:
+            self._status("AE 보낼 클립이 없습니다", None)
+            self.status.setStyleSheet("color:#e06c6c")
+            self._busy(False)
+            return
+        self._phase = "ae"
+        self._status(f"AE 보내는 중… 0/{len(jobsq)}", "analyze")
+
+        def work(progress, cancel):
+            done = 0
+            for src, info, track, path in jobsq:
+                if cancel.is_set():
+                    break
+                aefx.export(src, info, track, path)
+                done += 1
+                progress(done / len(jobsq))
+            return done
+
+        j = jobs.Job(work, with_progress=True)
+        j.signals.progress.connect(lambda v: (self.pbar.set(v, "analyze"),
+                                              self._status(f"AE 보내는 중… {int(v * len(jobsq))}/{len(jobsq)}", "analyze")))
+        j.signals.done.connect(lambda n: self._ae_done(n, len(jobsq)))
+        j.signals.error.connect(lambda e: (self._status(f"AE 보내기 오류: {e}", None),
+                                           self.status.setStyleSheet("color:#e06c6c"), self._busy(False)))
+        self._ae_job = j
+        jobs.submit(jobs.ANALYZE_POOL, j, 5)
+
+    def _ae_done(self, n, total):
+        self._phase = None
+        self.pbar.set(0.0)
+        self._status(f"AE 보내기 완료 — {n}/{total}개 .jsx 저장", None)
+        self.status.setStyleSheet("color:#7fd18b")
+        self._busy(False)
+        self.mw.flash(f"AE 보내기 완료 — {n}개 .jsx")
 
     def _cancel_analysis(self):
         """[보정+편집] 분석 중 취소·창 닫기: 돌고 있는 분석 작업 멈춤."""
