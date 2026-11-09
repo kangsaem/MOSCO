@@ -132,6 +132,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit 1 }
           python tests/test_edits.py
           if ($LASTEXITCODE -ne 0) { exit 1 }
+          python tests/test_aefx.py
+          if ($LASTEXITCODE -ne 0) { exit 1 }
           python tests/test_priority.py
           if ($LASTEXITCODE -ne 0) { exit 1 }
           # test_auto 는 끝에서 os._exit 로 즉시 종료(스레드 조인 회피)라 윈도우 종료코드가 불안정 → 성공 표식으로 판정

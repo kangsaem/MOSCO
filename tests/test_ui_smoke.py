@@ -56,7 +56,14 @@ def sign_ui(app, w, st, vids, out):
     sc = w._vscale()
     assert abs(float(it.pts[2][0]) - q[4] / sc) < 1.5, (it.pts[2], q[4] / sc)
     w.grab().save(str(out / "9_sign.png"))
-    print("sign ui OK")
+    # v0.7.14 AE 보내기: 실제 간판 트랙 → .jsx (사각형 마스크, 고친 꼭짓점 키 포함)
+    jsx = out / "sign_AE.jsx"
+    j = w.export_ae(str(jsx))
+    assert j is not None and pump(app, 120, lambda: jsx.exists() and jsx.stat().st_size > 0), "AE 보내기 파일 없음"
+    pump(app, 0.5)
+    txt = jsx.read_text(encoding="ascii")
+    assert txt.count('{name:"') >= 3 and "ADBE Mask Shape" in txt, txt[:400]
+    print("sign ui OK (AE 보내기", jsx.stat().st_size, "bytes)")
 
 
 def main():

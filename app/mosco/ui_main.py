@@ -366,6 +366,7 @@ class MainWindow(QMainWindow):
         self.rpanel.setFixedHeight(300)
         self.rpanel.settings_clicked.connect(self.render_settings)
         self.rpanel.render_clicked.connect(self.render_all)
+        self.rpanel.ae_clicked.connect(self.export_ae)
         self.rpanel.on_rerender = self.rerender
         rv.addWidget(self.rpanel)
         split = QSplitter(Qt.Horizontal)
@@ -961,6 +962,35 @@ class MainWindow(QMainWindow):
         for it in waiting:
             it.state, it.p, it.err = "대기", 0.0, ""
             self._start_render(it)
+
+    # ------------------------------------------------------------ AE 보내기(v0.7.14)
+    def export_ae(self, path=None):
+        """현재 소스의 (수정 반영된) 타원·사각형 트랙 → 에펙 마스크 키프레임 스크립트(.jsx). 렌더 없음."""
+        s = self.state.source()
+        info = self._info()
+        if s is None or info is None:
+            self.flash("보낼 소스를 선택하세요")
+            return None
+        track = self.state.track(s)
+        if track is None and not edits.get(s).get("groups"):
+            self.flash("먼저 분석하세요 (AUTO [보정+편집] 또는 소스 분석) — 트랙이 없습니다")
+            return None
+        if path is None:
+            rs = self.state.settings.render
+            d = rs.get("out_dir") if rs.get("out_dir") and Path(rs["out_dir"]).is_dir() else str(Path(s.path).parent)
+            path, _ = QFileDialog.getSaveFileName(self, "AE 보내기", str(Path(d) / f"{Path(s.path).stem}_MOSCO_AE.jsx"),
+                                                  "After Effects 스크립트 (*.jsx)")
+            if not path:
+                return None
+        import copy
+        from . import aefx
+        src = copy.deepcopy(s)
+        self.flash("AE 보내기 만드는 중…")
+        j = jobs.Job(lambda: aefx.export(src, info, track, path))
+        j.signals.done.connect(lambda r: self.flash(f"AE 보내기 완료 — 마스크 {r['masks']}개 · {Path(r['path']).name}"))
+        j.signals.error.connect(lambda e: self.flash(f"AE 보내기 오류: {e}"))
+        jobs.submit(jobs.ANALYZE_POOL, j, 5)
+        return j
 
     # ------------------------------------------------------------ AUTO
     def open_auto(self):
