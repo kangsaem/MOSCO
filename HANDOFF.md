@@ -1,6 +1,6 @@
 # HANDOFF — MOSCO (Mosaic + Cosmo)
 
-다음 대화는 이 문서를 기준으로 이어서 작업한다. **현재 v0.7.31 (2026-11-09). 1단계(DTME UI 통일) 완료 → 지금은 2단계(앱 보완) · B-1 실영상 테스트 대기.**
+다음 대화는 이 문서를 기준으로 이어서 작업한다. **현재 v0.7.32 (2026-11-09). 1단계(DTME UI 통일) 완료 → 지금은 2단계(앱 보완) · B-1 실영상 테스트 대기.**
 
 > ## 진행 순서 (중요 — 지금 여기 = 2단계)
 > **1단계 · DTME에서 UI/버튼 수정 〔완료 v0.6.1〕** → **2단계 · 수정된 UI 위에서 앱 기능 보완 〔지금〕**
@@ -9,6 +9,11 @@
 > - 1단계 점검 결과(v0.6.1 직후 확인): UI 파일만 변경, 슬라이더 키 6개·➜/렌더 시그널·`os._exit(0)` 유지, 엔진/데이터 무수정 — 계약 이상 없음.
 
 ### 변경 이력 (최신순)
+- **v0.7.32 편집 화면 손질 + AUTO 동시 블러 + 로그**
+  - **AE 버튼 = 렌더 크기**(ui_side, w=48→BTN_MAIN). 렌더 패널: 윗줄 **[▼][⚙] … [렌더]**, 아랫줄 **[AE]**(렌더와 같은 크기). ▼ = 선택 소스를 렌더 대기목록으로(`queue_clicked`→`queue_to_render`). **소스 목록 우클릭**에도 "렌더 대기목록으로 보내기"(`SourceList.queue_requested`).
+  - **레인↕프리뷰 스플리터**(`ui_main.vsplit`, QSplitter 세로): 모니터 ↕ (바+레인+눈금). 레인 창을 드래그로 높게(여기서 키프레임·타원 수정 후 AE 가는 흐름). `lanes_box` 고정 높이 제거 → 스플리터가 늘림(최소 2레인).
+  - **AUTO 얼굴+간판 동시**: 작업 컨트롤 [뷰티](배타)·[얼굴 블러][간판 블러](토글, 둘 다 가능). `clip["both"]`·`_kinds(c)`·`_toggle_work`·`_set_work`. `_assignments` 4-튜플 `(idx, mode, both, {kind: params})`, `apply_auto` 가 both·종류별 파라미터 반영(옛 3-튜플도 호환). [보정+편집] 분석도 종류별(`_an_state` 종류 집계, `prepare_track(mode)`). 측정은 얼굴 있을 때.
+  - **로그(개선점 찾기용)**: `models.active_device()`(CPU / GPU(DirectML) 등)를 `analyze_log.csv`·`render_log.csv` 에 '검출장치' 열로 추가 → GPU/CPU·HDD/SSD 별 분석·렌더 시간 비교 가능.
 - **v0.7.31 얼굴+간판 동시 블러** — 한 소스가 얼굴블러·간판블러를 **함께**(뷰티는 별도·배타). 데이터는 이미 모드별 분리라(`edits["blur"]`·`["sign"]`) 종류별로 돌려 합침.
   - `Source.both`(bool)·`blur_kinds()`(활성 mode 먼저, both 면 나머지도)·`other_mode()`. `from_dict`/`asdict` 저장.
   - **분석 순차**: `analyze_now`·`ensure_analysis(s, mode)` 가 종류별로(얼굴→간판). HDD 풀=1 이라 자연히 순차. `analysis/track/_track_sig/has_track` 에 mode 인자.

@@ -10,7 +10,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import __version__, analyze, edits, ff, fx, paths
+from . import __version__, analyze, edits, ff, fx, models, paths
 from .project import Source
 
 
@@ -28,7 +28,7 @@ def pick_workers(rs: dict) -> int:
 
 
 LOG_HEAD = ["시각", "버전", "소스", "모드", "프레임", "분석초", "분석fps", "렌더초", "렌더fps",
-            "작업자", "코어", "디코딩", "출력"]
+            "작업자", "코어", "디코딩", "검출장치", "출력"]
 
 
 def write_log(st: dict):
@@ -207,7 +207,7 @@ def render(src: Source, rs: dict, out_dir: str, progress=None, cancel=None, work
     st = {"시각": time.strftime("%Y-%m-%d %H:%M:%S"), "버전": __version__, "소스": src.name, "모드": "+".join(src.blur_kinds()) if src.blur_kinds() else src.mode,
           "프레임": i, "분석초": round(t_an, 1), "분석fps": round(i / t_an, 2) if t_an > 0 else "캐시",
           "렌더초": round(t_r, 1), "렌더fps": round(i / t_r, 2) if t_r > 0 else 0,
-          "작업자": workers, "코어": os.cpu_count() or 0, "디코딩": "NVDEC" if hw else "CPU",
+          "작업자": workers, "코어": os.cpu_count() or 0, "디코딩": "NVDEC" if hw else "CPU", "검출장치": models.active_device(),
           "출력": "+".join(k for k in ("main", "overlay", "review") if k in names and (
               (k == "main" and rs.get("main", True)) or (k == "overlay" and src.mode in ("blur", "sign") and rs.get("overlay", True))
               or (k == "review" and rs.get("review"))))}

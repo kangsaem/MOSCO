@@ -165,8 +165,9 @@ class AutoDialog(DragMove, QDialog):
         for i, s in enumerate(state.project.sources):
             if only is not None and i not in only:
                 continue
-            self.clips.append({"idx": i, "name": s.name, "inc": True, "mode": s.mode,
-                               "measured": None, "prog": None, "c": s.custom, "outp": "HQ"})
+            self.clips.append({"idx": i, "name": s.name, "inc": True, "mode": s.mode if s.mode != "sign" else "sign",
+                               "both": bool(getattr(s, "both", False)), "measured": None, "prog": None,
+                               "c": s.custom, "outp": "HQ"})
         # 창 높이: 클립 수에 맞춰 늘리되 최대 LIST_MAX 줄(넘으면 목록만 스크롤). 폭은 고정.
         rows = min(len(self.clips), LIST_MAX)
         list_h = rows * CLIP_ROW + 12                    # 목록 몸통(ClipRow 30 + 간격 4 ≈ CLIP_ROW)
@@ -237,8 +238,22 @@ class AutoDialog(DragMove, QDialog):
         div0.setFrameShape(QFrame.HLine)
         div0.setStyleSheet("color:#3a3a3a")
         right.addWidget(div0)
-        self.seg_work, self.set_work = _seg([("beauty", "뷰티"), ("blur", "얼굴 블러"), ("sign", "간판 블러")], "beauty",
-                                            self._on_work, lw=AUTO_LW, label="작업")
+        wk = QHBoxLayout()
+        wk.setSpacing(5)
+        wlb = QLabel("작업")
+        wlb.setFixedWidth(AUTO_LW)
+        wlb.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        wlb.setStyleSheet("color:#d0d0d0")
+        wk.addWidget(wlb)
+        self.w_beauty = _b("뷰티", h=30, on=lambda: self._set_work("beauty"))
+        self.w_face = _b("얼굴 블러", h=30, on=lambda: self._toggle_work("blur"))
+        self.w_sign = _b("간판 블러", h=30, on=lambda: self._toggle_work("sign"))
+        for b in (self.w_beauty, self.w_face, self.w_sign):
+            b.setCheckable(True)
+            wk.addWidget(b)
+        wk.addStretch(1)
+        self.seg_work = QWidget()
+        self.seg_work.setLayout(wk)
         right.addWidget(self.seg_work)
         div = QFrame()
         div.setFrameShape(QFrame.HLine)
@@ -333,9 +348,32 @@ class AutoDialog(DragMove, QDialog):
                 c["inc"] = v
         self._refresh()
 
-    def _on_work(self, k):
+    @staticmethod
+    def _kinds(c):
+        """클립이 처리할 블러 종류. 뷰티면 빈 목록."""
+        if c["mode"] not in ("blur", "sign"):
+            return []
+        return ["blur", "sign"] if c.get("both") else [c["mode"]]
+
+    def _set_work(self, which):
         for c in self._targets():
-            c["mode"] = k
+            c["mode"], c["both"] = "beauty", False
+        self._refresh()
+
+    def _toggle_work(self, kind):
+        """얼굴·간판 토글(둘 다 켤 수 있음). 뷰티에서 누르면 그 종류로 전환."""
+        for c in self._targets():
+            if c["mode"] == "beauty":
+                c["mode"], c["both"] = kind, False
+                continue
+            ks = set(self._kinds(c))
+            ks ^= {kind}                      # 토글
+            if not ks:
+                ks = {kind}                   # 최소 하나
+            if len(ks) == 2:
+                c["mode"], c["both"] = kind, True        # 방금 누른 쪽을 활성으로
+            else:
+                c["mode"], c["both"] = next(iter(ks)), False
         self._refresh()
 
     def _on_strength(self, k):
@@ -376,13 +414,13 @@ class AutoDialog(DragMove, QDialog):
     def _refresh(self):
         for c, r in zip(self.clips, self.rows):
             m = c["measured"]
-            lbl = ad.LABEL.get(c["mode"], c["mode"])
+            lbl = ("얼굴+간판" if c.get("both") else ad.LABEL.get(c["mode"], c["mode"]))
             sub = ""
             kind = c.get("kind", "render" if self._renders else "measure")
             if c["prog"] is not None:
                 # 진행 중: 단계 글자 + 퍼센트(샘플은 c['sub'] 에 'k/n')
                 sub = (c.get("sub") if kind == "sample" else None) or f"{PROG_TXT[kind]} {int(c['prog'] * 100)}%"
-            elif m and c["mode"] == "blur":
+            elif m and "blur" in self._kinds(c):
                 bits = []
                 if m.get("min_face"):
                     bits.append(f"최소 얼굴 {m['min_face']}px")
@@ -392,7 +430,10 @@ class AutoDialog(DragMove, QDialog):
                         kind)
         # primary 클립 기준 작업 버튼 상태
         p = self._primary()
-        self.set_work(p["mode"] if p else "beauty")
+        pk = set(self._kinds(p)) if p else set()
+        self.w_beauty.setChecked(bool(p) and p["mode"] == "beauty")
+        self.w_face.setChecked("blur" in pk)
+        self.w_sign.setChecked("sign" in pk)
         self.set_strength(self.strength)
         if p:
             mode, params = ad.to_params(p["mode"], self.strength, p["measured"])
@@ -437,7 +478,7 @@ class AutoDialog(DragMove, QDialog):
     # ------------------------------------------------------------ 측정(백그라운드)
     def _need_measure(self, c):
         """측정은 블러만 쓴다(최소 얼굴·움직임 → 블러 자동값). 뷰티는 측정 없이 바로."""
-        return c["inc"] and c["mode"] == "blur" and c["measured"] is None
+        return c["inc"] and ("blur" in self._kinds(c)) and c["measured"] is None
 
     def _on_state_changed(self):
         if self._phase == "measure":
@@ -528,7 +569,7 @@ class AutoDialog(DragMove, QDialog):
 
     def _update_bar(self):
         """측정 단계 전체 막대(블러 클립만 측정)."""
-        tg = [c for c in self.clips if c["inc"] and c["mode"] == "blur"]
+        tg = [c for c in self.clips if c["inc"] and ("blur" in self._kinds(c))]
         if self._phase != "measure" or not tg:
             return
         frac = sum(1.0 if c["measured"] is not None else (c["prog"] or 0.0) for c in tg) / len(tg)
@@ -552,8 +593,16 @@ class AutoDialog(DragMove, QDialog):
                 continue
             if self.keep_existing and c["c"]:
                 continue
-            mode, params = ad.to_params(c["mode"], self.strength, c["measured"])
-            out.append((c["idx"], mode, params))
+            ks = self._kinds(c)
+            if not ks:                         # 뷰티
+                mode, params = ad.to_params("beauty", self.strength, c["measured"])
+                out.append((c["idx"], mode, False, {mode: params}))
+            else:
+                pbk = {}
+                for k in ks:
+                    mk, params = ad.to_params(k, self.strength, c["measured"])
+                    pbk[mk] = params
+                out.append((c["idx"], c["mode"], c.get("both", False), pbk))
         return out
 
     def _persist_settings(self):
@@ -662,36 +711,42 @@ class AutoDialog(DragMove, QDialog):
         self._ae_dir = out_dir if self.after == "ae" else None
         self._phase = "analyze"
         srcs = self.state.project.sources
-        self._an = [[c, srcs[c["idx"]], False] for c in self.clips if c["inc"] and c["idx"] < len(srcs)]
+        self._an = [[c, srcs[c["idx"]], {"req": set(), "err": False}]
+                    for c in self.clips if c["inc"] and c["idx"] < len(srcs)]
         for c, s, _ in self._an:
             c["kind"], c["prog"] = "analyze", 0.0
-            self.state.ensure_analysis(s)
+            for m in (s.blur_kinds() or [s.mode]):      # 동시 블러면 두 종류 다
+                self.state.ensure_analysis(s, m)
         from PySide6.QtCore import QTimer
         self._at = QTimer(self, interval=150, timeout=self._an_tick)
         self._at.start()
         self._an_tick()
 
     def _an_state(self, ent):
-        """대상 하나의 진행(0~1)과 상태: run · done · err."""
-        c, s, asked = ent
-        if s.path in self.state.errors:
+        """대상 하나의 진행(0~1)과 상태: run · done · err. 동시 블러는 종류별 평균."""
+        c, s, st = ent                       # st = {"req": 트랙 준비 요청한 종류, "err": bool}
+        if s.path in self.state.errors or st.get("err"):
             return 1.0, "err"
-        a = self.state.analysis(s)
-        if a is None:
-            self.state.ensure_analysis(s)          # 파일 정보가 늦게 온 경우
-            return 0.0, "run"
-        if a["state"] == "err":
-            return 1.0, "err"
-        if a["state"] != "done":
-            return 0.95 * float(a.get("p") or 0.0), "run"     # 마지막 5% = 트랙 계산
-        if self.state.has_track(s):
+        modes = s.blur_kinds() or [s.mode]
+        vals, states = [], []
+        for m in modes:
+            a = self.state.analysis(s, m)
+            if a is None:
+                self.state.ensure_analysis(s, m)
+                vals.append(0.0); states.append("run"); continue
+            if a["state"] == "err":
+                return 1.0, "err"
+            if a["state"] != "done":
+                vals.append(0.95 * float(a.get("p") or 0.0)); states.append("run"); continue
+            if self.state.has_track(s, m):
+                vals.append(1.0); states.append("done"); continue
+            if m not in st["req"]:           # 분석 끝 → 트랙 미리 계산(종류별 한 번만 요청)
+                st["req"].add(m)
+                self.state.prepare_track(s, mode=m, on_error=lambda e, st=st: st.__setitem__("err", True))
+            vals.append(0.95); states.append("run")
+        if all(x == "done" for x in states):
             return 1.0, "done"
-        if not asked:
-            ent[2] = True
-            self.state.prepare_track(s, on_error=lambda e, ent=ent: ent.__setitem__(2, "err"))
-        if ent[2] == "err":
-            return 1.0, "err"
-        return 0.95, "run"
+        return sum(vals) / max(1, len(vals)), "run"
 
     def _an_tick(self):
         if self._phase != "analyze":

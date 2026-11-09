@@ -283,20 +283,31 @@ class MainWindow(QMainWindow):
         mid = QVBoxLayout()
         mid.setSpacing(4)
         self.mon = Monitor()
-        mid.addWidget(self.mon, 1)
         self.bar = TimeBar()
-        mid.addWidget(self.bar)
         self.lanes = EllipseLanes()
         self.lanes_box = QScrollArea()           # 레인 많으면(8개 초과) 스크롤 — 아래 레인도 작업 가능
         self.lanes_box.setWidgetResizable(True)
         self.lanes_box.setFrameShape(QScrollArea.NoFrame)
         self.lanes_box.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.lanes_box.setWidget(self.lanes)
-        self.lanes_box.setFixedHeight(EllipseLanes.PAD * 2 + 8 * EllipseLanes.LANE_H)   # 8레인 뷰포트
+        self.lanes_box.setMinimumHeight(EllipseLanes.PAD * 2 + 2 * EllipseLanes.LANE_H)   # 최소 2레인
         self.lanes_box.setStyleSheet("QScrollArea{background:#1a1a1a}")
-        mid.addWidget(self.lanes_box)
         self.ruler = TimeRuler()
-        mid.addWidget(self.ruler)
+        # 모니터 ↕ (바+레인+눈금) 사이 드래그 — 레인 창을 높게 볼 수 있음(여기서 키프레임·타원 수정 후 AE)
+        _bot = QWidget()
+        _botl = QVBoxLayout(_bot)
+        _botl.setContentsMargins(0, 0, 0, 0)
+        _botl.setSpacing(4)
+        _botl.addWidget(self.bar)
+        _botl.addWidget(self.lanes_box, 1)
+        _botl.addWidget(self.ruler)
+        self.vsplit = QSplitter(Qt.Vertical)
+        self.vsplit.setChildrenCollapsible(False)
+        self.vsplit.addWidget(self.mon)
+        self.vsplit.addWidget(_bot)
+        self.vsplit.setStretchFactor(0, 1)       # 기본은 모니터가 큼
+        self.vsplit.setSizes([640, EllipseLanes.PAD * 2 + 8 * EllipseLanes.LANE_H + 60])
+        mid.addWidget(self.vsplit, 1)
         tr = QHBoxLayout()
         tr.setSpacing(4)
         tr.addStretch(1)
@@ -370,6 +381,7 @@ class MainWindow(QMainWindow):
         rv.addWidget(self.auto_bar)
         self.sources = SourceList(self.state)
         self.sources.add_dialog = self.add_dialog
+        self.sources.queue_requested.connect(self.queue_to_render)   # 소스 우클릭 → 대기목록
         rv.addWidget(self.sources, 1)
         line = QWidget()
         line.setFixedHeight(1)
@@ -380,6 +392,7 @@ class MainWindow(QMainWindow):
         self.rpanel.settings_clicked.connect(self.render_settings)
         self.rpanel.render_clicked.connect(self.render_all)
         self.rpanel.ae_clicked.connect(self.export_ae)
+        self.rpanel.queue_clicked.connect(self.queue_to_render)       # ▼ 선택 소스를 대기목록으로
         self.rpanel.on_rerender = self.rerender
         rv.addWidget(self.rpanel)
         split = QSplitter(Qt.Horizontal)

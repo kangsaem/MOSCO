@@ -58,10 +58,15 @@ def main():
         assert c["measured"] is not None and "min_face" in c["measured"]
     print("measure OK:", ad.LABEL.get(dlg.clips[0]["mode"]), dlg.clips[0]["measured"])
 
-    # 작업 바꾸기: 두 번째 클립만 선택 → 블러
+    # 작업 바꾸기: 두 번째 클립만 선택 → 얼굴 블러
     dlg.selected = {1}
-    dlg._on_work("blur")
-    assert dlg.clips[1]["mode"] == "blur"
+    dlg._toggle_work("blur")
+    assert dlg.clips[1]["mode"] == "blur" and not dlg.clips[1]["both"]
+    # 간판도 켜기 → 얼굴+간판 동시
+    dlg._toggle_work("sign")
+    assert dlg.clips[1]["both"] and dlg._kinds(dlg.clips[1]) == ["blur", "sign"]
+    dlg._toggle_work("sign")              # 간판 끄기 → 얼굴만
+    assert not dlg.clips[1]["both"] and dlg.clips[1]["mode"] == "blur"
     # 출력 바꾸기 → 블러라 +α
     dlg._on_out("std")
     assert "+α" in dlg._out_chip(dlg.clips[1])

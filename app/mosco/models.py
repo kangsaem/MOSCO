@@ -78,6 +78,15 @@ def set_gpu(on: bool):
         _det = _mesh = _small = _person = None
 
 
+def active_device():
+    """지금 검출이 실제로 쓰는 장치 이름(로그·표시용)."""
+    if USE_GPU:
+        provs = _providers()
+        if provs and provs[0] != "CPUExecutionProvider":
+            return {"DmlExecutionProvider": "GPU(DirectML)", "CUDAExecutionProvider": "GPU(CUDA)"}.get(provs[0], "GPU")
+    return "CPU"
+
+
 def _sess(name):
     import onnxruntime as ort
     so = ort.SessionOptions()

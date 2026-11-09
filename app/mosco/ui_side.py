@@ -90,6 +90,7 @@ class SourceDelegate(QStyledItemDelegate):
 
 class SourceList(QListWidget):
     files_dropped = Signal(list)
+    queue_requested = Signal()      # v0.7.32 우클릭 → 선택 소스를 렌더 대기목록으로
 
     def __init__(self, state):
         super().__init__()
@@ -149,6 +150,9 @@ class SourceList(QListWidget):
 
     def _menu(self, pos):
         m = QMenu(self)
+        if self.selectedItems() or self.currentRow() >= 0:
+            m.addAction("렌더 대기목록으로 보내기", self.queue_requested.emit)
+            m.addSeparator()
         m.addAction("불러오기", self.parent().add_dialog if hasattr(self.parent(), "add_dialog") else lambda: None)
         m.exec(self.mapToGlobal(pos))
 
@@ -210,6 +214,7 @@ class RenderPanel(QWidget):
     settings_clicked = Signal()
     render_clicked = Signal()
     ae_clicked = Signal()          # v0.7.14 AE 보내기(.jsx)
+    queue_clicked = Signal()       # v0.7.32 ▼ 선택 소스를 렌더 대기목록으로
 
     def __init__(self):
         super().__init__()
@@ -219,16 +224,23 @@ class RenderPanel(QWidget):
         lay.setSpacing(6)
         r = QHBoxLayout()
         r.setSpacing(4)
+        self.b_queue = btn("▼", "선택한 소스를 렌더 대기목록으로 보내기 (소스 목록 우클릭에도 있음). 실제 렌더는 [렌더]",
+                           size=BTN_MAIN, on_click=self.queue_clicked.emit)
         self.b_set = btn("⚙", "렌더 설정", size=BTN_MAIN, w=40, on_click=self.settings_clicked.emit)
-        self.b_render = btn("렌더", "렌더 목록(대기)을 모두 렌더 (Ctrl+R). ➜ 로 목록에 보낸 뒤 사용", size=BTN_MAIN, red=True, on_click=self.render_clicked.emit)
+        self.b_render = btn("렌더", "렌더 목록(대기)을 모두 렌더 (Ctrl+R). ⬓ 로 목록에 보낸 뒤 사용", size=BTN_MAIN, red=True, on_click=self.render_clicked.emit)
         self.b_ae = btn("AE", "에펙으로 보내기 — 현재 소스의 타원·사각형 트랙을 마스크 키프레임 스크립트(.jsx)로 저장.\n"
-                        "에펙: 소스 레이어 선택 → 파일 › 스크립트 › 스크립트 파일 실행", size=BTN_MAIN, w=48, red=True,
+                        "에펙: 소스 레이어 선택 → 파일 › 스크립트 › 스크립트 파일 실행", size=BTN_MAIN, red=True,
                         on_click=self.ae_clicked.emit)
+        r.addWidget(self.b_queue)
         r.addWidget(self.b_set)
-        r.addWidget(self.b_ae)
         r.addStretch(1)
         r.addWidget(self.b_render)
         lay.addLayout(r)
+        r2 = QHBoxLayout()
+        r2.setSpacing(4)
+        r2.addStretch(1)
+        r2.addWidget(self.b_ae)                 # AE = 렌더와 같은 크기, 아래 줄 오른쪽(출력 두 경로: 렌더 / AE)
+        lay.addLayout(r2)
         self.list = QListWidget()
         self.list.setItemDelegate(RenderDelegate(self))
         self.list.setSpacing(1)

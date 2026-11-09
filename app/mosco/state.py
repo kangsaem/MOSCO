@@ -57,15 +57,22 @@ class AppState(QObject):
         if not assigns:
             return
         self.push_undo()
-        for idx, mode, params in assigns:
+        for a in assigns:
+            if len(a) == 4:                         # (idx, mode, both, {kind: params}) — 동시 블러
+                idx, mode, both, pbk = a
+            else:                                   # 옛 형식 (idx, mode, params)
+                idx, mode, params = a
+                both, pbk = False, {mode: params}
             if not (0 <= idx < len(self.project.sources)):
                 continue
             s = self.project.sources[idx]
             s.mode = mode
-            s.params_for(mode).update(copy.deepcopy(params))
+            s.both = bool(both)
+            for k, params in pbk.items():
+                s.params_for(k).update(copy.deepcopy(params))
+                if not keep_keys:
+                    s.edits.pop(k, None)
             s.custom = True
-            if not keep_keys:
-                s.edits.pop(mode, None)
         self._tracks.clear()
         self._res.clear()
         self.dirty = True
@@ -312,7 +319,7 @@ class AppState(QObject):
         try:
             import csv
             import time as _t
-            from . import disk, jobs, paths
+            from . import disk, jobs, models, paths
             path, mode = key
             rec = self.an.get(key) or {}
             j = rec.get("job")
@@ -325,12 +332,13 @@ class AppState(QObject):
             with open(fp, "a", newline="", encoding="utf-8-sig") as f:
                 w = csv.writer(f)
                 if head:
-                    w.writerow(["시각", "소스", "모드", "디스크", "결과", "대기초", "분석초", "프레임",
+                    w.writerow(["시각", "소스", "모드", "디스크", "검출장치", "결과", "대기초", "분석초", "프레임",
                                 "분석fps", "동시(분석풀)"])
                 fps = round(frames / run, 2) if (frames and run) else ""
                 w.writerow([_t.strftime("%Y-%m-%d %H:%M:%S"), __import__("os").path.basename(path), mode,
-                            "HDD" if disk.is_hdd(path) else "SSD", how if not err else f"{how}:{err}",
-                            wait, run, frames, fps, jobs.ANALYZE_POOL.maxThreadCount()])
+                            "HDD" if disk.is_hdd(path) else "SSD", models.active_device(),
+                            how if not err else f"{how}:{err}", wait, run, frames, fps,
+                            jobs.ANALYZE_POOL.maxThreadCount()])
         except Exception:  # noqa: BLE001
             pass
 
@@ -391,23 +399,24 @@ class AppState(QObject):
             return [(edits.Resolver(s, self.track(s), "beauty"), "beauty")]
         return [(edits.Resolver(s, self.track(s, m), m), m) for m in s.blur_kinds()]
 
-    def prepare_track(self, s: Source, on_done=None, on_error=None):
+    def prepare_track(self, s: Source, on_done=None, on_error=None, mode=None):
         """분석이 끝난 소스의 트랙을 백그라운드에서 미리 계산해 캐시에 넣는다(AUTO [보정+편집])."""
-        a = self.analysis(s)
+        mode = mode or s.mode
+        a = self.analysis(s, mode)
         if not a or a["state"] != "done":
             return None
-        if self.has_track(s):
+        if self.has_track(s, mode):
             if on_done:
                 on_done()
             return None
-        sig = self._track_sig(s)
-        k = (s.path, s.mode)
+        sig = self._track_sig(s, mode)
+        k = (s.path, mode)
         src = copy.deepcopy(s)
         z, rs = a["z"], dict(self.settings.render)
 
         def fn():
             from .render import make_track
-            return make_track(src, z, rs)
+            return make_track(src, z, rs, mode)
 
         def done(t):
             self._tracks[k] = (sig, t)
