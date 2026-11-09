@@ -408,7 +408,9 @@ class Monitor(QWidget):
                 for ent in self.ells:
                     cx, cy, ew, eh, ang = ent["ell"]
                     sel = ent["key"] == self.sel and self.sel is not None
-                    col = (QColor("#ffffff") if sel else QColor("#6fd38a") if ent.get("minus")       # 제외 = 초록
+                    # 종류별 색: 선택=흰·제외=초록·간판=청록·추가=파랑·얼굴=노랑
+                    col = (QColor("#ffffff") if sel else QColor("#6fd38a") if ent.get("minus")
+                           else QColor("#3fd8c4") if ent.get("quad") is not None
                            else QColor("#7fd1ff") if ent.get("manual") else QColor("#f2c94c"))
                     pen = QPen(col, 2 if not sel else 2.5, Qt.SolidLine if sel else Qt.DashLine)
                     p.setPen(pen)
@@ -546,6 +548,30 @@ class TimeBar(QWidget):
             p.fillRect(QRectF(x - 1, 8, 2, 24), QColor("#e5484d"))
 
 
+# 레이어(타원·사각형) 종류별 색 — 오버레이·레인 공통. (sel = 선택 시 밝게)
+LAYER_COLORS = {
+    "minus":  ("#3f7a52", "#6fd38a"),    # 제외 = 초록
+    "sign":   ("#2e6a64", "#3fb8a0"),    # 간판 = 청록
+    "manual": ("#3d6690", "#5aa0f0"),    # 추가 타원 = 파랑
+    "face":   ("#8a7324", "#e6c24a"),    # 얼굴(자동) = 노랑
+}
+
+
+def layer_kind(d) -> str:
+    if d.get("minus"):
+        return "minus"
+    if d.get("quad"):
+        return "sign"
+    if d.get("manual"):
+        return "manual"
+    return "face"
+
+
+def _lane_color(d, sel):
+    lo, hi = LAYER_COLORS[layer_kind(d)]
+    return QColor(hi if sel else lo)
+
+
 # ------------------------------------------------------------ 타원별 레인(타임라인)
 class EllipseLanes(QWidget):
     """타원마다 가는 레인: 존재 구간 바 + 키 ◆ + 재생선. 양 끝 핸들 드래그로 in/out(처음/끝까지).
@@ -652,11 +678,10 @@ class EllipseLanes(QWidget):
             sel = d["key"] == self.sel
             p.fillRect(QRectF(0, y0 - 1, self.width(), self.LANE_H - 1), QColor("#242424" if idx % 2 else "#202020"))
             pv = self._preview if (self._preview and self._preview[0] == d["key"]) else None
+            bar = _lane_color(d, sel)       # 종류별 색: 얼굴=노랑·간판=청록·추가=파랑·제외=초록
             for (a, b) in d["intervals"]:
                 xa, xb = self._x(a), self._x(b + 1)
-                p.fillRect(QRectF(xa, y0, max(2, xb - xa), y1 - y0),
-                           (QColor("#6fd38a") if sel else QColor("#3f7a52")) if d.get("minus")      # 제외 = 초록
-                           else (QColor("#4a8fe0") if sel else QColor("#3d6690")))
+                p.fillRect(QRectF(xa, y0, max(2, xb - xa), y1 - y0), bar)
             if pv:                                  # 드래그 미리보기(연장 구간)
                 xa, xb = self._x(pv[1]), self._x(pv[2] + 1)
                 p.setPen(QPen(QColor("#f2c94c"), 1, Qt.DashLine))

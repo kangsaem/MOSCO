@@ -578,7 +578,9 @@ class AppState(QObject):
                     lbl = str(it.tid) if it.tid is not None else ("+" if it.manual else "·")
                     if it.minus:
                         lbl = "−" + (lbl if lbl not in ("+", "·") else "")
-                    seen[k] = {"label": lbl, "frames": [], "minus": it.minus}
+                    seen[k] = {"label": lbl, "frames": [], "minus": it.minus,
+                               "quad": bool(getattr(it, "pts", None) is not None
+                                            and np.asarray(it.pts).size == 8), "manual": it.manual}
                     order.append(k)
                 seen[k]["frames"].append(i)
         out = []
@@ -594,7 +596,7 @@ class AppState(QObject):
             intervals.append((a, prev))
             keys = sorted(int(x) for x in groups[k[1]].get("keys", {})) if k[0] == "g" and k[1] in groups else []
             out.append({"key": k, "label": seen[k]["label"], "intervals": intervals, "keys": keys, "n": n,
-                        "minus": seen[k]["minus"]})
+                        "minus": seen[k]["minus"], "quad": seen[k]["quad"], "manual": seen[k]["manual"]})
         self._spans_cache = (sig, out)
         return out
 
