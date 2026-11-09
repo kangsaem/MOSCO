@@ -10,8 +10,8 @@ from pathlib import Path
 import numpy as np
 from PySide6.QtCore import Qt, QSize, QTimer
 from PySide6.QtGui import QAction, QKeySequence, QShortcut
-from PySide6.QtWidgets import (QDialog, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QSplitter,
-                               QToolBar, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QDialog, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QScrollArea,
+                               QSplitter, QToolBar, QVBoxLayout, QWidget)
 
 from . import __version__, analyze, decoder, edits, ff, fx, jobs, paths
 from .project import Project
@@ -281,7 +281,14 @@ class MainWindow(QMainWindow):
         self.bar = TimeBar()
         mid.addWidget(self.bar)
         self.lanes = EllipseLanes()
-        mid.addWidget(self.lanes)
+        self.lanes_box = QScrollArea()           # 레인 많으면(8개 초과) 스크롤 — 아래 레인도 작업 가능
+        self.lanes_box.setWidgetResizable(True)
+        self.lanes_box.setFrameShape(QScrollArea.NoFrame)
+        self.lanes_box.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.lanes_box.setWidget(self.lanes)
+        self.lanes_box.setFixedHeight(EllipseLanes.PAD * 2 + 8 * EllipseLanes.LANE_H)   # 8레인 뷰포트
+        self.lanes_box.setStyleSheet("QScrollArea{background:#1a1a1a}")
+        mid.addWidget(self.lanes_box)
         self.ruler = TimeRuler()
         mid.addWidget(self.ruler)
         tr = QHBoxLayout()

@@ -568,8 +568,8 @@ class EllipseLanes(QWidget):
         self._fit()
 
     def _fit(self):
-        h = self.PAD * 2 + max(1, len(self.spans)) * self.LANE_H
-        self.setFixedHeight(min(h, self.PAD * 2 + 8 * self.LANE_H))
+        # 전체 레인 높이로 키움(8개 초과분은 바깥 QScrollArea 가 스크롤). 예전엔 8개로 잘라 아래 레인이 안 보였음.
+        self.setFixedHeight(self.PAD * 2 + max(1, len(self.spans)) * self.LANE_H)
 
     def set_data(self, spans, n, cur, sel):
         self.spans, self.n, self.cur, self.sel = spans or [], n, cur, sel
