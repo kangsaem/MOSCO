@@ -468,7 +468,8 @@ def score_thr(sens):
     return 0.75 - float(sens) / 100 * 0.45       # 민감도 0→0.75, 100→0.30
 
 
-def _greedy_tracks(per, n, hold):
+def _greedy_tracks(per, n, hold, dist_gate=1.0, ratio_gate=1.8):
+    """dist_gate·ratio_gate: 일반(얼굴) 매칭 허용치. 간판은 깜빡임·상자 출렁임이 커서 더 느슨하게 넘김."""
     tracks = []
     for f in range(n):
         obs = per[f]
@@ -482,7 +483,7 @@ def _greedy_tracks(per, n, hold):
                 dist = np.hypot(*(o[:2] - p)) / size
                 ratio = max(o[2], t["state"][2]) / max(1e-3, min(o[2], t["state"][2]))
                 body = o[5] == KIND_BODY or t.get("kind") == KIND_BODY
-                if dist < (1.8 if body else 1.0) + 0.15 * dt and ratio < (2.5 if body else 1.8):
+                if dist < (1.8 if body else dist_gate) + 0.15 * dt and ratio < (2.5 if body else ratio_gate):
                     pairs.append((dist + (0.3 if body else 0), ti, oi))
         pairs.sort()
         used_t, used_o = set(), set()

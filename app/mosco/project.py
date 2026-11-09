@@ -19,7 +19,7 @@ BLUR_DEFAULT = {
 # 간판 블러(v0.7.8): 얼굴 블러와 같은 구성 + 최대 개수. 여유 = 글자 높이 기준 %, 최소 크기 = 글자 높이 px
 SIGN_DEFAULT = {
     "kind": "blur", "strength": 70, "margin": 60, "feather": 10, "stabilize": 50,
-    "sensitivity": 60, "min_size": 12, "hold": 15, "link": 90, "max_count": 20,
+    "sensitivity": 60, "min_size": 12, "hold": 24, "link": 90, "max_count": 20,
 }
 MODES = ("beauty", "blur", "sign")
 BLUR_LIKE = ("blur", "sign")

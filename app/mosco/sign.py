@@ -326,8 +326,9 @@ def sign_track(z, params, two_pass=True) -> SignTrack:
             x0, y0, x1, y1, sc = row[1:6]
             per[f].append(np.r_[np.array([(x0 + x1) / 2, (y0 + y1) / 2, x1 - x0, y1 - y0, sc], np.float32),
                                 row[6:]])           # kind, hist, quad8, h
-    raw = A._greedy_tracks(per, n, hold)
-    raw = [t for t in raw if len(t["obs"]) >= 3 or max(o[4] for o in t["obs"].values()) >= 0.8]
+    # 간판: 글자 검출이 프레임마다 깜빡이고 상자 크기도 출렁여 얼굴보다 느슨하게 이음(거리·크기비 완화)
+    raw = A._greedy_tracks(per, n, hold, dist_gate=1.2, ratio_gate=2.0)
+    raw = [t for t in raw if len(t["obs"]) >= 2 or max(o[4] for o in t["obs"].values()) >= 0.7]
     linked = A._link(raw, hold, link_max) if link_max > hold else [{"obs": t["obs"], "linked": []} for t in raw]
     linked = A._dedupe(linked)
     frames = [[] for _ in range(n)]
