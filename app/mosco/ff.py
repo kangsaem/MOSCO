@@ -14,9 +14,9 @@ import numpy as np
 
 from . import paths
 
-# CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS(v0.7.4) — ffmpeg 도 우선순위 '보통 이하'
-# → 크롬·에펙 등 다른 프로그램이 CPU 를 원하면 그쪽이 먼저, 놀 때는 MOSCO 가 다 씀
-NOWIN = (0x08000000 | 0x00004000) if os.name == "nt" else 0
+# CREATE_NO_WINDOW — ffmpeg 를 창 없이 띄움. v0.7.26: 우선순위 '보통'(BELOW_NORMAL 제거)
+# → 다른 작업 중에도 MOSCO 진행이 멈추지 않게(예전 '보통 이하'는 양보가 과해 진행이 안 됐음)
+NOWIN = 0x08000000 if os.name == "nt" else 0
 
 
 def low_priority():

@@ -1,6 +1,6 @@
 # HANDOFF — MOSCO (Mosaic + Cosmo)
 
-다음 대화는 이 문서를 기준으로 이어서 작업한다. **현재 v0.7.25 (2026-11-09). 1단계(DTME UI 통일) 완료 → 지금은 2단계(앱 보완) · B-1 실영상 테스트 대기.**
+다음 대화는 이 문서를 기준으로 이어서 작업한다. **현재 v0.7.26 (2026-11-09). 1단계(DTME UI 통일) 완료 → 지금은 2단계(앱 보완) · B-1 실영상 테스트 대기.**
 
 > ## 진행 순서 (중요 — 지금 여기 = 2단계)
 > **1단계 · DTME에서 UI/버튼 수정 〔완료 v0.6.1〕** → **2단계 · 수정된 UI 위에서 앱 기능 보완 〔지금〕**
@@ -9,6 +9,7 @@
 > - 1단계 점검 결과(v0.6.1 직후 확인): UI 파일만 변경, 슬라이더 키 6개·➜/렌더 시그널·`os._exit(0)` 유지, 엔진/데이터 무수정 — 계약 이상 없음.
 
 ### 변경 이력 (최신순)
+- **v0.7.26 우선순위 '보통'으로**: 예전 '보통 이하'(v0.7.5)는 다른 작업 중일 때 양보가 과해 **진행이 멈춤** → 되돌림. `ff.NOWIN` 에서 BELOW_NORMAL 제거(CREATE_NO_WINDOW 만), `main.py` 의 `ff.low_priority()` 호출 삭제(프로세스 기본=보통). `low_priority()` 함수는 남겨둠(미사용). `test_priority` = ffmpeg NORMAL 확인으로 변경. (멈춤·화면 깨짐은 GPU 검출 설정/코어 포화 별도 확인 — B-1.)
 - **v0.7.24~0.7.25 종료 시 프로세스 확실히 끝냄**: `main.py` `_hard_exit()` — `app.exec()` 뒤 상주 디코더·ffmpeg 정리 후 즉시 종료. 종료했는데도 데몬/네이티브 스레드·onnxruntime·ffmpeg(GPU 포함)가 남아 프로세스가 안 죽고 GPU·화면 계속 점유(종료 후 다른 창 움직일 때 화면 깨짐)하던 것 해결.
   - **윈도우: `TerminateProcess`** (v0.7.25). v0.7.24 의 `os._exit` 는 무거운 네이티브 DLL(onnxruntime·ffmpeg·Qt) 해제(DllMain) 중 **로더 락 교착**으로 CI smoke test(exe)가 안 끝남 → `kernel32.TerminateProcess(현재 프로세스, code)` 로 DLL 해제를 건너뛰고 즉시 종료. 리눅스는 `os._exit`. PyAV/Qt teardown 세그폴트도 함께 우회. closeEvent 정리(autosave·kill_all)는 그대로.
 - **v0.7.23 재생 중 빠른 확대**: 모니터가 매 프레임 `SmoothPixmapTransform` 으로 확대하던 것을 **재생 중에는 끔**(`Monitor.playing`, `paintEvent` 에서 `not playing`). 큰 모니터에서 재생이 부드러워짐. 멈추면 다시 고화질(부드러운 확대). `toggle_play`→playing=True, `stop_play`·`_play_end`→False. 재생은 원본 표시(디코딩 82fps·오버레이 1ms 로 병목 아님 — 병목은 GUI 스레드의 매 프레임 스무스 업스케일이었음).

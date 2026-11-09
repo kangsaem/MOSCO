@@ -25,8 +25,8 @@ def dark(app: QApplication):
 
 
 def main():
-    from mosco import ff
-    ff.low_priority()                          # 다른 프로그램(크롬·에펙)에 CPU 양보 — 놀 때는 그대로 다 씀
+    # v0.7.26: 우선순위 '보통'(예전 '보통 이하'는 다른 작업 중일 때 양보가 과해 진행이 멈춤).
+    # 프로세스는 기본(보통)으로 둔다 — 낮추지 않음.
     app = QApplication(sys.argv)
     app.setApplicationName("MOSCO")
     dark(app)
