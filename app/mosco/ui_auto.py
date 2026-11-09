@@ -662,10 +662,14 @@ class AutoDialog(DragMove, QDialog):
     def _go(self, after):
         """버튼 공통: 측정(블러만) → 보정+편집(each) / 보정+렌더(render) / 샘플(sample).
         렌더·샘플은 저장폴더가 필요하다."""
+        if after == "ae":
+            for c in self.clips:              # AE = 소스 목록의 모든 클립(체크 무관), 각 원본 폴더 옆에 저장
+                c["inc"] = True
+            self._refresh()
         if self._phase is not None or not any(c["inc"] for c in self.clips):
             return
         out_dir = None
-        if after in ("render", "sample", "ae"):
+        if after in ("render", "sample"):     # AE 는 소스 옆에 저장 → 저장폴더 안 물음
             out_dir = self.mw._out_dir()
             if not out_dir:
                 return
@@ -708,7 +712,7 @@ class AutoDialog(DragMove, QDialog):
             self._render_tick()
             return
         # 보정+편집 / AE: 이 창에서 타원 분석 + 트랙 계산까지 끝냄. each = 편집 화면, ae = .jsx 저장
-        self._ae_dir = out_dir if self.after == "ae" else None
+        self._ae_mode = (self.after == "ae")
         self._phase = "analyze"
         srcs = self.state.project.sources
         self._an = [[c, srcs[c["idx"]], {"req": set(), "err": False}]
@@ -773,8 +777,8 @@ class AutoDialog(DragMove, QDialog):
             self.pbar.set(0.0)
             self._busy(False)
             return
-        if getattr(self, "_ae_dir", None):
-            self._export_ae(self._ae_dir)
+        if getattr(self, "_ae_mode", False):
+            self._export_ae()
             return
         self.outcome = "each"
         idxs = [c["idx"] for c, _, _ in self._an]
@@ -783,28 +787,22 @@ class AutoDialog(DragMove, QDialog):
         mw.state.select(idxs[0] if idxs else 0)
         mw.flash("AUTO 적용 완료 — 타원 준비됨")
 
-    def _export_ae(self, out_dir):
-        """분석·트랙이 끝난 각 클립 → .jsx 저장(백그라운드). 창은 유지."""
+    def _export_ae(self):
+        """분석·트랙이 끝난 각 클립 → 소스 원본 폴더 옆 .jsx 저장(백그라운드). 창은 유지."""
         import copy
         from pathlib import Path
 
         from . import aefx, jobs
-        jobsq, taken = [], set()
+        jobsq = []
         for c, s, _ in self._an:
             if s.path in self.state.errors:
                 continue
-            track = self.state.track(s)
             info = self.state.info(s.path)
             if info is None:
                 continue
-            base = (self.name + "_" if self.name else "") + Path(s.path).stem + "_MOSCO_AE"
-            path = Path(out_dir) / (base + ".jsx")
-            k = 2
-            while str(path) in taken or path.exists():      # 이름 겹치면 _2, _3 … (덮어쓰기 방지)
-                path = Path(out_dir) / f"{base}_{k}.jsx"
-                k += 1
-            taken.add(str(path))
-            jobsq.append((copy.deepcopy(s), info, track, str(path)))
+            pairs = [(self.state.track(s, m), m) for m in (s.blur_kinds() or [s.mode])]  # 동시 블러면 두 종류
+            path = str(Path(s.path).with_name(f"{s.name}_MOSCO_AE.jsx"))   # 소스 원본 폴더 옆
+            jobsq.append((copy.deepcopy(s), info, pairs, str(path)))
         if not jobsq:
             self._status("AE 보낼 클립이 없습니다", None)
             self.status.setStyleSheet("color:#e06c6c")
@@ -815,10 +813,10 @@ class AutoDialog(DragMove, QDialog):
 
         def work(progress, cancel):
             done = 0
-            for src, info, track, path in jobsq:
+            for src, info, pairs, path in jobsq:
                 if cancel.is_set():
                     break
-                aefx.export(src, info, track, path)
+                aefx.export(src, info, pairs, path)
                 done += 1
                 progress(done / len(jobsq))
             return done

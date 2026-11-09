@@ -239,13 +239,10 @@ class RenderPanel(QWidget):
         r.addWidget(self.b_queue)
         r.addWidget(self.b_set)
         r.addStretch(1)
+        r.addWidget(self.b_ae)                  # AE = 렌더 왼쪽, 같은 크기
+        r.addSpacing(12)                        # AE ↔ 렌더 간격
         r.addWidget(self.b_render)
         lay.addLayout(r)
-        r2 = QHBoxLayout()
-        r2.setSpacing(4)
-        r2.addStretch(1)
-        r2.addWidget(self.b_ae)                 # AE = 렌더와 같은 크기, 아래 줄 오른쪽(출력 두 경로: 렌더 / AE)
-        lay.addLayout(r2)
         self.list = QListWidget()
         self.list.setItemDelegate(RenderDelegate(self))
         self.list.setSpacing(1)

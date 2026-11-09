@@ -178,10 +178,12 @@ def compute_preview(src, frame16, plan, has_track, i, scale=1.0):
 class Player:
     """재생: ffmpeg 파이프(보기 화질) → 큐 → 타이머로 표시. 보정 없이 원본만, 소리 없음."""
 
-    def __init__(self, info, start, on_frame, on_end, size):
+    def __init__(self, info, start, on_frame, on_end, size, loop=True):
         self.info = info
         self.i = start
+        self.start0 = start
         self.size = size
+        self.loop = loop
         self.q = queue.Queue(maxsize=12)
         self.stop_ev = threading.Event()
         self.on_frame, self.on_end = on_frame, on_end
@@ -194,21 +196,30 @@ class Player:
         self.timer.start(max(5, int(500 / info.fps_f)))
 
     def _run(self):
-        r = ff.Reader(self.info, self.i, 8, size=self.size)
-        try:
-            while not self.stop_ev.is_set():
-                fr = r.read()
-                if fr is None:
-                    self.q.put(None)
-                    break
+        start = self.start0
+        while not self.stop_ev.is_set():
+            r = ff.Reader(self.info, start, 8, size=self.size)
+            try:
                 while not self.stop_ev.is_set():
-                    try:
-                        self.q.put(fr, timeout=0.1)
+                    fr = r.read()
+                    if fr is None:
                         break
-                    except queue.Full:
-                        pass
-        finally:
-            r.close()
+                    while not self.stop_ev.is_set():
+                        try:
+                            self.q.put(fr, timeout=0.1)
+                            break
+                        except queue.Full:
+                            pass
+            finally:
+                r.close()
+            if self.stop_ev.is_set():
+                break
+            if self.loop:
+                self.q.put("LOOP")       # 끝 → 처음부터 다시(루프)
+                start = 0
+            else:
+                self.q.put(None)
+                break
 
     def _tick(self):
         now = time.perf_counter()
@@ -228,6 +239,10 @@ class Player:
                 self.stop()
                 self.on_end()
                 return
+            if isinstance(x, str) and x == "LOOP":     # 처음부터 다시 — 타이밍·프레임 리셋
+                self.i, self.f0, self.t0 = 0, 0, now
+                want = 0
+                continue
             fr = x
             self.i += 1
         if fr is not None:
@@ -298,8 +313,8 @@ class MainWindow(QMainWindow):
         _botl = QVBoxLayout(_bot)
         _botl.setContentsMargins(0, 0, 0, 0)
         _botl.setSpacing(4)
-        _botl.addWidget(self.bar)
-        _botl.addWidget(self.lanes_box, 1)
+        _botl.addWidget(self.lanes_box, 1)      # 레이어(타원·사각형)를 소스 바 위로
+        _botl.addWidget(self.bar)               # 소스 바(재생 위치)
         _botl.addWidget(self.ruler)
         self.vsplit = QSplitter(Qt.Vertical)
         self.vsplit.setChildrenCollapsible(False)
@@ -999,31 +1014,57 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------ AE 보내기(v0.7.14)
     def export_ae(self, path=None):
-        """현재 소스의 (수정 반영된) 타원·사각형 트랙 → 에펙 마스크 키프레임 스크립트(.jsx). 렌더 없음."""
-        s = self.state.source()
-        info = self._info()
-        if s is None or info is None:
-            self.flash("보낼 소스를 선택하세요")
-            return None
-        track = self.state.track(s)
-        if track is None and not edits.get(s).get("groups"):
-            self.flash("먼저 분석하세요 (AUTO [보정+편집] 또는 소스 분석) — 트랙이 없습니다")
-            return None
-        if path is None:
-            rs = self.state.settings.render
-            d = rs.get("out_dir") if rs.get("out_dir") and Path(rs["out_dir"]).is_dir() else str(Path(s.path).parent)
-            path, _ = QFileDialog.getSaveFileName(self, "AE 보내기", str(Path(d) / f"{Path(s.path).stem}_MOSCO_AE.jsx"),
-                                                  "After Effects 스크립트 (*.jsx)")
-            if not path:
-                return None
+        """렌더 대기목록의 소스(없으면 현재 소스)를 각 원본 폴더 옆에 .jsx 로 저장. 동시 블러면 두 종류 다. 렌더 없음.
+        path 가 주어지면(테스트) 현재 소스 1개를 그 경로로."""
         import copy
+
         from . import aefx
-        src = copy.deepcopy(s)
-        self.flash("AE 보내기 만드는 중…")
-        j = jobs.Job(lambda: aefx.export(src, info, track, path))
-        j.signals.done.connect(lambda r: self.flash(f"AE 보내기 완료 — 마스크 {r['masks']}개 · {Path(r['path']).name}"))
+        # 대상 소스 목록: 렌더 대기목록이 있으면 그 소스들(중복 경로 1개), 없으면 현재 소스
+        if path is None and self.rpanel.items:
+            seen, srcs = set(), []
+            for it in self.rpanel.items:
+                live = next((x for x in self.state.project.sources if x.path == it.src.path), None)
+                sx = live or it.src
+                if sx.path not in seen:
+                    seen.add(sx.path)
+                    srcs.append(sx)
+        else:
+            s = self.state.source()
+            if s is None:
+                self.flash("보낼 소스를 선택하세요")
+                return None
+            srcs = [s]
+        # 각 소스: (track, mode) 쌍 + 원본 폴더 옆 경로
+        jobsq = []
+        for s in srcs:
+            info = self.state.info(s.path)
+            if info is None:
+                continue
+            pairs = [(self.state.track(s, m), m) for m in (s.blur_kinds() or [s.mode])]
+            if all(tr is None for tr, _ in pairs) and not edits.get(s).get("groups"):
+                continue                                 # 분석·수정 둘 다 없음 → 건너뜀
+            out = path if (path and len(srcs) == 1) else str(Path(s.path).with_name(f"{s.name}_MOSCO_AE.jsx"))
+            jobsq.append((copy.deepcopy(s), info, pairs, out))
+        if not jobsq:
+            self.flash("먼저 분석하세요 — 트랙이 없습니다")
+            return None
+        self.flash(f"AE 보내는 중… {len(jobsq)}개")
+
+        def work(progress, cancel):
+            done = 0
+            for src, info, pairs, out in jobsq:
+                if cancel.is_set():
+                    break
+                aefx.export(src, info, pairs, out)
+                done += 1
+                progress(done / len(jobsq))
+            return done
+
+        j = jobs.Job(work, with_progress=True)
+        j.signals.done.connect(lambda n: self.flash(f"AE 보내기 완료 — {n}개 .jsx (소스 원본 폴더 옆)"))
         j.signals.error.connect(lambda e: self.flash(f"AE 보내기 오류: {e}"))
         jobs.submit(jobs.ANALYZE_POOL, j, 5)
+        return j
         return j
 
     # ------------------------------------------------------------ AUTO

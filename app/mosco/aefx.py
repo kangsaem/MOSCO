@@ -68,10 +68,11 @@ def reduce_keys(vals, tol=TOL, must=()):
 
 
 # ------------------------------------------------------------ 트랙 → 아이템별 프레임 값
-def collect(src, track, n, progress=None, cancel=None):
+def collect(src, track, n, progress=None, cancel=None, mode=None):
     """→ {key: {"label", "minus", "quad", "frames": [f], "shape": [(v,i,o)], "feather": [px], "keyed": set, "sigma": [px]}}"""
-    r = edits.Resolver(src, track)
-    p = src.params()
+    mode = mode or src.mode
+    r = edits.Resolver(src, track, mode)
+    p = src.params_for(mode)
     out = {}
     for i in range(n):
         if cancel is not None and cancel.is_set():
@@ -107,7 +108,7 @@ def collect(src, track, n, progress=None, cancel=None):
             d["feather"].append(sig)
             if it.keyed:
                 d["keyed"].add(i)
-            if src.mode != "beauty" and not it.minus:
+            if mode != "beauty" and not it.minus:
                 st = max(1, it.ov.get("strength", p.get("strength", 70))) / 100
                 d["blur"].append(size * st * (0.25 if quad else 0.09))     # fx.blur 와 같은 σ
                 d["block"].append(max(3, int(size * st * (0.3 if quad else 0.14))))   # fx.blur 모자이크 블록(px)
@@ -183,8 +184,14 @@ def _ascii(s):
 
 
 def export(src, info, track, path, progress=None, cancel=None, tol=TOL):
-    """트랙 → .jsx 저장. 반환 {"masks": 개수, "path"}."""
-    data = collect(src, track, int(info.frames), progress, cancel)
+    """트랙 → .jsx 저장. track = 단일 트랙(활성 모드) 또는 [(track, mode), ...](동시 블러). 반환 {"masks", "path"}."""
+    pairs = track if isinstance(track, list) else [(track, src.mode)]
+    n = int(info.frames)
+    data = {}
+    for tr, mode in pairs:
+        d = collect(src, tr, n, progress, cancel, mode=mode)
+        for k, v in d.items():
+            data[(mode, k)] = v          # 종류별로 키 분리(얼굴·간판 키 겹침 방지)
     txt = build_jsx(src, info, data, tol)
     with open(path, "w", encoding="ascii", newline="\r\n") as f:
         f.write(txt)

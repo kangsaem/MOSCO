@@ -103,23 +103,22 @@ def main():
     print("auto->analyze->track OK", sorted(x for x in seen if x))
 
     # AUTO [AE]: 측정·분석 후 각 클립 .jsx 저장(창 유지) — v0.7.15
-    ae_dir = work / "ae"
-    ae_dir.mkdir(exist_ok=True)
-    w.state.settings.render["out_dir"] = str(ae_dir)
+    import glob
+    for f in glob.glob(str(Path(vid).with_name("*_MOSCO_AE.jsx"))):
+        os.remove(f)
     dlg_ae = AutoDialog(w, w.state)
     assert dlg_ae.b_ae.text() == "AE"
     dlg_ae.keep_existing = False
-    dlg_ae._go("ae")
+    dlg_ae._go("ae")                                    # AE = 모든 소스, 원본 폴더 옆에 저장
     assert pump(app, 600, lambda: dlg_ae._phase is None and "완료" in dlg_ae.status.text()), \
         f"AE 보내기가 끝나지 않음: {dlg_ae.status.text()}"
-    jsxs = [f for f in os.listdir(ae_dir) if f.endswith(".jsx")]
-    assert len(jsxs) == len(dlg_ae._an) >= 1, (jsxs, len(dlg_ae._an))
-    txt = (ae_dir / jsxs[0]).read_text(encoding="ascii")
+    jsx = Path(vid).with_name(Path(vid).stem + "_MOSCO_AE.jsx")    # 소스 원본 옆
+    assert jsx.exists(), f"소스 옆 .jsx 없음: {jsx}"
+    txt = jsx.read_text(encoding="ascii")
     assert "ADBE Mask Shape" in txt and "Run Script File" in txt, txt[:200]
     assert w.isVisible(), "AE 보내기 후 창은 유지(편집 화면으로 안 감)"
     dlg_ae.reject()
-    print("auto->AE OK", len(jsxs))
-    w.state.settings.render["out_dir"] = str(work)      # 뒤 샘플·렌더 단계로 저장폴더 되돌림
+    print("auto->AE OK (소스 옆)")
 
     # 샘플 창: 실제 PNG 6장
     import copy
