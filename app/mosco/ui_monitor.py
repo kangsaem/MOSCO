@@ -800,5 +800,5 @@ class TimeRuler(QWidget):
             p.setPen(QColor("#333"))
             p.drawLine(int(xh), 4, int(xh), 7)
             t += step
-        x = self._x(self.cur)
+        x = self._x(self.cur + 0.5)                   # 프레임 중앙 — 소스 바·레인과 일치(한 프레임 어긋남 수정)
         p.fillRect(QRectF(x - 1, 0, 2, self.height()), QColor("#e5484d"))
