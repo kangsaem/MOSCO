@@ -283,7 +283,9 @@ def beauty(frame16, items, p, frame_no=0, want_keys=False) -> BeautyResult:
             skin = skin * face_region_mask(pts, roi, face_w, p.get("neck", 0), feather)
         # 콧구멍·깊은 구멍 같은 아주 어두운 화소 보호(밝아짐 방지) — 흐리지 않은 원래 밝기로 판정
         yimg = 0.2126 * img[..., 0] + 0.7152 * img[..., 1] + 0.0722 * img[..., 2]
-        skin = skin * np.clip((yimg - 0.04) / 0.07, 0, 1)
+        # v0.7.52 전역 어두운화소 보호를 거의 끔(완전 새까만 구멍만). 그늘진 이마 옆·관자놀이·얼굴
+        # 가장자리까지 깎던 것 → 콧구멍은 아래 nostril_mask 가, 눈·입은 feature_mask 가 정밀 보호하므로 불필요.
+        skin = skin * np.clip((yimg - 0.015) / 0.035, 0, 1)
         if pts is not None and p.get("features", True):
             skin = skin * (1 - nostril_mask(yimg, pts, x0, y0, face_w))   # 콧구멍 어두운 그림자 따라 제외
         region = alpha * skin
