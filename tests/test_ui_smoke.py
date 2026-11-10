@@ -91,6 +91,10 @@ def extras(app, w, st, vids, out):
     pump(app, 5, lambda: st.info(str(moved)) is not None)
     st.select(n0)
     st.set_param(key, 33, undo=True)
+    st.select(0)                                   # 다른 소스를 보는 상태에서(실사용: 프로그램을 끈 사이 원본이 옮겨짐)
+    pump(app, 1.0)
+    from mosco import decoder
+    decoder.close_all()                            # 윈도우는 열려 있는 파일을 못 옮김 → 디코더를 닫고 옮김
     shutil.move(str(moved), str(b_dir / "MOVED_clip.mov"))
     assert [x.path for x in w._missing()] == [str(moved)]
     assert w.relink_missing(str(out / "relink_b")) == 1
