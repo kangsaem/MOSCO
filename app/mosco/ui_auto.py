@@ -76,7 +76,11 @@ def _seg(opts, cur, on_change, lw=76, label=""):
 
 
 class ClipRow(QFrame):
-    clicked = Signal(object, object)       # idx, modifiers
+    clicked = Signal(object, object)       # idx, modifiers (행 본문 클릭 = 그리드 선택)
+    drag_press = Signal(int)               # 누름(드래그 후보)
+    drag_move = Signal(object)             # 드래그 중 전역 좌표(QPoint)
+    drag_end = Signal()
+    toggle_one = Signal(int)               # 체크영역 단일 클릭 = 그 행만 포함 토글
 
     def __init__(self, idx, name):
         super().__init__()
@@ -87,7 +91,10 @@ class ClipRow(QFrame):
         lay.setSpacing(8)
         self.chk = QCheckBox()
         self.chk.setChecked(True)
+        self.chk.setAttribute(Qt.WA_TransparentForMouseEvents, True)   # 클릭은 행이 처리(드래그 페인트)
         lay.addWidget(self.chk)
+        self._press = None
+        self._dragging = False
         self.name = QLabel(name)
         self.name.setStyleSheet("font-weight:700")
         lay.addWidget(self.name)
@@ -135,9 +142,30 @@ class ClipRow(QFrame):
                            "QLabel{background:transparent}" % (bg, border))   # 글자칸이 진행 채움을 가리지 않게
 
     def mousePressEvent(self, e):
-        if self.childAt(e.position().toPoint()) is self.chk:
+        if e.button() != Qt.LeftButton:
             return super().mousePressEvent(e)
-        self.clicked.emit(self.idx, e.modifiers())
+        self._press = e.position()
+        self._dragging = False
+        self._on_chk = e.position().x() < 30         # 체크영역 클릭 여부
+        self.drag_press.emit(self.idx)
+
+    def mouseMoveEvent(self, e):
+        if self._press is None or not (e.buttons() & Qt.LeftButton):
+            return
+        if not self._dragging and (e.position() - self._press).manhattanLength() > 4:
+            self._dragging = True
+        if self._dragging:
+            self.drag_move.emit(e.globalPosition().toPoint())
+
+    def mouseReleaseEvent(self, e):
+        if self._press is not None and not self._dragging:   # 움직임 없는 클릭
+            if self._on_chk:
+                self.toggle_one.emit(self.idx)               # 체크영역 = 포함 토글
+            else:
+                self.clicked.emit(self.idx, e.modifiers())   # 본문 = 그리드 선택
+        self._press = None
+        self._dragging = False
+        self.drag_end.emit()
 
 
 class AutoDialog(DragMove, QDialog):
@@ -176,6 +204,8 @@ class AutoDialog(DragMove, QDialog):
         self.setFixedSize(998, h)
         self.selected = {self.clips[0]["idx"]} if self.clips else set()
         self.rows = []
+        self._ds_target = None            # 드래그 체크 칠하기 방향
+        self._ds_press_idx = None
         self._jobs = {}
         self._closed = False
         self._renders = []            # 보정+렌더 중인 RenderItem
@@ -189,9 +219,16 @@ class AutoDialog(DragMove, QDialog):
 
     # ------------------------------------------------------------ 구성
     def _build(self):
+        from . import __version__
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 16, 16, 16)
         root.setSpacing(14)
+        hdr = QHBoxLayout()                               # 좌상단 버전
+        _ver = QLabel(f"MOSCO v{__version__}")
+        _ver.setStyleSheet("color:#6f7680;font-size:11px")
+        hdr.addWidget(_ver)
+        hdr.addStretch(1)
+        root.addLayout(hdr)
         mid = QHBoxLayout()
         mid.setSpacing(10)
         # 왼쪽 클립 목록
@@ -208,7 +245,10 @@ class AutoDialog(DragMove, QDialog):
         for c in self.clips:
             r = ClipRow(c["idx"], c["name"])
             r.clicked.connect(self._on_row)
-            r.chk.toggled.connect(lambda v, i=c["idx"]: self._on_check(i, v))
+            r.toggle_one.connect(lambda i: self._on_check(i, not self._inc_of(i)))
+            r.drag_press.connect(self._ds_press)
+            r.drag_move.connect(self._ds_move)
+            r.drag_end.connect(self._ds_end)
             bl.addWidget(r)
             self.rows.append(r)
         bl.addStretch(1)
@@ -356,6 +396,50 @@ class AutoDialog(DragMove, QDialog):
             if c["idx"] == idx:
                 c["inc"] = v
         self._refresh()
+
+    # ------------------------------------------------------------ 드래그로 체크 쓸어 칠하기
+    def _inc_of(self, idx):
+        return next((c["inc"] for c in self.clips if c["idx"] == idx), False)
+
+    def _set_inc(self, idx, v):
+        """드래그 중 가벼운 갱신(전체 _refresh 는 끝에 한 번)."""
+        for c in self.clips:
+            if c["idx"] == idx and c["inc"] != v:
+                c["inc"] = v
+                for r in self.rows:
+                    if r.idx == idx:
+                        r.chk.blockSignals(True)
+                        r.chk.setChecked(v)
+                        r.chk.blockSignals(False)
+                        r.name.setStyleSheet("font-weight:700;color:%s" % ("#eaeaea" if v else "#777"))
+                        r._paint()
+                break
+
+    def _row_idx_at(self, gpt):
+        for r in self.rows:
+            if r.rect().contains(r.mapFromGlobal(gpt)):
+                return r.idx
+        return None
+
+    def _ds_press(self, idx):
+        self._ds_press_idx = idx
+        self._ds_target = None
+
+    def _ds_move(self, gpt):
+        if getattr(self, "_ds_press_idx", None) is None:
+            return
+        if self._ds_target is None:                       # 첫 이동에 방향 결정(누른 행의 반대 상태)
+            self._ds_target = not self._inc_of(self._ds_press_idx)
+            self._set_inc(self._ds_press_idx, self._ds_target)
+        ri = self._row_idx_at(gpt)
+        if ri is not None:
+            self._set_inc(ri, self._ds_target)
+
+    def _ds_end(self):
+        if getattr(self, "_ds_target", None) is not None:
+            self._refresh()
+        self._ds_target = None
+        self._ds_press_idx = None
 
     @staticmethod
     def _kinds(c):
