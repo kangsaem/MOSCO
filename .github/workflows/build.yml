@@ -149,6 +149,8 @@ jobs:
           $env:PATH = "$PWD/dist/MOSCO/bin;$env:PATH"
           $env:PYTHONIOENCODING = "utf-8"
           $env:QT_QPA_PLATFORM = "offscreen"
+          $env:PYTHONUNBUFFERED = "1"
+          $env:PYTHONFAULTHANDLER = "1"
           python tests/test_ui_smoke.py engine_test/synth.mov ui_shots
           if ($LASTEXITCODE -ne 0) { exit 1 }
 

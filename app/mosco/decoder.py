@@ -100,12 +100,18 @@ class FrameSource:
         return np.ascontiguousarray(a)
 
     def close(self):
+        # 다른 스레드가 이 파일을 디코딩 중이면 끝날 때까지 잠깐 기다렸다 닫음(디코딩 도중 닫으면 프로그램이 죽을 수 있음)
+        got = self.lock.acquire(timeout=3)
         try:
-            self.c.close()
-        except Exception:  # noqa: BLE001
-            pass
-        self.cache.clear()
-        self.order.clear()
+            try:
+                self.c.close()
+            except Exception:  # noqa: BLE001
+                pass
+            self.cache.clear()
+            self.order.clear()
+        finally:
+            if got:
+                self.lock.release()
 
 
 _sources: dict[str, FrameSource] = {}
