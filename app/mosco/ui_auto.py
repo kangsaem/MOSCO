@@ -220,15 +220,10 @@ class AutoDialog(DragMove, QDialog):
     # ------------------------------------------------------------ 구성
     def _build(self):
         from . import __version__
+        self._ver_text = f"MOSCO v{__version__}"
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 16, 16, 16)
         root.setSpacing(14)
-        hdr = QHBoxLayout()                               # 좌상단 버전
-        _ver = QLabel(f"MOSCO v{__version__}")
-        _ver.setStyleSheet("color:#6f7680;font-size:11px")
-        hdr.addWidget(_ver)
-        hdr.addStretch(1)
-        root.addLayout(hdr)
         mid = QHBoxLayout()
         mid.setSpacing(10)
         # 왼쪽 클립 목록
@@ -347,6 +342,10 @@ class AutoDialog(DragMove, QDialog):
         self.pbar = ProgBar(6)
         root.addWidget(self.pbar)
         btmrow = QHBoxLayout()
+        _ver = QLabel(self._ver_text)                     # 좌하단 버전
+        _ver.setStyleSheet("color:#6f7680;font-size:11px")
+        btmrow.addWidget(_ver)
+        btmrow.addSpacing(12)
         self.status = QLabel("")
         self.status.setStyleSheet("color:#7fd18b")
         btmrow.addWidget(self.status)
