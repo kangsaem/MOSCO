@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (QComboBox, QDialog, QFrame, QGridLayout, QHBoxLay
 
 from . import autodetect as ad
 from . import project as P
-from .ui_widgets import BTN, DragMove, Section, Seg, SliderRow, Toggle, btn, set_on
+from .ui_widgets import BTN, BTN_MAIN, DragMove, Section, Seg, SliderRow, Toggle, btn, set_on, tone
 
 KEYS = [("off", "끔"), ("final", "최종 키"), ("skin", "피부 키"), ("alpha", "타원 알파")]
 
@@ -17,6 +17,7 @@ OV_SLIDERS = [("size", "크기", 50, 250, "%"), ("feather", "페더", 0, 50, "%"
 
 class ControlPanel(QWidget):
     view_changed = Signal()          # 보정/원본/반반·타원·키·ID
+    analyze_clicked = Signal()       # [분석] — 현재 클립 분석(패널 하단 큰 버튼)
     pick_skin = Signal(bool)
     tool = Signal(object)            # None | "add" | "merge"
     del_key = Signal()
@@ -230,6 +231,21 @@ class ControlPanel(QWidget):
         for s in (self.sec_beauty, self.sec_bell, self.sec_blur, self.sec_xell, self.sec_det, *self.sign_secs,
                   self.sec_edit):
             self.bl.addWidget(s)
+        # [분석] — 타원 편집 섹션 바로 아래, 눈에 띄게 크고 파랗게(분석=측정 색)
+        from PySide6.QtWidgets import QSizePolicy
+        self.b_analyze = btn("분석", "이 클립을 분석(얼굴·트래킹) — 타원·검수·재생이 정확해집니다",
+                             size=BTN_MAIN, on_click=self.analyze_clicked.emit)
+        tone(self.b_analyze, "blue")
+        self.b_analyze.setMinimumWidth(10)
+        self.b_analyze.setMaximumWidth(16777215)
+        self.b_analyze.setFixedHeight(BTN_MAIN[1] + 8)
+        self.b_analyze.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        _ar = QHBoxLayout()
+        _ar.setContentsMargins(6, 8, 6, 2)
+        _ar.addWidget(self.b_analyze)
+        _aw = QWidget()
+        _aw.setLayout(_ar)
+        self.bl.addWidget(_aw)
         self.bl.addStretch(1)
 
         self.state.current_changed.connect(self.refresh)

@@ -349,9 +349,8 @@ class MainWindow(QMainWindow):
         self.tc.setMinimumWidth(QFontMetrics(_f).horizontalAdvance("00:00:00;00") + 34)   # 글자 + 여백 20 + 왼쪽 10 → 잘리지 않게(DTME 처럼 다 보임)
         tr.addWidget(self.tc)
         tr.addStretch(1)
-        self.b_analyze = btn("분석", "이 클립을 분석(얼굴·트래킹). 누르면 타원·검수가 정확해지고 재생 결과도 정확해집니다",
-                             w=60, on_click=self.analyze_current)
-        tr.addWidget(self.b_analyze)
+        self.b_analyze = self.panel.b_analyze       # 분석 버튼은 패널 하단(타원 편집 아래)으로 이동 — 크고 파랗게
+        self.panel.analyze_clicked.connect(self.analyze_current)
         self.state.set_view_scale(1.0)              # 미리보기는 항상 100%(화질 선택창 없앰)
         self.b_toqueue = btn("", "렌더 목록으로 보내기 (현재/선택 소스). 실제 렌더는 오른쪽 [렌더] 버튼",
                              size=BTN_MAIN, w=88, red=True, on_click=self.queue_to_render)
