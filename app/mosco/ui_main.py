@@ -10,8 +10,8 @@ from pathlib import Path
 import numpy as np
 from PySide6.QtCore import Qt, QSize, QTimer
 from PySide6.QtGui import QAction, QKeySequence, QShortcut
-from PySide6.QtWidgets import (QDialog, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QScrollArea,
-                               QSplitter, QToolBar, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QDialog, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
+                               QScrollArea, QSplitter, QToolBar, QVBoxLayout, QWidget)
 
 from . import __version__, analyze, decoder, edits, ff, fx, jobs, paths
 from .project import Project
@@ -1184,7 +1184,14 @@ class MainWindow(QMainWindow):
             msg += f" · 오류 {err}개"
         if cancel:
             msg += f" · 취소 {cancel}개"
-        QMessageBox.information(self, "렌더 완료", msg)
+        self.flash(msg)
+        if QApplication.platformName() == "offscreen":
+            return                              # 테스트/헤드리스: 모달 팝업이 블록되므로 생략
+        box = QMessageBox(QMessageBox.Information, "렌더 완료", msg, QMessageBox.Ok, self)
+        box.setModal(False)                     # 논모달 — 이벤트 루프를 막지 않음
+        box.finished.connect(lambda *_: setattr(self, "_render_done_box", None))
+        self._render_done_box = box             # GC 방지
+        box.show()
 
     # ------------------------------------------------------------ 프로젝트
     def undo(self):
