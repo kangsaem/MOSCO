@@ -184,12 +184,37 @@ def feature_mask(pts, roi, face_w):
     _fill_groups(m, pts, off, (models.LEFT_EYE, models.RIGHT_EYE), face_w * 0.012)   # 눈: 아주 작게
     _fill_groups(m, pts, off, (models.LEFT_BROW, models.RIGHT_BROW), face_w * 0.015)  # 눈썹: 작게
     _fill_groups(m, pts, off, (models.LIPS,), face_w * 0.015)                         # 입: 작게(입가·팔자 주름 살림, 입술만 가림)
-    # 콧구멍: 콧방울·콧구멍하단 랜드마크 중점에 작은 원으로 제외(어두운 구멍이 밝아지는 것 방지)
-    r = max(2, int(face_w * 0.05))
-    for a, b in ((98, 97), (327, 326)):     # (오른 콧방울·콧구멍하단), (왼 콧방울·콧구멍하단) — MediaPipe 468
-        c = (pts[a] + pts[b]) / 2 - off
-        cv2.circle(m, (int(c[0]), int(c[1])), r, 1.0, -1, cv2.LINE_AA)
     return cv2.GaussianBlur(m, (0, 0), max(1.0, face_w * 0.012))
+
+
+def nostril_mask(yimg, pts, x0, y0, face_w):
+    """콧구멍 제외(1=제외): 콧구멍 랜드마크 둘레 작은 창 안에서 '주변 피부보다 어두운' 화소만 부드럽게.
+    고정 원이 아니라 실제 어두운 그림자 모양을 따라감. 창 2개(작음)라 비용은 사실상 0.
+    (v0.7.43: feature_mask 의 고정 원을 대체)"""
+    h, w = yimg.shape
+    m = np.zeros((h, w), np.float32)
+    R = max(4, int(face_w * 0.08))
+    for a, b in ((98, 97), (327, 326)):          # (오른 콧방울·콧구멍하단), (왼 …) — MediaPipe 468
+        cx = int(round((pts[a, 0] + pts[b, 0]) / 2 - x0))
+        cy = int(round((pts[a, 1] + pts[b, 1]) / 2 - y0))
+        xa, xb = max(0, cx - R), min(w, cx + R + 1)
+        ya, yb = max(0, cy - R), min(h, cy + R + 1)
+        if xb <= xa or yb <= ya:
+            continue
+        patch = yimg[ya:yb, xa:xb]
+        if patch.size == 0:
+            continue
+        skin_l = float(np.median(patch[patch >= np.percentile(patch, 60)]))   # 창 안 피부(밝은 쪽) 기준
+        if skin_l <= 1e-3:
+            continue
+        lo, hi = skin_l * 0.55, skin_l * 0.85     # 피부 대비 55~85% 사이를 부드럽게 제외
+        dark = np.clip((hi - patch) / max(1e-4, hi - lo), 0.0, 1.0)
+        yy, xx = np.ogrid[ya:yb, xa:xb]           # 창 가장자리 원형 페더(사각형 티 제거)
+        rad = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
+        fall = np.clip((R - rad) / max(1.0, R * 0.4), 0.0, 1.0)
+        reg = m[ya:yb, xa:xb]
+        np.maximum(reg, (dark * fall).astype(np.float32), out=reg)
+    return cv2.GaussianBlur(m, (0, 0), max(1.0, face_w * 0.01))
 
 
 class BeautyResult:
@@ -259,6 +284,8 @@ def beauty(frame16, items, p, frame_no=0, want_keys=False) -> BeautyResult:
         # 콧구멍·깊은 구멍 같은 아주 어두운 화소 보호(밝아짐 방지) — 흐리지 않은 원래 밝기로 판정
         yimg = 0.2126 * img[..., 0] + 0.7152 * img[..., 1] + 0.0722 * img[..., 2]
         skin = skin * np.clip((yimg - 0.04) / 0.07, 0, 1)
+        if pts is not None and p.get("features", True):
+            skin = skin * (1 - nostril_mask(yimg, pts, x0, y0, face_w))   # 콧구멍 어두운 그림자 따라 제외
         region = alpha * skin
         if pts is not None and p.get("features", True):
             region = region * (1 - feature_mask(pts, roi, face_w))
