@@ -3,11 +3,43 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QIntValidator, QPainter
-from PySide6.QtWidgets import (QFrame, QButtonGroup, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSlider,
+from PySide6.QtWidgets import (QDialog, QFrame, QButtonGroup, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSlider,
                                QVBoxLayout, QWidget)
 
 BTN = (76, 28)
 BTN_MAIN = (88, 32)
+
+
+def info_popup(parent, title, msg, buttons):
+    """MOSCO 다크 테마 통일 팝업(프레임리스, confirm_save 와 같은 틀).
+    buttons = [(label, value, red, w), …] → 누른 value 반환. 모달."""
+    dlg = QDialog(parent)
+    dlg.setWindowFlag(Qt.FramelessWindowHint)
+    dlg.setModal(True)
+    dlg.setStyleSheet("QDialog{background:#262626;border:1px solid #555;border-radius:6px}"
+                      "QLabel{color:#e6e6e6}")
+    lay = QVBoxLayout(dlg)
+    lay.setContentsMargins(24, 20, 24, 18)
+    lay.setSpacing(16)
+    t = QLabel(title)
+    t.setStyleSheet("color:#e6e6e6;font-size:13px;font-weight:700")
+    lay.addWidget(t)
+    m = QLabel(msg)
+    m.setStyleSheet("color:#cfcfcf;font-size:13px")
+    lay.addWidget(m)
+    row = QHBoxLayout()
+    row.setSpacing(8)
+    row.addStretch(1)
+    res = {"v": None}
+
+    def pick(v):
+        res["v"] = v
+        dlg.accept()
+    for label, value, red, w in buttons:
+        row.addWidget(btn(label, w=w, red=red, on_click=lambda v=value: pick(v)))
+    lay.addLayout(row)
+    dlg.exec()
+    return res["v"]
 
 
 def arrow_icon(w=34, h=18, color="#ffffff"):

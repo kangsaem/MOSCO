@@ -1005,11 +1005,9 @@ class AutoDialog(DragMove, QDialog):
         QApplication.alert(self)                       # 창이 뒤에 있으면 작업표시줄 깜빡
         if QApplication.platformName() == "offscreen":
             return                                     # 테스트/헤드리스: 모달 생략
-        box = QMessageBox(QMessageBox.Information, "렌더 완료", msg, QMessageBox.NoButton, self)
-        b_open = box.addButton("폴더 열기", QMessageBox.ActionRole)
-        box.addButton("확인", QMessageBox.AcceptRole)
-        box.exec()
-        if box.clickedButton() is b_open:
+        from .ui_widgets import info_popup
+        if info_popup(self, "렌더 완료", msg,
+                      [("폴더 열기", "open", False, 92), ("확인", "ok", True, 80)]) == "open":
             self._open_out()
 
     def _open_out(self):

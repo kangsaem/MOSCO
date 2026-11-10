@@ -1202,11 +1202,8 @@ class MainWindow(QMainWindow):
         self.flash(msg)
         if QApplication.platformName() == "offscreen":
             return                              # 테스트/헤드리스: 모달 팝업이 블록되므로 생략
-        box = QMessageBox(QMessageBox.Information, "렌더 완료", msg, QMessageBox.Ok, self)
-        box.setModal(False)                     # 논모달 — 이벤트 루프를 막지 않음
-        box.finished.connect(lambda *_: setattr(self, "_render_done_box", None))
-        self._render_done_box = box             # GC 방지
-        box.show()
+        from .ui_widgets import info_popup
+        info_popup(self, "렌더 완료", msg, [("확인", "ok", True, 80)])   # 다른 팝업과 다크 테마 통일
 
     # ------------------------------------------------------------ 프로젝트
     def undo(self):
