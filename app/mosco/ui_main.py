@@ -1176,6 +1176,8 @@ class MainWindow(QMainWindow):
         if any(it.state in ("진행", "대기") for it in self.rpanel.items):
             return
         self._render_batch = False
+        if getattr(self, "_suppress_render_popup", False):
+            return                                  # 시작창 AUTO 흐름 = AUTO 창이 직접 완료 팝업을 띄움
         done = sum(it.state == "완료" for it in self.rpanel.items)
         err = sum(it.state == "오류" for it in self.rpanel.items)
         cancel = sum(it.state == "취소" for it in self.rpanel.items)

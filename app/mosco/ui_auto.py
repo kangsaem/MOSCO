@@ -5,10 +5,11 @@ AUTO: 체크한 클립을 장면 인식(autodetect) → 속성 격자로 고치�
 from __future__ import annotations
 
 import copy
+import time
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
-                               QPushButton, QScrollArea, QStyle, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel,
+                               QLineEdit, QMessageBox, QPushButton, QScrollArea, QStyle, QVBoxLayout, QWidget)
 
 from . import autodetect as ad
 from . import ff, jobs
@@ -523,6 +524,8 @@ class AutoDialog(DragMove, QDialog):
     def done(self, r):
         # QDialog.accept()/reject() 가 모두 거쳐 가는 지점 → 어떤 식으로 닫히든 취소 보장
         self._closed = True
+        if self.mw is not None:
+            self.mw._suppress_render_popup = False    # 억제 해제(이후 편집 흐름 팝업 정상)
         self._cancel_detect()
         self._cancel_analysis()
         try:
@@ -703,8 +706,11 @@ class AutoDialog(DragMove, QDialog):
         mw = self.mw
         idxs = [c["idx"] for c in self.clips if c["inc"]]
         if self.after == "render":
-            # 렌더: 창을 띄운 채 진행률 표시 → 다 끝나면 닫힘(오류가 있으면 남아서 알림)
+            # 렌더: 창을 띄운 채 진행률 표시 → 다 끝나면 완료 팝업 → 종료(오류가 있으면 남아서 알림)
             self._phase = "render"
+            self._render_t0 = time.monotonic()        # 경과시간용
+            self._render_out = out_dir                 # [폴더 열기]용
+            mw._suppress_render_popup = True           # MainWindow 중복 팝업 억제(이 창이 직접 띄움)
             self._renders = mw.render_auto(idxs, out_dir, self.name)
             from PySide6.QtCore import QTimer
             self._rt = QTimer(self, interval=250, timeout=self._render_tick)
@@ -880,6 +886,7 @@ class AutoDialog(DragMove, QDialog):
             self._rt.stop()
             bad = [it for it in self._renders if it.state != "완료"]
             if not bad:
+                self._done_popup(done, n)          # 종료 전 완료 팝업([폴더 열기]/[확인])
                 self.outcome = "render"
                 self.accept()
                 return
@@ -893,6 +900,41 @@ class AutoDialog(DragMove, QDialog):
             for c in self.clips:
                 c["prog"] = None
             self._refresh()
+
+    def _elapsed(self):
+        secs = int(time.monotonic() - getattr(self, "_render_t0", time.monotonic()))
+        if secs >= 3600:
+            return f"{secs // 3600}시간 {(secs % 3600) // 60}분 {secs % 60}초"
+        return f"{secs // 60}분 {secs % 60}초"
+
+    def _done_popup(self, done, n):
+        """보정+렌더가 전부 성공한 뒤, 종료 직전 결과 팝업. [폴더 열기]·[확인] 모두 누른 뒤 창이 닫히며 종료."""
+        msg = f"렌더 완료 {done}개 · 실패 {n - done}개 · {self._elapsed()}"
+        QApplication.alert(self)                       # 창이 뒤에 있으면 작업표시줄 깜빡
+        if QApplication.platformName() == "offscreen":
+            return                                     # 테스트/헤드리스: 모달 생략
+        box = QMessageBox(QMessageBox.Information, "렌더 완료", msg, QMessageBox.NoButton, self)
+        b_open = box.addButton("폴더 열기", QMessageBox.ActionRole)
+        box.addButton("확인", QMessageBox.AcceptRole)
+        box.exec()
+        if box.clickedButton() is b_open:
+            self._open_out()
+
+    def _open_out(self):
+        out = getattr(self, "_render_out", "")
+        if not out:
+            return
+        import os
+        import sys
+        try:
+            if sys.platform == "win32":
+                os.startfile(out)                      # noqa: S606  (윈도우 탐색기)
+            else:
+                from PySide6.QtCore import QUrl
+                from PySide6.QtGui import QDesktopServices
+                QDesktopServices.openUrl(QUrl.fromLocalFile(out))
+        except Exception:
+            pass
 
     def _set_bar(self, frac, kind="render"):
         self.pbar.set(frac, kind)

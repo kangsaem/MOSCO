@@ -1,6 +1,6 @@
 # HANDOFF — MOSCO (Mosaic + Cosmo)
 
-다음 대화는 이 문서를 기준으로 이어서 작업한다. **현재 v0.7.38 (2026-11-09). 1단계(DTME UI 통일) 완료 → 지금은 2단계(앱 보완) · B-1 실영상 테스트 대기.**
+다음 대화는 이 문서를 기준으로 이어서 작업한다. **현재 v0.7.39 (2026-11-10). 1단계(DTME UI 통일) 완료 → 지금은 2단계(앱 보완) · B-1 실영상 테스트 대기.**
 
 > ## 진행 순서 (중요 — 지금 여기 = 2단계)
 > **1단계 · DTME에서 UI/버튼 수정 〔완료 v0.6.1〕** → **2단계 · 수정된 UI 위에서 앱 기능 보완 〔지금〕**
@@ -9,6 +9,13 @@
 > - 1단계 점검 결과(v0.6.1 직후 확인): UI 파일만 변경, 슬라이더 키 6개·➜/렌더 시그널·`os._exit(0)` 유지, 엔진/데이터 무수정 — 계약 이상 없음.
 
 ### 변경 이력 (최신순)
+- **v0.7.39 시작창 AUTO(보정+렌더) 완료 팝업 → [폴더 열기]/[확인] 후 종료**:
+  - 흐름: 시작창 → AUTO → [보정+렌더] 는 편집창 숨긴 채 AUTO 창(`ui_auto.AutoDialog`)이 진행막대만, 성공(실패 0)이면 `accept()`→`run_auto`→`exit_app` 로 **즉시 종료**해 아무것도 못 보던 문제.
+  - A안: `_render_tick` 성공 분기에서 종료 직전 `_done_popup(done,n)` — `렌더 완료 N개 · 실패 0개 · M분 S초` + **[폴더 열기]**(`os.startfile`/QDesktopServices)·**[확인]**. 누른 뒤 창 닫히며 종료. `QApplication.alert` 로 작업표시줄 깜빡. 경과시간 `_render_t0`, 폴더 `_render_out`.
+  - 중복 방지: 이 흐름은 `render_auto`→`_start_render` 라 MainWindow `_render_check_all_done`(v0.7.37 팝업)도 숨은 창에서 떠 레이스 남 → `mw._suppress_render_popup=True`(AutoDialog `_apply`에서 켜고 `done()`에서 끔)로 억제. 편집창 흐름은 MainWindow 팝업 그대로.
+  - 오프스크린(CI) 팝업 생략(모달 블록 방지).
+- **v0.7.38 렌더 완료 팝업이 헤드리스 CI 멈춤 유발하던 것 수정**:
+  - v0.7.37 의 `QMessageBox.information`(모달) 이 오프스크린 CI(`test_auto`) 에서 클릭 대기로 무한 블록 → 잡 6시간 타임아웃 취소. 논모달 `show()` + offscreen 생략, `QApplication` import 추가.
 - **v0.7.37 렌더/소스 목록 UI (DTME 기준 정리)**:
   - **렌더 진행은 렌더목록 바에만** — 소스목록에서 렌더 진행 제거(`_start_render` 가 `set_busy("render")` 안 함, `SourceDelegate` 가 busy=render 무시). *결정: 사용자가 "렌더목록에만"으로 정함(DTME도 사용자가 같은 방향으로 바꿀 예정). DTME 캡처는 소스줄에도 "렌더 33%"를 보였지만 그건 안 따름.*
   - **렌더목록 바 = DTME식 비율 막대** — `RenderDelegate`: 대기 `#3c3c3c` · 진행 = 막대 전체가 비율만큼 `#c0392b` · 완료 `#6b6b6b` · 실패 `#7a2a22` · 선택 테두리 `#4a8fe0`. (이전 아래 3px 선 → 전체 높이 막대)
