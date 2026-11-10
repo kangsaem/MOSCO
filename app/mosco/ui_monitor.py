@@ -729,12 +729,19 @@ class EllipseLanes(QWidget):
             for (a, b) in ivs:
                 for fx in (self._x(a), self._x(b + 1)):
                     p.drawRect(QRectF(fx - 2, y0, 4, y1 - y0))
-            # 키 ◆
+            # 자동 키 ◆ (작은 흰색) — AE 내보낼 때 키가 찍히는 위치
+            cy = (y0 + y1) / 2
             p.setBrush(QColor("#ffffff"))
             for k in d["keys"]:
                 kx = self._x(k + 0.5)
-                cy = (y0 + y1) / 2
                 p.drawPolygon([QPointF(kx, cy - 4), QPointF(kx + 4, cy), QPointF(kx, cy + 4), QPointF(kx - 4, cy)])
+            # 사용자가 옮겨 찍은 수동 키 ◆ (크고 노랑) — 자동 키 위에 겹쳐 표시
+            p.setBrush(QColor("#f2c94c"))
+            p.setPen(QPen(QColor("#5a4a12"), 1))
+            for k in d.get("ukeys", ()):
+                kx = self._x(k + 0.5)
+                p.drawPolygon([QPointF(kx, cy - 6), QPointF(kx + 6, cy), QPointF(kx, cy + 6), QPointF(kx - 6, cy)])
+            p.setPen(Qt.NoPen)
             # 라벨
             p.setPen(QColor("#e6e6e6") if sel else QColor("#9aa0a6"))
             p.drawText(QRectF(4, y0, 40, y1 - y0), Qt.AlignVCenter | Qt.AlignLeft, d["label"])

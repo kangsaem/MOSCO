@@ -682,12 +682,14 @@ class AppState(QObject):
                 prev = f
             intervals.append((a, prev))
             groups = {g["gid"]: g for g in edits.get(s, mode)["groups"]}
-            if k[0] == "g" and k[1] in groups:          # 수동 그룹 = 사용자가 찍은 키
-                keys = sorted(int(x) for x in groups[k[1]].get("keys", {}))
-            else:                                       # 오토 트랙 = AE 내보낼 때 키가 찍히는 위치(근사)
+            g = groups.get(k[1]) if k[0] == "g" else None
+            ukeys = sorted(int(x) for x in g.get("keys", {})) if g else []   # 사용자가 옮겨 찍은 수동 키
+            if g is not None and g.get("manual"):       # 추가 타원 = 자동 없음, 사용자 키만
+                keys = []
+            else:                                       # 오토 트랙(또는 트랙 오버라이드) = 자동 키 + 사용자 키
                 keys = _auto_keys(fr, d["geo"], intervals)
-            out.append({"key": k, "mode": mode, "label": d["label"], "intervals": intervals, "keys": keys, "n": n,
-                        "minus": d["minus"], "quad": d["quad"], "manual": d["manual"]})
+            out.append({"key": k, "mode": mode, "label": d["label"], "intervals": intervals, "keys": keys,
+                        "ukeys": ukeys, "n": n, "minus": d["minus"], "quad": d["quad"], "manual": d["manual"]})
         self._spans_cache = (sig, out)
         return out
 
