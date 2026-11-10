@@ -184,6 +184,11 @@ def feature_mask(pts, roi, face_w):
     _fill_groups(m, pts, off, (models.LEFT_EYE, models.RIGHT_EYE), face_w * 0.012)   # 눈: 아주 작게
     _fill_groups(m, pts, off, (models.LEFT_BROW, models.RIGHT_BROW), face_w * 0.015)  # 눈썹: 작게
     _fill_groups(m, pts, off, (models.LIPS,), face_w * 0.015)                         # 입: 작게(입가·팔자 주름 살림, 입술만 가림)
+    # 콧구멍: 콧방울·콧구멍하단 랜드마크 중점에 작은 원으로 제외(어두운 구멍이 밝아지는 것 방지)
+    r = max(2, int(face_w * 0.05))
+    for a, b in ((98, 97), (327, 326)):     # (오른 콧방울·콧구멍하단), (왼 콧방울·콧구멍하단) — MediaPipe 468
+        c = (pts[a] + pts[b]) / 2 - off
+        cv2.circle(m, (int(c[0]), int(c[1])), r, 1.0, -1, cv2.LINE_AA)
     return cv2.GaussianBlur(m, (0, 0), max(1.0, face_w * 0.012))
 
 

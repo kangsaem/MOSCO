@@ -785,6 +785,17 @@ class MainWindow(QMainWindow):
         sc = self._vscale()
         return (max(16, round(info.w * sc)), max(16, round(info.h * sc)))
 
+    def _play_size(self, info):
+        """재생 전용 디코딩 크기: 긴 변 640 상한(프리뷰보다 크지 않게). 저해상도로 열어 즉시·부드럽게 재생.
+        표시 논리 크기는 _vsize 그대로라 오버레이(타원·사각형)는 정확히 정렬되고, 원본 프레임만 부드럽게 확대됨."""
+        vw, vh = self._vsize(info)
+        longside = max(vw, vh)
+        cap = 640
+        if longside <= cap:
+            return (vw, vh)
+        k = cap / longside
+        return (max(16, round(vw * k)), max(16, round(vh * k)))
+
     def _to_full(self, ell):
         """모니터(보기 좌표)에서 받은 타원 → 원본 좌표(편집 저장·렌더용)."""
         sc = self._vscale()
@@ -907,7 +918,7 @@ class MainWindow(QMainWindow):
         self.gen += 1
         self.mon.set_default("fit")
         self.mon.playing = True                # 재생 중 부드러운 확대 끔(빠르게)
-        self.player = Player(info, self.f, self._play_frame, self._play_end, self._vsize(info))
+        self.player = Player(info, self.f, self._play_frame, self._play_end, self._play_size(info))  # 저해상도=즉시 재생
         self.b_play.setProperty("on", True)
         self.b_play.style().polish(self.b_play)
 
