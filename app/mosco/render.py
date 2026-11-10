@@ -96,6 +96,7 @@ def build_plan(src: Source, info, rs, progress=None, cancel=None, workers=None):
     """분석(종류별 순차)·트랙·리졸버를 만들어 plan 과 (n, 분석초, 분석fps모드) 반환."""
     hw = bool(rs.get("hw"))
     use_w = workers if int(rs.get("workers") or 0) > 0 else None
+    bskip = float(rs.get("bottom_skip", 0.0) or 0.0)      # 얼굴블러 하단 제외(미리보기와 같은 캐시 사용)
     kinds = src.blur_kinds()
     t_an = 0.0
     if not kinds:                                  # 뷰티
@@ -115,14 +116,14 @@ def build_plan(src: Source, info, rs, progress=None, cancel=None, workers=None):
     plan_list, n, any_un = [], 0, False
     for ki, kind in enumerate(kinds):              # 블러: 얼굴·간판 순차 분석(한꺼번에 코어·디스크 안 뺏음)
         level = analyze.level_for(kind, src.params_for(kind))
-        cached = analyze.load(info, kind, level) is not None
+        cached = analyze.load(info, kind, level, bskip) is not None
         any_un = any_un or not cached
 
         def p_an(v, ki=ki):
             if progress:
                 progress(0.35 * (ki + v) / len(kinds))
         t0 = time.perf_counter()
-        z = analyze.analyze(info, kind, p_an, cancel, hw, use_w, level=level)
+        z = analyze.analyze(info, kind, p_an, cancel, hw, use_w, level=level, bottom_skip=bskip)
         if not cached:
             t_an += time.perf_counter() - t0
         n = max(n, int(z["n"]))

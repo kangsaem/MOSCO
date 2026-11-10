@@ -579,6 +579,7 @@ class EllipseLanes(QWidget):
     select = Signal(object, object)          # (타원 key, mode) — 동시 블러 때 그 종류로 전환
     segments_changed = Signal(object, object)  # key, [(in, out), ...] — 구간별 양끝 편집·틈 메우기
     seek = Signal(int)                       # 재생선을 잡고 드래그 → 프레임 이동(소스 타임라인과 동일)
+    del_key = Signal()                       # 레인에 포커스 두고 Del → 현재 프레임 키 삭제
 
     LANE_H = 16
     PAD = 3
@@ -590,10 +591,27 @@ class EllipseLanes(QWidget):
         self.cur = 0
         self.sel = None
         self.setMouseTracking(True)
+        self.setFocusPolicy(Qt.StrongFocus)     # Del 키 받기
         self._drag = None        # (lane_idx, "in"|"out")
         self._preview = None     # (key, f_in, f_out) 드래그 중 미리보기
         self._scrub = False      # 재생선 드래그 중
         self._fit()
+
+    def _key_hit(self, pos):
+        """키프레임 ◆ 클릭 판정 → (lane_key, mode, frame) 또는 None. 사용자 키(ukeys) 우선."""
+        idx = int((pos.y() - self.PAD) // self.LANE_H)
+        if not (0 <= idx < len(self.spans)):
+            return None
+        d = self.spans[idx]
+        for ks in (d.get("ukeys", ()), d.get("keys", ())):   # 노란(사용자) 키 먼저
+            best, bd = None, 6
+            for k in ks:
+                dx = abs(pos.x() - self._x(k + 0.5))
+                if dx <= bd:
+                    best, bd = int(k), dx
+            if best is not None:
+                return d["key"], d.get("mode"), best
+        return None
 
     def _fit(self):
         # 전체 레인 높이로 키움(8개 초과분은 바깥 QScrollArea 가 스크롤). 예전엔 8개로 잘라 아래 레인이 안 보였음.
@@ -641,6 +659,15 @@ class EllipseLanes(QWidget):
             self._scrub = True                           # 재생선을 잡음 → 스크럽
             self.seek.emit(self._frame(e.position().x()))
             return
+        kf = self._key_hit(e.position())                 # 키프레임 ◆ 클릭 → 선택 + 그 프레임으로(활성화)
+        if kf is not None:
+            lane_key, mode, frame = kf
+            self.sel = lane_key
+            self.setFocus()
+            self.select.emit(lane_key, mode)
+            self.seek.emit(frame)
+            self.update()
+            return
         idx, where = self._hit(e.position())
         if idx is None:
             return
@@ -684,6 +711,12 @@ class EllipseLanes(QWidget):
             self.segments_changed.emit(key, segs)
         self._drag = None
         self._preview = None
+
+    def keyPressEvent(self, e):
+        if e.key() in (Qt.Key_Delete, Qt.Key_Backspace):
+            self.del_key.emit()                          # 현재 프레임(=클릭한 키) 삭제
+            return
+        super().keyPressEvent(e)
 
     def contextMenuEvent(self, e):
         from PySide6.QtWidgets import QMenu
@@ -735,12 +768,14 @@ class EllipseLanes(QWidget):
             for k in d["keys"]:
                 kx = self._x(k + 0.5)
                 p.drawPolygon([QPointF(kx, cy - 4), QPointF(kx + 4, cy), QPointF(kx, cy + 4), QPointF(kx - 4, cy)])
-            # 사용자가 옮겨 찍은 수동 키 ◆ (크고 노랑) — 자동 키 위에 겹쳐 표시
-            p.setBrush(QColor("#f2c94c"))
-            p.setPen(QPen(QColor("#5a4a12"), 1))
+            # 사용자가 옮겨 찍은 수동 키 ◆ (크고 노랑) — 자동 키 위에 겹쳐 표시. 현재 프레임의 키 = 활성(흰 테두리).
             for k in d.get("ukeys", ()):
                 kx = self._x(k + 0.5)
-                p.drawPolygon([QPointF(kx, cy - 6), QPointF(kx + 6, cy), QPointF(kx, cy + 6), QPointF(kx - 6, cy)])
+                active = (k == self.cur and sel)
+                p.setBrush(QColor("#ffd23f") if active else QColor("#f2c94c"))
+                p.setPen(QPen(QColor("#ffffff"), 1.5) if active else QPen(QColor("#5a4a12"), 1))
+                r = 7 if active else 6
+                p.drawPolygon([QPointF(kx, cy - r), QPointF(kx + r, cy), QPointF(kx, cy + r), QPointF(kx - r, cy)])
             p.setPen(Qt.NoPen)
             # 라벨
             p.setPen(QColor("#e6e6e6") if sel else QColor("#9aa0a6"))

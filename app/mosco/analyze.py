@@ -44,16 +44,18 @@ def level_for(mode: str, params: dict) -> int:
     return max(SMALL_MIN, int(ms * 0.85))        # 상자 크기 오차 여유 15%
 
 
-def cache_file(info: ff.Info, mode: str, level: int = 0):
+def cache_file(info: ff.Info, mode: str, level: int = 0, bottom_skip: float = 0.0):
     d = paths.cache_dir() / "analysis"
     d.mkdir(exist_ok=True)
-    suf = f"_L{level}" if mode == "blur" and level > SMALL_MIN else ""
-    return d / f"{_key(info, mode)}{suf}.npz"
+    bsuf = f"_B{int(round(bottom_skip * 100))}" if mode == "blur" and bottom_skip > 0 else ""
+    lsuf = f"_L{level}" if mode == "blur" and level > SMALL_MIN else ""
+    return d / f"{_key(info, mode)}{bsuf}{lsuf}.npz"
 
 
-def _candidates(info: ff.Info, mode: str, level: int):
-    """쓸 수 있는 캐시 파일: 하한이 요구값 이하(더 작은 얼굴까지 찾은 것)면 그대로 써도 된다."""
-    base = cache_file(info, mode)
+def _candidates(info: ff.Info, mode: str, level: int, bottom_skip: float = 0.0):
+    """쓸 수 있는 캐시 파일: (같은 하단제외 설정 안에서) 하한이 요구값 이하면 그대로 써도 된다.
+    하단 제외(_B..) 캐시와 전체(_B 없음) 캐시는 서로 섞지 않는다(검색 범위가 달라 결과가 다름)."""
+    base = cache_file(info, mode, 0, bottom_skip)
     out = [base]
     if mode == "blur":
         lv = []
@@ -68,9 +70,9 @@ def _candidates(info: ff.Info, mode: str, level: int):
     return out
 
 
-def load(info: ff.Info, mode: str, level: int = 0):
+def load(info: ff.Info, mode: str, level: int = 0, bottom_skip: float = 0.0):
     level = max(SMALL_MIN, level) if mode == "blur" else 0
-    for f in _candidates(info, mode, level):
+    for f in _candidates(info, mode, level, bottom_skip):
         z = _load_file(f)
         if z is not None:
             return z
@@ -225,19 +227,23 @@ def _nms_rows(rows, thr=0.4):
     return [rows[i] for i in keep]
 
 
-def blur_frame(rgb, small=True, body=True, small_min=SMALL_MIN):
+def blur_frame(rgb, small=True, body=True, small_min=SMALL_MIN, bottom_skip=0.0):
     """한 프레임: 얼굴(BlazeFace 타일) + 작은 얼굴(MTCNN) + 몸→머리(NanoDet).
-    반환 행: x0,y0,x1,y1,score,kind,hist(16)  — 상자는 '얼굴 상자' 기준(몸에서 추정한 머리도 같은 기준으로 환산)."""
+    반환 행: x0,y0,x1,y1,score,kind,hist(16)  — 상자는 '얼굴 상자' 기준(몸에서 추정한 머리도 같은 기준으로 환산).
+    bottom_skip>0: 화면 하단 그 비율의 '작은 얼굴' 검색(타일·MTCNN)을 생략해 속도↑. 전체화면 통과는 그대로라 큰 얼굴은 보존."""
     H, W = rgb.shape[:2]
+    top = max(0.1, 1.0 - max(0.0, min(0.9, bottom_skip)))   # 작은얼굴 검색을 상단 top 비율까지만
+    ytop = int(round(H * top))
     rows = []
-    for d in models.detector().detect(rgb, LOW_SCORE, tiles=True, min_size=6):
+    for d in models.detector().detect(rgb, LOW_SCORE, tiles=True, min_size=6, tile_top=top):
         if d.score < 0.7:       # 애매한 것은 랜드마크 모델로 재확인(무늬 오검출 제거)
             _, conf = models.mesh().run(rgb, *models.roi_from_det(d))
             if conf < 0.05:
                 continue
         rows.append([*d.box, d.score, KIND_FACE])
-    if small and small_min < 64:       # 작은 얼굴: [최소 크기] 아래는 안 찾음(분석 하한)
-        for x0, y0, x1, y1, sc in models.small_detector().detect(rgb, small_min, 64):
+    if small and small_min < 64:       # 작은 얼굴: [최소 크기] 아래는 안 찾음(분석 하한). 하단 제외면 상단만.
+        sub = rgb[:ytop] if bottom_skip > 0 else rgb     # MTCNN = 분석 시간의 대부분 → 입력을 줄여 크게 절약
+        for x0, y0, x1, y1, sc in models.small_detector().detect(sub, small_min, 64):
             rows.append([x0, y0, x1, y1, sc * 0.9, KIND_SMALL])
     rows = _nms_rows(rows)
     if body:
@@ -261,7 +267,7 @@ def blur_frame(rgb, small=True, body=True, small_min=SMALL_MIN):
     return out
 
 
-def analyze_blur(info: ff.Info, progress=None, cancel=None, hw=False, workers=None, small_min=SMALL_MIN):
+def analyze_blur(info: ff.Info, progress=None, cancel=None, hw=False, workers=None, small_min=SMALL_MIN, bottom_skip=0.0):
     """프레임마다 독립 검출 → 여러 스레드로 병렬."""
     from concurrent.futures import ThreadPoolExecutor
     from collections import deque
@@ -283,7 +289,7 @@ def analyze_blur(info: ff.Info, progress=None, cancel=None, hw=False, workers=No
             fr = r.read()
             if fr is None:
                 break
-            q.append((i, pool.submit(blur_frame, fr.copy(), True, True, small_min)))
+            q.append((i, pool.submit(blur_frame, fr.copy(), True, True, small_min, bottom_skip)))
             i += 1
             while len(q) >= workers * 2:
                 take()
@@ -313,16 +319,17 @@ def _acquire(lock, cancel):
             raise Cancelled()
 
 
-def analyze(info: ff.Info, mode: str, progress=None, cancel=None, hw=False, workers=None, level=0):
+def analyze(info: ff.Info, mode: str, progress=None, cancel=None, hw=False, workers=None, level=0, bottom_skip=0.0):
     level = max(SMALL_MIN, level) if mode == "blur" else 0
-    z = load(info, mode, level)
+    bottom_skip = bottom_skip if mode == "blur" else 0.0
+    z = load(info, mode, level, bottom_skip)
     if z is not None:
         return z
     with _inflight_guard:
-        lk = _inflight.setdefault((info.path, mode), threading.Lock())
+        lk = _inflight.setdefault((info.path, mode, round(bottom_skip, 3)), threading.Lock())
     _acquire(lk, cancel)               # 다른 곳에서 같은 분석 중이면 끝날 때까지 기다렸다가 캐시 사용
     try:
-        z = load(info, mode, level)
+        z = load(info, mode, level, bottom_skip)
         if z is not None:
             return z
         if mode == "beauty":
@@ -337,12 +344,12 @@ def analyze(info: ff.Info, mode: str, progress=None, cancel=None, hw=False, work
         else:
             _acquire(_BLUR_SEM, cancel)
             try:
-                z = analyze_blur(info, progress, cancel, hw, workers, small_min=level)
+                z = analyze_blur(info, progress, cancel, hw, workers, small_min=level, bottom_skip=bottom_skip)
             finally:
                 _BLUR_SEM.release()
         if mode == "blur":
             z["level"] = np.array(level)
-        f = cache_file(info, mode, level)
+        f = cache_file(info, mode, level, bottom_skip)
         tmp = f.with_name(f"{f.stem}.{os.getpid()}.{threading.get_ident()}.tmp.npz")
         np.savez_compressed(tmp, **z)
         os.replace(tmp, f)

@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QDialog, Q
 
 from . import autodetect as ad
 from . import ff, jobs
-from .ui_widgets import PROG, PROG_TXT, QSS, DragMove, ProgBar, add_shadow, btn, set_on, tone
+from .ui_widgets import PROG, PROG_TXT, QSS, DragMove, ProgBar, Toggle, add_shadow, btn, set_on, tone
 
 # 버튼 색 이름 — 모양은 ui_widgets.QSS(DTME buttons.qss) 한 곳
 RED, ORANGE, GREY = "red", "orange", "light"
@@ -311,6 +311,14 @@ class AutoDialog(DragMove, QDialog):
         self.status.setStyleSheet("color:#7fd18b")
         btmrow.addWidget(self.status)
         btmrow.addStretch(1)
+        # 얼굴블러 하단 1/4 '작은 얼굴' 검색 생략(분석 가속). 기본 켜짐. 큰 얼굴은 하단도 계속 검출.
+        self.t_bskip = Toggle("하단¼ 제외", w=92,
+                              tip="얼굴블러 분석에서 화면 하단 1/4의 '작은 얼굴' 검색을 생략해 분석을 빠르게.\n"
+                                  "전체 화면 1회 검출은 그대로라 하단의 '큰' 얼굴은 계속 잡힘. 켜고 끄면 다음 분석부터 적용.")
+        self.t_bskip.setChecked(self.state.bottom_skip > 0)
+        self.t_bskip.toggled2.connect(lambda v: self.state.set_bottom_skip(0.25 if v else 0.0))
+        btmrow.addWidget(self.t_bskip)
+        btmrow.addSpacing(12)
         # 오른쪽 그룹에 같은 간격으로: [취소][AE][샘플][보정+편집][보정+렌더]. AE 는 취소와 같은 크기(v0.7.18)
         self.b_cancel = _b("취소", w=88, h=32, on=self._cancel)
         btmrow.addWidget(self.b_cancel)
@@ -1004,7 +1012,7 @@ class SampleDialog(DragMove, QDialog):
         ss = state.settings.d.get("sample", {})
         self.opts = {"out_dir": out_dir, "name": name, "size": ss.get("size", 1920),
                      "fmt": ss.get("fmt", "png8"), "num": ss.get("num", True), "date": ss.get("date", False),
-                     "count": 6}
+                     "count": 6, "bottom_skip": state.bottom_skip}
         self.saved = []
         self._build()
 

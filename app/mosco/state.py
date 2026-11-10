@@ -78,6 +78,16 @@ class AppState(QObject):
         self._res = {}
         self.sel = None                # 선택한 타원 key
         self.view_scale = float(self.settings.d.get("view_scale", 0.5))   # 보기 화질 1 / 0.5 / 0.25
+        # 얼굴블러 하단 제외(작은 얼굴 검색 생략으로 분석 가속). 기본 1/4 제외.
+        self.bottom_skip = float(self.settings.d.get("bottom_skip", 0.25))
+        self.settings.render["bottom_skip"] = self.bottom_skip
+
+    def set_bottom_skip(self, frac):
+        """얼굴블러 분석에서 하단 frac(0~0.9) 비율의 '작은 얼굴' 검색을 생략. 0 = 끔(전체)."""
+        self.bottom_skip = max(0.0, min(0.9, float(frac)))
+        self.settings.d["bottom_skip"] = self.bottom_skip
+        self.settings.render["bottom_skip"] = self.bottom_skip
+        self.settings.save()
 
     def set_view_scale(self, v):
         self.view_scale = v
@@ -307,25 +317,26 @@ class AppState(QObject):
             return
         key = (s.path, mode)
         level = analyze.level_for(mode, s.params_for(mode))
+        bskip = self.bottom_skip if mode == "blur" else 0.0
         a = self.an.get(key)
         if a and a["state"] in ("run", "done"):
-            if a.get("level", 0) <= level:
+            # 하한이 충분하고 하단제외 설정도 같으면 그대로 사용. 다르면 취소 후 다시 분석.
+            if a.get("level", 0) <= level and abs(a.get("bskip", 0.0) - bskip) < 1e-6:
                 return
-            # [최소 크기]를 분석 하한보다 낮춤 → 더 작은 얼굴까지 다시 분석
             if a.get("job") is not None:
                 a["job"].cancel.set()
             self.an.pop(key, None)
-        z = analyze.load(info, mode, level)
+        z = analyze.load(info, mode, level, bskip)
         if z is not None:
-            self.an[key] = {"z": z, "p": 1.0, "state": "done", "err": "", "level": _z_level(z, mode)}
+            self.an[key] = {"z": z, "p": 1.0, "state": "done", "err": "", "level": _z_level(z, mode), "bskip": bskip}
             self.analysis_changed.emit(s.path)
             return
-        rec = {"z": None, "p": 0.0, "state": "run", "err": "", "level": level}
+        rec = {"z": None, "p": 0.0, "state": "run", "err": "", "level": level, "bskip": bskip}
         self.an[key] = rec
         hw = bool(self.settings.render.get("hw"))
 
         def fn(prog, cancel):
-            return analyze.analyze(info, mode, prog, cancel, hw, level=level)
+            return analyze.analyze(info, mode, prog, cancel, hw, level=level, bottom_skip=bskip)
         j = jobs.Job(fn, with_progress=True)
         rec["job"] = j
         # 같은 키에 새 분석이 들어왔을 수 있음(하한 변경) → 자기 기록일 때만 반영

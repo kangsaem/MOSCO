@@ -162,17 +162,21 @@ class FaceDetector:
             out.append(Det(box, float(sc[i]), back(pts)))
         return out
 
-    def detect(self, rgb: np.ndarray, min_score=0.5, tiles=False, min_size=0) -> list[Det]:
+    def detect(self, rgb: np.ndarray, min_score=0.5, tiles=False, min_size=0, tile_top=1.0) -> list[Det]:
         """tiles=True: 화면 전체 + 겹치는 타일 여러 단계(작은 얼굴용).
-        타일 한 변 = 화면 높이, 1/2, 1/3.4 … 최소 얼굴 크기(min_size)에 맞춰 단계 선택."""
+        타일 한 변 = 화면 높이, 1/2, 1/3.4 … 최소 얼굴 크기(min_size)에 맞춰 단계 선택.
+        tile_top<1.0: 타일(작은 얼굴 검색)을 화면 상단 그 비율까지만 — 하단 제외로 속도↑.
+        전체 화면 1회 통과는 그대로라 하단의 '큰' 얼굴은 계속 잡힘."""
         h, w = rgb.shape[:2]
-        dets = self._run(rgb, min_score)
+        dets = self._run(rgb, min_score)             # 전체 화면 1회(하단 포함, 큰 얼굴 보존)
         if tiles:
+            hlim = int(round(h * max(0.1, min(1.0, tile_top))))   # 타일은 상단 hlim 까지만
             for side in (h, h / 2 * 1.2, h / 3.4 * 1.2):
                 side = int(min(side, w, h))
+                yend = max(0, hlim - side)
                 nx = max(1, int(np.ceil((w - side) / (side * 0.7))) + 1)
-                ny = max(1, int(np.ceil((h - side) / (side * 0.7))) + 1)
-                for y in np.linspace(0, h - side, ny).astype(int):
+                ny = max(1, int(np.ceil(yend / (side * 0.7))) + 1)
+                for y in np.linspace(0, yend, ny).astype(int):
                     for x in np.linspace(0, w - side, nx).astype(int):
                         for d in self._run(rgb[y:y + side, x:x + side], min_score):
                             d.box = d.box + np.array([x, y, x, y], np.float32)
