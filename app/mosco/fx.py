@@ -193,7 +193,7 @@ def nostril_mask(yimg, pts, x0, y0, face_w):
     (v0.7.43: feature_mask 의 고정 원을 대체)"""
     h, w = yimg.shape
     m = np.zeros((h, w), np.float32)
-    R = max(4, int(face_w * 0.08))
+    R = max(5, int(face_w * 0.11))               # v0.7.44 창 확대(콧구멍 그림자 더 넓게)
     for a, b in ((98, 97), (327, 326)):          # (오른 콧방울·콧구멍하단), (왼 …) — MediaPipe 468
         cx = int(round((pts[a, 0] + pts[b, 0]) / 2 - x0))
         cy = int(round((pts[a, 1] + pts[b, 1]) / 2 - y0))
@@ -207,7 +207,7 @@ def nostril_mask(yimg, pts, x0, y0, face_w):
         skin_l = float(np.median(patch[patch >= np.percentile(patch, 60)]))   # 창 안 피부(밝은 쪽) 기준
         if skin_l <= 1e-3:
             continue
-        lo, hi = skin_l * 0.55, skin_l * 0.85     # 피부 대비 55~85% 사이를 부드럽게 제외
+        lo, hi = skin_l * 0.60, skin_l * 0.92     # v0.7.44 피부 대비 60~92% 를 제외(어두운 영역 더 많이 반영)
         dark = np.clip((hi - patch) / max(1e-4, hi - lo), 0.0, 1.0)
         yy, xx = np.ogrid[ya:yb, xa:xb]           # 창 가장자리 원형 페더(사각형 티 제거)
         rad = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
