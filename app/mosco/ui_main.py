@@ -283,7 +283,7 @@ class MainWindow(QMainWindow):
             a = QAction(text, self)
             a.setShortcut(key)
             a.setShortcutContext(Qt.ApplicationShortcut)
-            a.setToolTip(QKeySequence(key).toString())
+            a.setToolTip(QKeySequence(key).toString() + (" · 다시 실행 Ctrl+Shift+Z" if fn == self.undo else ""))
             a.triggered.connect(fn)
             tb.addAction(a)
 
@@ -399,6 +399,7 @@ class MainWindow(QMainWindow):
         self.sources = SourceList(self.state)
         self.sources.add_dialog = self.add_dialog
         self.sources.queue_requested.connect(self.queue_to_render)   # 소스 우클릭 → 대기목록
+        self.sources.relink_requested.connect(self.relink_missing)   # 소스 우클릭 → 원본 다시 연결
         rv.addWidget(self.sources, 1)
         line = QWidget()
         line.setFixedHeight(1)
@@ -488,6 +489,8 @@ class MainWindow(QMainWindow):
         sc(Qt.Key_A, lambda: self.panel.b_add.toggle())
         sc(Qt.Key_X, self._toggle_minus)
         sc(Qt.Key_Escape, self._esc)
+        sc(QKeySequence(Qt.CTRL | Qt.SHIFT | Qt.Key_Z), self.redo)
+        sc(QKeySequence(Qt.CTRL | Qt.Key_Y), self.redo)
 
     # ------------------------------------------------------------ 타원 편집
     def _n(self):
@@ -1250,6 +1253,113 @@ class MainWindow(QMainWindow):
         if not self.state.undo():
             self.flash("더 이상 취소할 작업이 없습니다")
 
+    def redo(self):
+        if not self.state.redo():
+            self.flash("다시 실행할 작업이 없습니다")
+
+    # ------------------------------------------------------------ 원본 다시 연결(v0.7.56)
+    def _missing(self):
+        return [s for s in self.state.project.sources if not Path(s.path).exists()]
+
+    def relink_missing(self, folder=None):
+        """없는 원본을 폴더(하위 포함)에서 같은 파일 이름으로 찾아 한꺼번에 연결. 편집값·설정은 유지."""
+        miss = self._missing()
+        if not miss:
+            self.flash("없는 원본이 없습니다")
+            return 0
+        if folder is None:
+            folder = QFileDialog.getExistingDirectory(self, f"원본이 있는 폴더 (없는 원본 {len(miss)}개)",
+                                                      self.state.settings.d.get("last_folder", ""))
+        if not folder:
+            return 0
+        import os
+        want = {Path(s.path).name.lower(): s.path for s in miss}
+        found = {}
+        for root, _dirs, files in os.walk(folder):
+            for fn in files:
+                old = want.get(fn.lower())
+                if old is not None and old not in found:
+                    found[old] = str(Path(root) / fn)
+            if len(found) == len(want):
+                break
+        n = self.state.relink(found)
+        left = len(miss) - n
+        self._title()
+        self.flash(f"원본 연결 {n}개" + (f" · 못 찾음 {left}개" if left else "") + " — 분석은 다시 필요합니다" if n
+                   else "이 폴더에서 같은 이름의 파일을 찾지 못했습니다")
+        return n
+
+    def _warn_missing(self):
+        miss = self._missing()
+        if not miss or QApplication.platformName() == "offscreen":
+            return
+        from .ui_widgets import info_popup
+        names = "\n".join(s.name for s in miss[:12]) + (f"\n… 외 {len(miss) - 12}개" if len(miss) > 12 else "")
+        r = info_popup(self, "원본 없음", f"원본 파일을 찾을 수 없습니다 ({len(miss)}개):\n{names}\n\n"
+                       "원본이 있는 폴더를 지정하면 같은 이름의 파일로 다시 연결합니다.",
+                       [("닫기", "no", False, 72), ("폴더 지정", "pick", True, 96)])
+        if r == "pick":
+            self.relink_missing()
+
+    # ------------------------------------------------------------ 자동 저장·복구(v0.7.56)
+    @staticmethod
+    def _autosave_file():
+        return paths.cache_dir() / "autosave.mosco.json"
+
+    def _clear_autosave(self):
+        try:
+            self._autosave_file().unlink(missing_ok=True)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def autosave_pending(self):
+        """지난번에 저장 못 하고 끝난(튕긴) 작업이 있으면 {time, n, file}. 정상 종료·저장 때는 파일을 지우므로 없음."""
+        f = self._autosave_file()
+        try:
+            if not f.exists():
+                return None
+            d = json.loads(f.read_text(encoding="utf-8"))
+            n = len(d.get("sources", []))
+            if n == 0:
+                return None
+            meta = d.get("autosave", {})
+            return {"time": meta.get("time") or time.strftime("%Y-%m-%d %H:%M", time.localtime(f.stat().st_mtime)),
+                    "n": n, "file": meta.get("file", "")}
+        except Exception:  # noqa: BLE001
+            return None
+
+    def restore_autosave(self) -> bool:
+        meta = self.autosave_pending()
+        if meta is None:
+            return False
+        try:
+            p = Project.load(self._autosave_file())
+        except Exception:  # noqa: BLE001
+            return False
+        p.file = meta["file"] or ""            # 원래 프로젝트 파일(있었다면) — [저장하기]가 거기에 저장
+        self.state.set_project(p)
+        self.state.dirty = True                # 아직 저장 안 된 작업
+        self._title()
+        self.flash("자동 저장된 작업을 복구했습니다 — [저장하기]로 저장하세요")
+        return True
+
+    def check_autosave(self, parent=None) -> bool:
+        """시작할 때 한 번: 복구할지 묻는다. 복구하면 True. 버리면 자동 저장 파일 삭제."""
+        meta = self.autosave_pending()
+        if meta is None:
+            return False
+        from .ui_widgets import info_popup
+        name = f"\n프로젝트: {Path(meta['file']).name}" if meta["file"] else ""
+        r = info_popup(parent or self, "저장 안 된 작업",
+                       f"지난번에 저장하지 못하고 끝난 작업이 있습니다.\n자동 저장: {meta['time']} · 소스 {meta['n']}개{name}",
+                       [("버리기", "drop", False, 80), ("복구", "restore", True, 88)])
+        if r == "restore" and self.restore_autosave():
+            self._warn_missing()
+            return True
+        if r == "drop":
+            self._clear_autosave()
+        return False
+
     def _confirm_discard(self) -> bool:
         if not self.state.dirty:
             return True
@@ -1261,6 +1371,7 @@ class MainWindow(QMainWindow):
     def new_project(self):
         if self._confirm_discard():
             self.state.set_project(Project())
+            self._clear_autosave()
             self._title()
 
     def open_project(self):
@@ -1276,11 +1387,10 @@ class MainWindow(QMainWindow):
         except Exception as e:  # noqa: BLE001
             QMessageBox.warning(self, "불러오기 실패", str(e))
             return
-        missing = [s.name for s in p.sources if not Path(s.path).exists()]
         self.state.set_project(p)
+        self._clear_autosave()
         self._title()
-        if missing:
-            QMessageBox.warning(self, "원본 없음", "원본 파일을 찾을 수 없습니다:\n" + "\n".join(missing))
+        self._warn_missing()                    # 없는 원본 → [폴더 지정]으로 다시 연결
 
     def save_project(self, save_as=False) -> bool:
         p = self.state.project
@@ -1292,15 +1402,21 @@ class MainWindow(QMainWindow):
                 return False
         p.save(f)
         self.state.dirty = False
+        self._clear_autosave()
         self._title()
         self.flash(f"저장됨: {f}")
         return True
 
     def _do_autosave(self):
+        """1분마다(바뀐 게 있을 때만). 저장·정상 종료 때 지우므로, 파일이 남아 있으면 = 튕김 → 다음 실행 때 복구를 물음."""
         if self.state.dirty and self.state.project.sources:
             try:
-                (paths.cache_dir() / "autosave.mosco.json").write_text(
-                    json.dumps(self.state.project.to_dict(), ensure_ascii=False, indent=1), encoding="utf-8")
+                d = self.state.project.to_dict()
+                d["autosave"] = {"time": time.strftime("%Y-%m-%d %H:%M"), "file": self.state.project.file or ""}
+                f = self._autosave_file()
+                tmp = f.with_name(f.name + ".tmp")
+                tmp.write_text(json.dumps(d, ensure_ascii=False, indent=1), encoding="utf-8")
+                tmp.replace(f)                  # 쓰는 도중 튕겨도 이전 자동 저장이 깨지지 않게
             except Exception:  # noqa: BLE001
                 pass
 
@@ -1311,6 +1427,7 @@ class MainWindow(QMainWindow):
             for it in self.rpanel.items:
                 if it.job is not None:
                     it.job.cancel.set()
+            self._clear_autosave()   # 정상 종료(저장했거나 버리기로 함) → 복구할 것 없음
             decoder.close_all()  # 상주 디코더 닫기
             ff.kill_all()        # 남은 ffmpeg 프로세스 강제 종료(종료 후 버벅임 방지)
             e.accept()

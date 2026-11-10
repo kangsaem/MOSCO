@@ -43,6 +43,13 @@ def main():
         start = StartWindow(w)
         start.center()
         start.show()
+        if not os.environ.get("MOSCO_SELFTEST"):
+            from PySide6.QtCore import QTimer
+
+            def _recover():                    # 지난번에 튕겨 저장 못 한 작업 → 복구하면 바로 편집 화면
+                if w.check_autosave(start):
+                    start.edit()
+            QTimer.singleShot(200, _recover)
     if os.environ.get("MOSCO_SELFTEST"):       # 빌드 점검: 모델 로드 + 창 띄우고 2초 뒤 종료
         from PySide6.QtCore import QTimer
         from mosco import models

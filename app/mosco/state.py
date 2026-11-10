@@ -70,6 +70,7 @@ class AppState(QObject):
         self.cur = -1
         self.dirty = False
         self.undo_stack = []
+        self.redo_stack = []           # 다시 실행(Ctrl+Shift+Z). 새 편집을 하면 비움
         self.infos: dict[str, ff.Info] = {}
         self.errors: dict[str, str] = {}
         self.an: dict = {}             # (path, mode) -> {"z", "p", "state", "err", "job"}
@@ -146,6 +147,7 @@ class AppState(QObject):
         self.project = p
         self.cur = 0 if p.sources else -1
         self.undo_stack.clear()
+        self.redo_stack.clear()
         self.dirty = False
         for s in p.sources:
             self._probe(s.path)
@@ -267,11 +269,42 @@ class AppState(QObject):
         self.undo_stack.append((self.project.snapshot(), self.cur))
         if len(self.undo_stack) > UNDO_MAX:
             self.undo_stack.pop(0)
+        self.redo_stack.clear()                 # 새 편집 → 다시 실행 기록은 버림
 
     def undo(self) -> bool:
         if not self.undo_stack:
             return False
-        snap, cur = self.undo_stack.pop()
+        self.redo_stack.append((self.project.snapshot(), self.cur))
+        return self._apply_snap(*self.undo_stack.pop())
+
+    def redo(self) -> bool:
+        """다시 실행(v0.7.56): 실행취소로 되돌린 것을 다시 적용."""
+        if not self.redo_stack:
+            return False
+        self.undo_stack.append((self.project.snapshot(), self.cur))
+        return self._apply_snap(*self.redo_stack.pop())
+
+    def relink(self, mapping: dict) -> int:
+        """원본 다시 연결(v0.7.56): {옛 경로: 새 경로}. 편집값·설정은 그대로, 경로만 바꿈. 반환 = 바뀐 소스 수."""
+        todo = [s for s in self.project.sources if s.path in mapping and mapping[s.path] != s.path]
+        if not todo:
+            return 0
+        self.push_undo()
+        for s in todo:
+            old = s.path
+            s.path = mapping[old]
+            self.infos.pop(old, None)
+            self.errors.pop(old, None)
+            for k in [k for k in self.an if k[0] == old]:
+                self.an.pop(k)
+            self._probe(s.path)
+        decoder.keep_only([s.path for s in self.project.sources])
+        self.dirty = True
+        self.changed.emit()
+        self.current_changed.emit()
+        return len(todo)
+
+    def _apply_snap(self, snap, cur) -> bool:
         before = ([s.path for s in self.project.sources], self.cur)
         self.project.restore(snap)
         self.cur = min(cur, len(self.project.sources) - 1)

@@ -66,6 +66,54 @@ def sign_ui(app, w, st, vids, out):
     print("sign ui OK (AE 보내기", jsx.stat().st_size, "bytes)")
 
 
+def extras(app, w, st, vids, out):
+    """v0.7.56 다시 실행 · 원본 다시 연결 · 자동 저장 복구."""
+    import shutil
+    st.select(0)
+    s0 = st.source()
+    key = "strength"
+    v0 = s0.params()[key]
+    st.set_param(key, 11, undo=True)
+    assert st.undo() and st.source().params()[key] == v0
+    assert st.redo() and st.source().params()[key] == 11, "다시 실행 안 됨"
+    assert st.undo() and not st.redo_stack == [] and st.source().params()[key] == v0
+    st.set_param(key, 22, undo=True)
+    assert not st.redo(), "새 편집 뒤에는 다시 실행 기록이 없어야 함"
+    st.undo()
+    # 원본 다시 연결: 원본을 다른 폴더로 옮긴 프로젝트 → 폴더 지정 → 같은 이름으로 연결, 편집값 유지
+    a_dir, b_dir = out / "relink_a", out / "relink_b" / "sub"
+    a_dir.mkdir(exist_ok=True)
+    b_dir.mkdir(parents=True, exist_ok=True)
+    moved = a_dir / "moved_clip.mov"
+    shutil.copy(vids[0], moved)
+    n0 = len(st.project.sources)
+    st.add_files([str(moved)])
+    pump(app, 5, lambda: st.info(str(moved)) is not None)
+    st.select(n0)
+    st.set_param(key, 33, undo=True)
+    shutil.move(str(moved), str(b_dir / "MOVED_clip.mov"))
+    assert [x.path for x in w._missing()] == [str(moved)]
+    assert w.relink_missing(str(out / "relink_b")) == 1
+    src = st.project.sources[n0]
+    assert Path(src.path).exists() and src.params()[key] == 33 and not w._missing(), "다시 연결 실패"
+    assert pump(app, 10, lambda: st.info(src.path) is not None), "다시 연결한 원본 정보 없음"
+    # 자동 저장 → (튕김) → 복구
+    w._clear_autosave()
+    assert w.autosave_pending() is None
+    st.dirty = True
+    w._do_autosave()
+    meta = w.autosave_pending()
+    assert meta and meta["n"] == len(st.project.sources), meta
+    paths_before = [x.path for x in st.project.sources]
+    from mosco.project import Project
+    st.set_project(Project())                      # 새로 켠 상태 흉내
+    assert w.restore_autosave() and [x.path for x in st.project.sources] == paths_before and st.dirty
+    assert st.project.sources[n0].params()[key] == 33
+    w._clear_autosave()
+    assert w.autosave_pending() is None
+    print("redo · relink · autosave OK")
+
+
 def main():
     vids = [a for a in sys.argv[1:] if Path(a).suffix.lower() in (".mov", ".mp4")]
     out = Path(next((a for a in sys.argv[1:] if not a.lower().endswith((".mov", ".mp4"))), "ui_shots"))
@@ -212,6 +260,7 @@ def main():
         pump(app, 0.3)
         w.grab().save(str(out / "7_blur_split.png"))
     sign_ui(app, w, st, vids, out)
+    extras(app, w, st, vids, out)
     print("UI OK", out)
     w.state.dirty = False
     w.close()

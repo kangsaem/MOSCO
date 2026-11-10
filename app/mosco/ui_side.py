@@ -100,6 +100,7 @@ class SourceDelegate(QStyledItemDelegate):
 class SourceList(QListWidget):
     files_dropped = Signal(list)
     queue_requested = Signal()      # v0.7.32 우클릭 → 선택 소스를 렌더 대기목록으로
+    relink_requested = Signal()     # v0.7.56 우클릭 → 없는 원본을 폴더에서 다시 연결
 
     def __init__(self, state):
         super().__init__()
@@ -161,6 +162,9 @@ class SourceList(QListWidget):
         m = QMenu(self)
         if self.selectedItems() or self.currentRow() >= 0:
             m.addAction("렌더 대기목록으로 보내기", self.queue_requested.emit)
+            m.addSeparator()
+        if any(not Path(s.path).exists() for s in self.state.project.sources):
+            m.addAction("원본 다시 연결… (없는 원본)", self.relink_requested.emit)
             m.addSeparator()
         m.addAction("불러오기", self.parent().add_dialog if hasattr(self.parent(), "add_dialog") else lambda: None)
         m.exec(self.mapToGlobal(pos))
