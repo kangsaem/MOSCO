@@ -98,9 +98,21 @@ def main():
     w.show_result()
     pump(app, 0.5)
     w.grab().save(str(out / "2_beauty_split.png"))
+    # v0.7.54 키는 볼 때만 계산 · [분석] 버튼은 스크롤 밖(항상 보임) · 피부색 찍기 동작
+    assert "final" not in w.result, "키 보기가 꺼져 있는데 키를 계산함"
+    assert not w.panel.b_analyze.visibleRegion().isEmpty(), "[분석] 버튼이 안 보임"
     w.panel.set_key("final")
-    pump(app, 0.5)
+    assert pump(app, 10, lambda: w.result is not None and "final" in w.result), "키를 켰는데 계산 안 됨"
     w.grab().save(str(out / "3_beauty_split_key.png"))
+    w.on_pick(300, 300)
+    assert st.source().beauty.get("skin_ref"), "피부색 찍기 안 됨"
+    st.set_param("skin_ref", None)
+    pump(app, 0.5)
+    from mosco.ui_side import RenderItem, eta_text
+    import time as _t
+    _it = RenderItem(st.source(), {}, str(out))
+    _it.p, _it.t0 = 0.25, _t.perf_counter() - 60
+    assert "분" in eta_text(_it), eta_text(_it)
     w.panel.set_key("skin")
     pump(app, 0.3)
     w.mon.grab().save(str(out / "4_skin_key.png"))

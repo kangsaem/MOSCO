@@ -196,12 +196,6 @@ class Resolver:
                 return np.array(ell[:4], np.float32)
         return None
 
-    def _auto_tid(self, tid, i):
-        for t, ell, _, _ in self.auto_at(i):
-            if t == tid:
-                return ell
-        return None
-
     def _offset(self, ks, offs, i):
         good = [(k, o) for k, o in zip(ks, offs) if o is not None]
         if not good:

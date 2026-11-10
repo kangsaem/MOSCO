@@ -211,7 +211,37 @@ def main():
     img = cv2.GaussianBlur(rng.random((600, 640, 3)).astype(np.float32), (0, 0), 3)
     d = float(np.abs(fx.low_pass(img, 14) - cv2.GaussianBlur(img, (0, 0), 14)).max())
     assert d < 0.008, f"저주파 축소 계산 차이 큼 {d}"      # 잡음 영상 기준(실제 얼굴 결과 차이는 8bit 1단계 미만)
-    print(f"fast blur OK  alpha {worst:.4f} low {d:.4f}")
+    # v0.7.54 큰 블러 축소 계산(fx._gauss): 그냥 가우시안과 1% 이내 · 작은 시그마는 그대로
+    big = cv2.GaussianBlur(rng.random((700, 560, 3)).astype(np.float32), (0, 0), 3)
+    big[200:500, 150:400] += 0.15
+    dg = max(float(np.abs(fx._gauss(big, sg) - cv2.GaussianBlur(big, (0, 0), sg)).max()) for sg in (9, 25, 50))
+    assert dg < 0.01, f"큰 블러 축소 계산 차이 큼 {dg}"
+    assert np.array_equal(fx._gauss(big, 5), cv2.GaussianBlur(big, (0, 0), 5))
+    # v0.7.54 프레임 캐시: 용량 상한 · 안 보는 소스는 조금만
+    from mosco import decoder as dec
+    info = ff.probe(str(syn))
+    fs = dec.source(str(syn))
+    if fs is not None:
+        old = dec.CACHE_BYTES
+        dec.CACHE_BYTES = info.w * info.h * 6 * 10            # 10장 분량
+        for k in range(20):
+            fs.frame(k)
+        assert len(fs.cache) <= 10, len(fs.cache)
+        dec.CACHE_BYTES = old
+        dec.focus("다른 소스")
+        assert len(fs.cache) <= dec.IDLE_FRAMES
+    # v0.7.54 인코더가 먼저 죽으면 멈추지 않고 이유를 알림
+    wbad = ff.Writer(str(work / "없는폴더" / "x.mov"), info, audio=False)
+    try:
+        for _ in range(200):
+            wbad.write(np.zeros((info.h, info.w, 3), np.uint16))
+        wbad.close()
+        raise AssertionError("없는 폴더인데 오류가 안 남")
+    except RuntimeError as e:
+        assert str(e), "오류 내용 없음"
+    finally:
+        wbad.kill()
+    print(f"fast blur OK  alpha {worst:.4f} low {d:.4f} gauss {dg:.4f} · cache · writer error")
     # v0.7.4 분석 하한(블러): 하한별 캐시 · 낮은 하한 캐시는 높은 요구에도 씀 · 같은 분석 동시 요청 = 한 번만
     import threading
     info = ff.probe(str(syn))

@@ -51,7 +51,6 @@ def confirm_save(parent, text="변경 내용을 저장할까요?") -> str:
 
 PROJ_FILTER = "MOSCO 프로젝트 (*.mosco.json *.json)"
 VID_FILTER = "영상 (" + " ".join("*" + e for e in sorted(VIDEO_EXT)) + ")"
-PLAY_SIZE = (960, 540)
 
 
 def find_videos(folder):
@@ -139,24 +138,25 @@ def item_entries(items, p, mode=None):
                    p, mode)
 
 
-def compute_preview(src, frame16, plan, has_track, i, scale=1.0):
-    """한 프레임: 원본·보정·키 3종·타원. plan = [(resolver, mode), ...] — 동시 블러는 종류별로 이어서 블러."""
+def compute_preview(src, frame16, plan, i, scale=1.0, keys=True):
+    """한 프레임: 원본·보정·타원 (+ keys 면 키 3종). plan = [(resolver, mode), ...] — 동시 블러는 종류별로 이어서 블러.
+    keys=False(키 보기 꺼짐)면 뷰티 키(피부·타원·최종)를 계산하지 않음 → 슬라이더 반응이 빨라짐."""
     H, W = frame16.shape[:2]
     out = {"orig": to8(frame16)}
-    _ = has_track
     if src.mode == "beauty":
         p = src.beauty
         items = _scale_items(plan[0][0].items(i), scale)
-        r = fx.beauty(frame16, items, p, i, want_keys=True)
+        r = fx.beauty(frame16, items, p, i, want_keys=keys)
         out["fx"] = to8(r.out)
         out["ells"] = entries(r.ells)
         focus = next((e for it, e in r.ells if not it.manual), r.ells[0][1] if r.ells else None)
         out["focus"] = focus
-        out["final"] = gray8(r.region)
-        out["alpha"] = gray8(r.alpha)
-        pts = next((it.pts for it in items if it.pts is not None), None)
-        fw = float(np.ptp(pts[:, 0])) if pts is not None else 300.0
-        out["skin"] = gray8(fx.skin_key_full(frame16, p, r.ref, fw))
+        if keys:
+            out["final"] = gray8(r.region)
+            out["alpha"] = gray8(r.alpha)
+            pts = next((it.pts for it in items if it.pts is not None), None)
+            fw = float(np.ptp(pts[:, 0])) if pts is not None else 300.0
+            out["skin"] = gray8(fx.skin_key_full(frame16, p, r.ref, fw))
         out["faces"] = len(items)
     else:
         o, a_all, all_entries, nfac = frame16, None, [], 0
@@ -264,7 +264,7 @@ class MainWindow(QMainWindow):
         self.f = 0
         self.gen = 0
         self.player = None
-        self.frame_cache = None        # (path, i, frame16)
+        self.frame_cache = None        # (path, i, scale, frame16)
         self.result = None             # compute_preview 결과
         self.pos = {}                  # 소스별 마지막 위치
 
@@ -808,7 +808,6 @@ class MainWindow(QMainWindow):
 
     def _quick(self, i):
         """즉시: 작은 원본 프레임 + 타원(트랙이 있으면)."""
-        s = self.state.source()
         info = self._info()
         self.gen += 1
         g = self.gen
@@ -816,14 +815,15 @@ class MainWindow(QMainWindow):
         sz = self._vsize(info)
 
         def fn():
+            if g != self.gen:               # 차례가 왔을 때 이미 다른 프레임으로 넘어감 → 디코딩하지 않고 버림
+                return None
             return decoder.grab(info, i, 8, sz)
         j = jobs.Job(fn)
         j.signals.done.connect(lambda a: self._quick_done(g, path, i, a))
         jobs.submit(jobs.PREVIEW_POOL, j, 5)
-        _ = s
 
     def _quick_done(self, g, path, i, a):
-        if g != self.gen or self.result is not None and self.result.get("i") == i:
+        if a is None or g != self.gen or self.result is not None and self.result.get("i") == i:
             return
         info = self._info()
         if not info or info.path != path:
@@ -856,14 +856,16 @@ class MainWindow(QMainWindow):
         src = copy.deepcopy(s)
         # 동시 블러: 종류별 (리졸버, mode) 목록. 미리보기가 종류별로 이어서 블러.
         plan = [(edits.Resolver(src, self.state.track(s, m), m), m) for _r, m in self.state.blur_resolvers(s)]
-        has_tr = any(r.track is not None for r, _ in plan)
+        keys = self.panel.key_mode != "off"
         sc = self._vscale()
         sz = self._vsize(info)
         fc = self.frame_cache if (self.frame_cache and self.frame_cache[:3] == (info.path, i, sc)) else None
 
         def fn():
+            if g != self.gen:               # 밀린 요청 — 계산하지 않고 버림
+                return None
             fr = fc[3] if fc else decoder.grab(info, i, 16, sz)
-            res = compute_preview(src, fr, plan, has_tr, i, sc)
+            res = compute_preview(src, fr, plan, i, sc, keys)
             res["frame16"] = fr
             res["i"] = i
             return res
@@ -874,7 +876,7 @@ class MainWindow(QMainWindow):
 
     def _full_done(self, g, path, r):
         info = self._info()
-        if g != self.gen or not info or info.path != path:
+        if r is None or g != self.gen or not info or info.path != path:
             return
         self.frame_cache = (path, r["i"], self._vscale(), r.pop("frame16"))
         self.result = r
@@ -891,7 +893,9 @@ class MainWindow(QMainWindow):
             return
         v = self.panel.view_mode()
         k = self.panel.key_mode
-        main = r["fx"] if k == "off" else r.get(k, r["final"])
+        if k != "off" and "final" not in r:      # 키를 방금 켬 — 이 프레임의 키를 계산(그동안은 보정 화면)
+            self._param_t.start()
+        main = r["fx"] if k == "off" else r.get(k, r.get("final", r["fx"]))
         if v == "orig":
             imgs = [r["orig"]]
         elif v == "split":
@@ -919,6 +923,7 @@ class MainWindow(QMainWindow):
         self.result = None
         self.gen += 1
         self.mon.set_default("fit")
+        self._play_fx_off, self._play_slow = False, 0
         self.mon.playing = True                # 재생 중 부드러운 확대 끔(빠르게)
         self.player = Player(info, self.f, self._play_frame, self._play_end, self._play_size(info))  # 저해상도=즉시 재생
         self.b_play.setProperty("on", True)
@@ -933,8 +938,39 @@ class MainWindow(QMainWindow):
         self.lanes.set_cur(i)
         self.ruler.set_cur(i)
         self.tc.setText(ff.frames_to_tc(ff.tc_to_frames(info.timecode, info.fps) + i, info.fps))
-        self.mon.set_images([fr], self._vsize(info))
+        self.mon.set_images([self._play_fx(info, i, fr)], self._vsize(info))
         self._overlay_from_track(i)
+
+    def _play_fx(self, info, i, fr):
+        """재생 중 블러 미리보기(v0.7.54): 분석된 블러·간판 소스는 재생 화면(작은 크기)에 블러를 입혀 보여 줌.
+        '원본' 보기·뷰티·분석 전에는 원본 그대로. 한 프레임이 오래 걸리면(느린 PC) 그 재생 동안은 꺼서 끊김 방지."""
+        s = self.state.source()
+        if (s is None or s.mode == "beauty" or self.panel.view_mode() == "orig"
+                or getattr(self, "_play_fx_off", False)):
+            return fr
+        try:
+            t0 = time.perf_counter()
+            k = fr.shape[1] / float(info.w)
+            out = None
+            for res, mode in self.state.blur_resolvers(s):
+                if res.track is None:
+                    continue
+                items = res.items(i)
+                if not items:
+                    continue
+                if out is None:
+                    out = fr.astype(np.uint16) << 8
+                out, _, _ = fx.blur(out, _scale_items(items, k), s.params_for(mode), False)
+            if out is None:
+                return fr
+            if time.perf_counter() - t0 > 0.6 / max(1.0, info.fps_f):
+                self._play_slow = getattr(self, "_play_slow", 0) + 1
+                if self._play_slow >= 5:
+                    self._play_fx_off = True
+            return np.ascontiguousarray((out >> 8).astype(np.uint8))
+        except Exception:  # noqa: BLE001
+            self._play_fx_off = True
+            return fr
 
     def _play_end(self):
         self.player = None
@@ -957,7 +993,7 @@ class MainWindow(QMainWindow):
     def on_pick(self, x, y):
         if not self.frame_cache:
             return
-        ref = fx.pick_skin(self.frame_cache[2], x, y)
+        ref = fx.pick_skin(self.frame_cache[3], x, y)      # (path, i, scale, frame16)
         self.state.set_param("skin_ref", ref, undo=True)
         self.panel.stop_pick()
         self.flash(f"피부색: Cb {ref[0]:+.3f} · Cr {ref[1]:+.3f}")
@@ -1106,7 +1142,6 @@ class MainWindow(QMainWindow):
         j.signals.error.connect(lambda e: self.flash(f"AE 보내기 오류: {e}"))
         jobs.submit(jobs.ANALYZE_POOL, j, 5)
         return j
-        return j
 
     # ------------------------------------------------------------ AUTO
     def open_auto(self):
@@ -1159,7 +1194,11 @@ class MainWindow(QMainWindow):
 
         self._render_batch = True            # 완료 팝업용: 렌더가 한 번이라도 시작됨
 
+        it.t0 = None
+
         def started(v):
+            if it.t0 is None:
+                it.t0 = time.perf_counter()
             it.state = "진행"
             it.p = v
             self.rpanel.refresh()             # 진행은 렌더목록 바에만(소스목록 아님)

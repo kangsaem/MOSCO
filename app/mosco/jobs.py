@@ -62,16 +62,6 @@ def submit(pool: QThreadPool, job: Job, priority: int = 0) -> Job:
     return job
 
 
-def bump(pool: QThreadPool, job: Job, priority: int = 10) -> bool:
-    """아직 시작 안 한 작업을 맨 앞으로."""
-    if job.started:
-        return False
-    if pool.tryTake(job):
-        pool.start(job, priority)
-        return True
-    return False
-
-
 def make_pool(n: int) -> QThreadPool:
     p = QThreadPool()
     p.setMaxThreadCount(n)
@@ -107,6 +97,3 @@ def set_disk_mode(hdd: bool):
     PREVIEW_POOL.setMaxThreadCount(cfg["preview"])
     DETECT_POOL.setMaxThreadCount(cfg["detect"])
 
-
-def disk_hdd() -> bool:
-    return _disk_hdd

@@ -5,6 +5,7 @@ import atexit
 import json
 import os
 import subprocess
+import tempfile
 import threading
 import weakref
 from dataclasses import dataclass, field
@@ -18,21 +19,6 @@ from . import paths
 # → 다른 작업 중에도 MOSCO 진행이 멈추지 않게(예전 '보통 이하'는 양보가 과해 진행이 안 됐음)
 NOWIN = 0x08000000 if os.name == "nt" else 0
 
-
-def low_priority():
-    """이 프로세스(MOSCO 자신)를 '보통 이하'로. 윈도우만, 실패해도 무시."""
-    if os.name != "nt":
-        return False
-    try:
-        import ctypes
-        from ctypes import wintypes
-        k = ctypes.windll.kernel32
-        k.GetCurrentProcess.restype = wintypes.HANDLE        # 64비트 의사 핸들(-1) 이 잘리지 않게
-        k.SetPriorityClass.argtypes = [wintypes.HANDLE, wintypes.DWORD]
-        k.SetPriorityClass.restype = wintypes.BOOL
-        return bool(k.SetPriorityClass(k.GetCurrentProcess(), 0x00004000))
-    except Exception:  # noqa: BLE001
-        return False
 
 # 살아있는 ffmpeg 자식 프로세스 등록부 → 프로그램 종료 시 모두 강제 종료
 # (안 하면 분석·재생용 ffmpeg 가 창을 닫아도 남아서 CPU/GPU 를 계속 씀)
@@ -207,6 +193,15 @@ def probe(path: str) -> Info:
                 v.get("field_order", "progressive") or "progressive")
 
 
+def _read_err(f) -> str:
+    """stderr 임시파일 내용(끝 4000자)."""
+    try:
+        f.seek(0)
+        return f.read().decode("utf-8", "replace").strip()[-4000:]
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def _ss(frame: int, fps: Fraction) -> str:
     """n번 프레임 정확 탐색: (n-0.5)/fps (DTME 실측)."""
     return f"{max(0.0, (frame - 0.5) / float(fps)):.6f}"
@@ -235,7 +230,8 @@ class Reader:
             args += ["-frames:v", str(count)]
         args += ["-f", "rawvideo", "-pix_fmt", fmt, "-"]
         self.nbytes = self.w * self.h * 3 * (2 if depth == 16 else 1)
-        self.p = _track(subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=NOWIN,
+        self._err = tempfile.TemporaryFile()      # stderr 는 파일로(파이프가 가득 차 ffmpeg 가 멈추는 일 방지)
+        self.p = _track(subprocess.Popen(args, stdout=subprocess.PIPE, stderr=self._err, creationflags=NOWIN,
                                          bufsize=self.nbytes * 2))
 
     def read(self):
@@ -253,15 +249,20 @@ class Reader:
 
     def error(self) -> str:
         try:
-            return self.p.stderr.read().decode("utf-8", "replace").strip()
+            self.p.wait(3)
         except Exception:  # noqa: BLE001
-            return ""
+            pass
+        return _read_err(self._err)
 
     def close(self):
         try:
             self.p.stdout.close()
             self.p.kill()
             self.p.wait(3)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            self._err.close()
         except Exception:  # noqa: BLE001
             pass
 
@@ -321,32 +322,50 @@ class Writer:
             args += ["-timecode", info.timecode]
         args += [out]
         self.out = out
-        self.p = _track(subprocess.Popen(args, stdin=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=NOWIN))
+        self._err = tempfile.TemporaryFile()      # stderr 는 파일로(파이프가 가득 차 ffmpeg 가 멈추는 일 방지)
+        self.p = _track(subprocess.Popen(args, stdin=subprocess.PIPE, stderr=self._err, creationflags=NOWIN))
 
     def write(self, frame: np.ndarray):
         if self.depth8:
             if frame.dtype != np.uint8:
                 frame = (frame >> 8).astype(np.uint8)
-            self.p.stdin.write(np.ascontiguousarray(frame).tobytes())
+            a = np.ascontiguousarray(frame)
         else:
-            self.p.stdin.write(np.ascontiguousarray(frame, np.uint16).tobytes())
+            a = np.ascontiguousarray(frame, np.uint16)
+        try:
+            self.p.stdin.write(memoryview(a).cast("B"))      # 복사 없이 그대로 보냄
+        except (BrokenPipeError, OSError) as e:
+            # 인코더가 먼저 죽음(디스크 가득·경로 문제 등) → ffmpeg 가 남긴 이유를 그대로 알림
+            try:
+                self.p.wait(3)
+            except Exception:  # noqa: BLE001
+                pass
+            raise RuntimeError(_read_err(self._err) or f"인코더가 중단되었습니다({e})") from e
 
     def close(self) -> str:
         try:
             self.p.stdin.close()
         except Exception:  # noqa: BLE001
             pass
-        err = self.p.stderr.read().decode("utf-8", "replace").strip()
         code = self.p.wait()
+        err = _read_err(self._err)
+        self._close_err()
         if code:
             raise RuntimeError(err or f"ffmpeg 오류 {code}")
         return err
+
+    def _close_err(self):
+        try:
+            self._err.close()
+        except Exception:  # noqa: BLE001
+            pass
 
     def kill(self):
         try:
             self.p.kill()
         except Exception:  # noqa: BLE001
             pass
+        self._close_err()
 
 
 # ------------------------------------------------------------ 타임코드

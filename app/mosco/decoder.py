@@ -19,7 +19,9 @@ try:
 except Exception:  # noqa: BLE001
     HAVE_AV = False
 
-CACHE_FRAMES = 300          # 소스당 원본 16bit 캐시 상한(300*12MB≈3.6GB). 램 넉넉 → 넉넉히.
+CACHE_FRAMES = 300          # 소스당 원본 16bit 캐시 상한(장수)
+CACHE_BYTES = 3_800_000_000  # 소스당 용량 상한(FHD 300장 ≈ 3.7GB 그대로, 4K 는 ≈ 76장) — 해상도가 커도 램이 안 불어나게
+IDLE_FRAMES = 24            # 지금 보고 있지 않은 소스는 이만큼만 남김(소스 수만큼 캐시가 쌓이는 것 방지)
 
 
 class FrameSource:
@@ -42,8 +44,19 @@ class FrameSource:
             return
         self.cache[n] = arr
         self.order.append(n)
-        while len(self.order) > CACHE_FRAMES:
+        limit = max(8, min(CACHE_FRAMES, CACHE_BYTES // max(1, arr.nbytes)))
+        while len(self.order) > limit:
             self.cache.pop(self.order.pop(0), None)
+
+    def trim(self, keep):
+        """캐시를 최근 keep 장만 남김. 디코딩 중이면(잠김) 건너뜀 — 화면을 기다리게 하지 않음."""
+        if not self.lock.acquire(timeout=0.02):
+            return
+        try:
+            while len(self.order) > keep:
+                self.cache.pop(self.order.pop(0), None)
+        finally:
+            self.lock.release()
 
     def _idx(self, fr):
         if fr.pts is None:
@@ -126,11 +139,12 @@ def grab(info, n, depth=16, size=None):
     return ff.grab(info, n, depth, size)
 
 
-def drop(path):
+def focus(path):
+    """지금 보는 소스만 캐시를 넉넉히 — 나머지 소스는 IDLE_FRAMES 장으로 줄임."""
     with _lock:
-        s = _sources.pop(path, None)
-    if s is not None:
-        s.close()
+        others = [s for p, s in _sources.items() if p != path]
+    for s in others:
+        s.trim(IDLE_FRAMES)
 
 
 def keep_only(paths):

@@ -9,7 +9,7 @@ import time
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel,
-                               QLineEdit, QMessageBox, QPushButton, QScrollArea, QStyle, QVBoxLayout, QWidget)
+                               QLineEdit, QPushButton, QScrollArea, QStyle, QVBoxLayout, QWidget)
 
 from . import autodetect as ad
 from . import ff, jobs

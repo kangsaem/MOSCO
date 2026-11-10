@@ -21,8 +21,6 @@ SIGN_DEFAULT = {
     "kind": "blur", "strength": 70, "margin": 60, "feather": 10, "stabilize": 50,
     "sensitivity": 60, "min_size": 12, "hold": 24, "link": 90, "max_count": 20,
 }
-MODES = ("beauty", "blur", "sign")
-BLUR_LIKE = ("blur", "sign")
 # 슬라이더 정의: 키, 이름, 최소, 최대, 표시 단위
 BEAUTY_SLIDERS = [
     ("strength", "매끈 강도", 0, 100, ""), ("wrinkle", "주름 메우기", 0, 100, ""),

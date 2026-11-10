@@ -37,7 +37,7 @@ class ZoomBox(QWidget):
             lay.addWidget(b)
         self.minus.setToolTip("축소 (-)")
         self.plus.setToolTip("확대 (+)")
-        self.pct.setToolTip("배율 (0 = 맞춤)")
+        self.pct.setToolTip("배율 (0 = 맞춤 · + / − = 확대·축소 · 휠)")
         self.minus.clicked.connect(lambda: self.step.emit(-1))
         self.plus.clicked.connect(lambda: self.step.emit(1))
         m = QMenu(self)
@@ -632,10 +632,6 @@ class EllipseLanes(QWidget):
 
     def _frame(self, x):
         return int(max(0, min(self.n - 1, x / max(1, self.width()) * self.n)))
-
-    def _span_of(self, d):
-        ints = d["intervals"]
-        return ints[0][0], ints[-1][1]
 
     def _lane_rect(self, idx):
         y = self.PAD + idx * self.LANE_H

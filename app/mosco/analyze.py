@@ -121,11 +121,6 @@ def _pts_box(pts):
     return x0, y0, x1, y1
 
 
-def _pts_center(pts):
-    o = pts[models.FACE_OVAL]
-    return float(o[:, 0].mean()), float(o[:, 1].mean())
-
-
 def analyze_beauty(info: ff.Info, progress=None, cancel=None, hw=False):
     """여러 얼굴을 추적해 각 슬롯별 랜드마크를 저장. lm 형상 (N, K, 468, 2)."""
     n = max(1, info.frames)

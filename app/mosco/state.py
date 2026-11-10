@@ -195,6 +195,9 @@ class AppState(QObject):
     def select(self, i):
         if i != self.cur:
             self.cur = i
+            s = self.source()
+            if s is not None:
+                decoder.focus(s.path)        # 다른 소스의 프레임 캐시는 조금만 남김(램 보호)
             self.current_changed.emit()
 
     # ------------------------------------------------------------ 값
@@ -703,35 +706,6 @@ class AppState(QObject):
                         "ukeys": ukeys, "n": n, "minus": d["minus"], "quad": d["quad"], "manual": d["manual"]})
         self._spans_cache = (sig, out)
         return out
-
-    def set_span(self, key, f_in, f_out):
-        """타원을 [f_in, f_out] 구간에만 존재하게(양 끝 위치 홀드 + 바깥은 끄기). 처음·끝까지 연장 포함."""
-        s = self.source()
-        tr = self.track(s)
-        if s is None or tr is None or key is None:
-            return
-        n = tr.n
-        f_in = max(0, min(int(f_in), n - 1))
-        f_out = max(f_in, min(int(f_out), n - 1))
-        e_in, af = self._present_ell(s, key, f_in, n)
-        if e_in is None:
-            return
-        e_out, _ = self._present_ell(s, key, f_out, n)
-        self.push_undo()
-        _, g = self._group_for(key, af)        # 존재하는 프레임에서 그룹 확보
-        if g is None:
-            self.undo_stack.pop()
-            return
-        edits.set_key(g, f_in, e_in)
-        edits.set_key(g, f_out, e_out or e_in)
-        g["off_all"] = False
-        g["off"] = []
-        if f_in > 0:
-            edits.off_range(g, 0, f_in - 1)
-        if f_out < n - 1:
-            edits.off_range(g, f_out + 1, n - 1)
-        self.sel = ("g", g["gid"])
-        self._edited()
 
     def set_spans(self, key, segments):
         """타원을 여러 구간 [(in,out), …] 에만 존재하게(구간 양끝 홀드, 틈·바깥은 끄기).

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QPoint, Qt, Signal
-from PySide6.QtWidgets import (QComboBox, QDialog, QFrame, QGridLayout, QHBoxLayout, QInputDialog, QLabel, QMenu,
+from PySide6.QtWidgets import (QDialog, QFrame, QGridLayout, QHBoxLayout, QInputDialog, QLabel, QMenu,
                                QMessageBox, QScrollArea, QToolButton, QVBoxLayout, QWidget)
 
 from . import autodetect as ad
@@ -84,6 +84,7 @@ class ControlPanel(QWidget):
         self.view = Seg([("fx", "보정"), ("orig", "원본"), ("split", "반반")])
         self.view.set("fx")
         self.view.changed.connect(lambda _: self.view_changed.emit())
+        self.view.setToolTip("보기: 보정 / 원본 / 반반  (B = 원본 ↔ 보정)")
         r.addWidget(self.view, 1)
         self.t_ell = Toggle("타원", w=50, tip="타원 표시")
         self.t_ell.setChecked(True)
@@ -177,12 +178,12 @@ class ControlPanel(QWidget):
         r1 = QHBoxLayout()
         r1.setSpacing(4)
         self.b_add = Toggle("타원 추가", w=72, tip="모니터에서 드래그해 새 타원. 켠 채로 계속 그림 (A)")
-        self.b_del = Toggle("삭제", w=48, tip="켜고 타원을 클릭해 삭제(오검출 제거). 자동 타원은 전 구간 숨김")
+        self.b_del = Toggle("삭제", w=48, tip="켜고 타원을 클릭해 삭제(오검출 제거). 자동 타원은 전 구간 숨김\n선택한 타원: Del = 삭제 · Shift+Del = 현재 프레임 키 삭제 · X = 블러 제외 타원으로 · Esc = 선택 해제")
         self.b_merge = Toggle("합치기", w=54, tip="선택한 타원과 같은 사람: 다른 프레임의 타원을 클릭")
         self.b_add.toggled2.connect(lambda v: self._tool("add", v))
         self.b_del.toggled2.connect(lambda v: self._tool("del", v))
         self.b_merge.toggled2.connect(lambda v: self._tool("merge", v))
-        self.b_delkey = btn("키 삭제", "현재 프레임의 키 삭제 (Del: 모니터)", w=58, on_click=self.del_key.emit)
+        self.b_delkey = btn("키 삭제", "현재 프레임의 키 삭제 (Shift+Del)", w=58, on_click=self.del_key.emit)
         self.b_off = QToolButton()
         self.b_off.setText("끄기 ▾")
         self.b_off.setFixedSize(56, 26)
@@ -231,7 +232,7 @@ class ControlPanel(QWidget):
         for s in (self.sec_beauty, self.sec_bell, self.sec_blur, self.sec_xell, self.sec_det, *self.sign_secs,
                   self.sec_edit):
             self.bl.addWidget(s)
-        # [분석] — 타원 편집 섹션 바로 아래, 눈에 띄게 크고 파랗게(분석=측정 색)
+        # [분석] — 패널 맨 아래 고정, 눈에 띄게 크고 파랗게(분석=측정 색)
         from PySide6.QtWidgets import QSizePolicy
         self.b_analyze = btn("분석", "이 클립을 분석(얼굴·트래킹) — 타원·검수·재생이 정확해집니다",
                              size=BTN_MAIN, on_click=self.analyze_clicked.emit)
@@ -245,7 +246,7 @@ class ControlPanel(QWidget):
         _ar.addWidget(self.b_analyze)
         _aw = QWidget()
         _aw.setLayout(_ar)
-        self.bl.addWidget(_aw)
+        outer.addWidget(_aw)                 # v0.7.54 스크롤 밖(패널 맨 아래 고정) — 창이 작아도 항상 보임
         self.bl.addStretch(1)
 
         self.state.current_changed.connect(self.refresh)

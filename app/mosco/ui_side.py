@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import time
 from pathlib import Path
 
 from PySide6.QtCore import QRect, QSize, Qt, Signal
@@ -165,6 +166,22 @@ class SourceList(QListWidget):
         m.exec(self.mapToGlobal(pos))
 
 
+def eta_text(it) -> str:
+    """진행 중 항목의 남은 시간(지금까지 걸린 시간 ÷ 진행률로 추정). 초반(5% 미만·5초 미만)은 표시 안 함."""
+    t0 = getattr(it, "t0", None)
+    if not t0 or it.p < 0.05:
+        return ""
+    el = time.perf_counter() - t0
+    if el < 5:
+        return ""
+    left = el * (1 - it.p) / it.p
+    if left >= 3600:
+        return f" · {int(left // 3600)}시간 {int(left % 3600 // 60)}분 남음"
+    if left >= 60:
+        return f" · {int(left // 60)}분 {int(left % 60)}초 남음"
+    return f" · {int(left)}초 남음"
+
+
 class RenderItem:
     def __init__(self, src, rs, out_dir):
         self.src = copy.deepcopy(src)
@@ -176,6 +193,7 @@ class RenderItem:
         self.outs = {}
         self.stats = {}           # 렌더 끝나면 프레임·fps·작업자 수(render.render 가 채움)
         self.job = None
+        self.t0 = None            # 진행 시작 시각(남은 시간 추정용)
 
 
 class RenderDelegate(QStyledItemDelegate):
@@ -211,7 +229,7 @@ class RenderDelegate(QStyledItemDelegate):
         f.setPointSize(max(7, f.pointSize() - 1))
         p.setFont(f)
         p.setPen(QColor("#f2f2f2") if done else QColor("#e6e6e6"))
-        st = f"{int(it.p * 100)}%" if it.state == "진행" else it.state
+        st = f"{int(it.p * 100)}%{eta_text(it)}" if it.state == "진행" else it.state
         p.drawText(r.adjusted(6, 0, -6, 0), Qt.AlignVCenter | Qt.AlignRight, st)
         f.setBold(True)
         p.setFont(f)
