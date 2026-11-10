@@ -132,6 +132,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit 1 }
           python tests/test_edits.py
           if ($LASTEXITCODE -ne 0) { exit 1 }
+          python tests/test_track.py
+          if ($LASTEXITCODE -ne 0) { exit 1 }
           python tests/test_aefx.py
           if ($LASTEXITCODE -ne 0) { exit 1 }
           python tests/test_priority.py

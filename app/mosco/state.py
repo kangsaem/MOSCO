@@ -677,7 +677,9 @@ class AppState(QObject):
                         lbl = str(it.tid) if it.tid is not None else ("+" if it.manual else "·")
                         if it.minus:
                             lbl = "−" + (lbl if lbl not in ("+", "·") else "")
+                        tinfo = res.track.tracks.get(it.tid) if (it.tid is not None and hasattr(res.track, "tracks")) else None
                         seen[sk] = {"label": lbl, "frames": [], "geo": [], "minus": it.minus, "mode": mode,
+                                    "sus": bool(tinfo and tinfo.get("sus")) and not it.manual and not it.minus,
                                     "quad": bool(getattr(it, "pts", None) is not None
                                                  and np.asarray(it.pts).size == 8), "manual": it.manual}
                         order.append(sk)
@@ -703,7 +705,8 @@ class AppState(QObject):
             else:                                       # 오토 트랙(또는 트랙 오버라이드) = 자동 키 + 사용자 키
                 keys = _auto_keys(fr, d["geo"], intervals)
             out.append({"key": k, "mode": mode, "label": d["label"], "intervals": intervals, "keys": keys,
-                        "ukeys": ukeys, "n": n, "minus": d["minus"], "quad": d["quad"], "manual": d["manual"]})
+                        "ukeys": ukeys, "n": n, "minus": d["minus"], "quad": d["quad"], "manual": d["manual"],
+                        "sus": d["sus"]})
         self._spans_cache = (sig, out)
         return out
 

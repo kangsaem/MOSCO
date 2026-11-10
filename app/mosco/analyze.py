@@ -15,7 +15,7 @@ import numpy as np
 
 from . import ff, models, paths
 
-VERSION = 4      # v4: 뷰티 다중 얼굴(lm 형상 (N,K,468,2))
+VERSION = 5      # v5(0.7.55): 카메라 움직임(cam) 저장 · 뷰티 등장 구간 거꾸로 채움·슬롯 재사용 규칙 · 간판 검출 크기
 LOW_SCORE = 0.3          # 분석 때 낮게 저장 → 민감도로 후처리
 
 
@@ -89,6 +89,62 @@ def _load_file(f):
         return None
 
 
+# ------------------------------------------------------------ 카메라 움직임(v0.7.55)
+CAM_SIDE = 480           # 추정용 축소 긴 변(px)
+
+
+class CamEst:
+    """프레임 사이 화면 전체 움직임(이동 + 확대)을 순서대로 추정. 행 = (s, tx, ty): p_i = s·p_(i-1) + t (원본 px).
+    특징점 광류 + RANSAC. 믿기 어려우면(특징 부족·장면 전환·튀는 값) 그 프레임은 '움직임 없음'(1,0,0)."""
+
+    def __init__(self):
+        self.prev = None
+
+    def step(self, rgb):
+        H, W = rgb.shape[:2]
+        k = max(1, int(round(max(H, W) / CAM_SIDE)))
+        g = np.ascontiguousarray(rgb[::k, ::k, 1])
+        prev, self.prev = self.prev, g
+        if prev is None or prev.shape != g.shape:
+            return (1.0, 0.0, 0.0)
+        try:
+            p = cv2.goodFeaturesToTrack(prev, 300, 0.01, 8)
+            if p is None or len(p) < 12:
+                return (1.0, 0.0, 0.0)
+            q, st, _ = cv2.calcOpticalFlowPyrLK(prev, g, p, None)
+            ok = st.ravel() == 1
+            if ok.sum() < 12:
+                return (1.0, 0.0, 0.0)
+            M, inl = cv2.estimateAffinePartial2D(p[ok], q[ok], method=cv2.RANSAC, ransacReprojThreshold=1.5)
+            if M is None or inl is None or inl.sum() < max(10, 0.5 * ok.sum()):
+                return (1.0, 0.0, 0.0)
+            s = float(np.hypot(M[0, 0], M[1, 0]))
+            tx, ty = float(M[0, 2]) * k, float(M[1, 2]) * k
+            if not (0.85 < s < 1.18) or abs(tx) > 0.25 * W or abs(ty) > 0.25 * H:
+                return (1.0, 0.0, 0.0)
+            return (s, tx, ty)
+        except cv2.error:
+            return (1.0, 0.0, 0.0)
+
+
+def cam_world(z, n):
+    """분석 결과의 cam → 프레임 i 좌표 = S[i]·(기준 좌표) + T[i]. cam 이 없으면(옛 캐시) S=1, T=0.
+    기준 좌표 = 카메라 움직임을 뺀 좌표(프레임 0 기준). 트랙 잇기·빈 구간·떨림 보정을 여기서 하면 팬·줌을 따라간다."""
+    S = np.ones(n, np.float64)
+    T = np.zeros((n, 2), np.float64)
+    cam = z.get("cam") if isinstance(z, dict) else None
+    if cam is None or len(cam) == 0:
+        return S, T
+    cam = np.asarray(cam, np.float64)
+    for i in range(1, min(n, len(cam))):
+        s, tx, ty = cam[i]
+        S[i] = s * S[i - 1]
+        T[i] = s * T[i - 1] + (tx, ty)
+    if len(cam) < n:
+        S[len(cam):], T[len(cam):] = S[len(cam) - 1], T[len(cam) - 1]
+    return S, T
+
+
 # ------------------------------------------------------------ 1인(뷰티): 랜드마크 추적
 def beauty_frame(rgb, prev):
     """한 프레임 랜드마크. prev(이전 랜드마크)가 있으면 그 주변에서 추적, 실패하면 검출부터."""
@@ -121,6 +177,30 @@ def _pts_box(pts):
     return x0, y0, x1, y1
 
 
+def _pick_slot(free, box, last_box, last_seen, i, prev):
+    """새 얼굴에 줄 슬롯(v0.7.55). ① 같은 자리·비슷한 크기로 최근(10초 안)에 있던 슬롯 = 같은 사람 → 그 번호
+    ② 아니면 한 번도 안 쓴 슬롯 ③ 그것도 없으면 가장 오래전에 쓴 슬롯.
+    (예전: 맨 앞 빈 슬롯 — 나간 사람의 번호를 다른 사람이 바로 받아 타원별 편집값이 옮겨 감)"""
+    x0, y0, x1, y1 = box
+    cx, cy, w = (x0 + x1) / 2, (y0 + y1) / 2, max(1.0, x1 - x0)
+    best, bd = None, 1e9
+    for k in free:
+        b = last_box[k]
+        if b is None or i - last_seen[k] > 300:
+            continue
+        bw = max(1.0, b[2] - b[0])
+        d = np.hypot((b[0] + b[2]) / 2 - cx, (b[1] + b[3]) / 2 - cy) / max(w, bw)
+        if d < 1.0 and max(w, bw) / min(w, bw) < 1.6 and d < bd:
+            best, bd = k, d
+    if best is not None:
+        return best
+    fresh = [k for k in free if last_box[k] is None]
+    if fresh:
+        return fresh[0]
+    idle = [k for k in free if prev[k] is None] or free       # 잠깐 놓쳐 쫓는 중인 슬롯은 되도록 남겨 둠
+    return min(idle, key=lambda k: last_seen[k])
+
+
 def analyze_beauty(info: ff.Info, progress=None, cancel=None, hw=False):
     """여러 얼굴을 추적해 각 슬롯별 랜드마크를 저장. lm 형상 (N, K, 468, 2)."""
     n = max(1, info.frames)
@@ -131,7 +211,10 @@ def analyze_beauty(info: ff.Info, progress=None, cancel=None, hw=False):
     r = ff.Reader(info, 0, 8, hw=hw)
     prev = [None] * K          # 슬롯별 직전 랜드마크(추적 ROI 용)
     miss = [0] * K             # 슬롯별 연속 놓친 프레임 수
+    last_box = [None] * K      # 슬롯별 마지막으로 본 얼굴 상자(같은 사람이 돌아오면 같은 번호로)
+    last_seen = [-10 ** 9] * K
     last_det = -10 ** 9
+    ring = {}                  # 최근 DET_EVERY 프레임(새 얼굴의 등장 구간을 거꾸로 채우는 용)
     i = 0
     try:
         while True:
@@ -167,24 +250,52 @@ def analyze_beauty(info: ff.Info, progress=None, cancel=None, hw=False):
                 cx, cy = (d.box[0] + d.box[2]) / 2, (d.box[1] + d.box[3]) / 2
                 if any(bx0 <= cx <= bx1 and by0 <= cy <= by1 for bx0, by0, bx1, by1 in boxes):
                     continue
-                slot = next((k for k in range(K) if cur[k] is None), None)
-                if slot is None:
+                free = [k for k in range(K) if cur[k] is None]
+                if not free:
                     break
                 pts, conf = mesh.run(fr, *models.roi_from_det(d))
                 if conf < 0.5:
                     continue
+                slot = _pick_slot(free, _pts_box(pts), last_box, last_seen, i, prev)
                 cur[slot] = pts
                 boxes.append(_pts_box(pts))
+                # v0.7.55 등장 구간 거꾸로 채움: 검출을 건너뛴 직전 프레임들(최대 DET_EVERY)을 뒤로 추적
+                # (예전: 새 얼굴이 최대 10프레임 동안 보정 없이 나오다 갑자기 보정됨)
+                back = pts
+                for j in range(i - 1, i - DET_EVERY - 1, -1):
+                    fj = ring.get(j)
+                    if fj is None or not np.isnan(lm[j, slot, 0, 0]):
+                        break
+                    bp, bc = mesh.run(fj, *models.roi_from_landmarks(back))
+                    if bc <= 0.5:
+                        break
+                    bx0, by0, bx1, by1 = _pts_box(bp)
+                    cxj, cyj = (bx0 + bx1) / 2, (by0 + by1) / 2
+                    taken = False
+                    for k2 in range(K):                     # 그 프레임에 이미 다른 슬롯이 잡은 얼굴이면 중단
+                        if k2 != slot and not np.isnan(lm[j, k2, 0, 0]):
+                            ox0, oy0, ox1, oy1 = _pts_box(lm[j, k2])
+                            if ox0 <= cxj <= ox1 and oy0 <= cyj <= oy1:
+                                taken = True
+                                break
+                    if taken:
+                        break
+                    lm[j, slot] = bp
+                    back = bp
             # 3) 슬롯 유지: 잡았으면 저장·리셋, 놓쳤으면 hold 동안 직전값으로 계속 추적 시도
             for k in range(K):
                 if cur[k] is not None:
                     lm[i, k] = cur[k]
                     prev[k] = cur[k]
                     miss[k] = 0
+                    last_box[k] = _pts_box(cur[k])
+                    last_seen[k] = i
                 elif prev[k] is not None:
                     miss[k] += 1
                     if miss[k] > _B_HOLD:
                         prev[k] = None
+            ring[i] = fr
+            ring.pop(i - DET_EVERY, None)
             i += 1
             if progress and i % 15 == 0:
                 progress(min(1.0, i / max(1, info.frames)))
@@ -272,6 +383,7 @@ def analyze_blur(info: ff.Info, progress=None, cancel=None, hw=False, workers=No
     pool = ThreadPoolExecutor(workers)
     q = deque()
     i = 0
+    cam, cams = CamEst(), []
 
     def take():
         f, fut = q.popleft()
@@ -284,6 +396,7 @@ def analyze_blur(info: ff.Info, progress=None, cancel=None, hw=False, workers=No
             fr = r.read()
             if fr is None:
                 break
+            cams.append(cam.step(fr))
             q.append((i, pool.submit(blur_frame, fr.copy(), True, True, small_min, bottom_skip)))
             i += 1
             while len(q) >= workers * 2:
@@ -299,7 +412,8 @@ def analyze_blur(info: ff.Info, progress=None, cancel=None, hw=False, workers=No
         raise Cancelled()
     if i == 0:
         raise RuntimeError("프레임을 읽지 못했습니다")
-    return {"det": np.array(rows, np.float32).reshape(-1, 7 + HIST), "n": np.array(i)}
+    return {"det": np.array(rows, np.float32).reshape(-1, 7 + HIST), "n": np.array(i),
+            "cam": np.array(cams, np.float32).reshape(-1, 3)}
 
 
 _inflight_guard = threading.Lock()
@@ -407,6 +521,11 @@ def _track_one(lm_k, stabilize, hold):
         for a, g in zip(idx[:-1], gaps):
             if 1 < g <= hold + 1:
                 b = a + g
+                # v0.7.55 빈 구간 양끝이 서로 다른 사람(자리·크기가 크게 다름)이면 잇지 않음(얼굴이 날아가는 보간 방지)
+                ca, cb = lm_k[a].mean(0), lm_k[b].mean(0)
+                wa, wb = float(np.ptp(lm_k[a][:, 0])), float(np.ptp(lm_k[b][:, 0]))
+                if np.hypot(*(ca - cb)) > 0.8 * max(wa, wb) or max(wa, wb) > 1.6 * max(1e-3, min(wa, wb)):
+                    continue
                 for t in range(1, g):
                     u = t / g
                     filled[a + t] = lm_k[a] * (1 - u) + lm_k[b] * u
@@ -470,8 +589,99 @@ def score_thr(sens):
     return 0.75 - float(sens) / 100 * 0.45       # 민감도 0→0.75, 100→0.30
 
 
+def _hungarian(C):
+    """최소 비용 배정(행 ≤ 열). 반환: 행마다 배정된 열."""
+    n, m = C.shape
+    u, v = np.zeros(n + 1), np.zeros(m + 1)
+    p, way = np.zeros(m + 1, int), np.zeros(m + 1, int)
+    for i in range(1, n + 1):
+        p[0] = i
+        j0 = 0
+        minv = np.full(m + 1, np.inf)
+        used = np.zeros(m + 1, bool)
+        while True:
+            used[j0] = True
+            i0, delta, j1 = p[j0], np.inf, 0
+            for j in range(1, m + 1):
+                if not used[j]:
+                    cur = C[i0 - 1, j - 1] - u[i0] - v[j]
+                    if cur < minv[j]:
+                        minv[j], way[j] = cur, j0
+                    if minv[j] < delta:
+                        delta, j1 = minv[j], j
+            for j in range(m + 1):
+                if used[j]:
+                    u[p[j]] += delta
+                    v[j] -= delta
+                else:
+                    minv[j] -= delta
+            j0 = j1
+            if p[j0] == 0:
+                break
+        while True:
+            j1 = way[j0]
+            p[j0] = p[j1]
+            j0 = j1
+            if j0 == 0:
+                break
+    out = np.full(n, -1, int)
+    for j in range(1, m + 1):
+        if p[j]:
+            out[p[j] - 1] = j - 1
+    return out
+
+
+def _assign(pairs):
+    """후보 (비용, 트랙, 관측) → 배정 [(트랙, 관측)]. 서로 얽힌 묶음마다 전체 비용이 가장 작은 조합(v0.7.55).
+    (예전: 가까운 순 — 두 사람이 엇갈릴 때 한 쌍이 먼저 잘못 묶이면 나머지도 뒤바뀜)"""
+    if not pairs:
+        return []
+    par = {}
+
+    def find(x):
+        while par.setdefault(x, x) != x:
+            par[x] = par[par[x]]
+            x = par[x]
+        return x
+    for _, ti, oi in pairs:
+        par[find(("t", ti))] = find(("o", oi))
+    comps = {}
+    for c, ti, oi in pairs:
+        comps.setdefault(find(("t", ti)), []).append((c, ti, oi))
+    out = []
+    BIG = 1e6
+    for ps in comps.values():
+        ts = sorted({ti for _, ti, _ in ps})
+        os_ = sorted({oi for _, _, oi in ps})
+        if len(ts) == 1 or len(os_) == 1 or len(ts) * len(os_) > 900:
+            used_t, used_o = set(), set()
+            for c, ti, oi in sorted(ps):                    # 단순(또는 너무 큼) → 가까운 순
+                if ti not in used_t and oi not in used_o:
+                    used_t.add(ti); used_o.add(oi)
+                    out.append((ti, oi))
+            continue
+        C = np.full((len(ts), len(os_)), BIG)
+        for c, ti, oi in ps:
+            C[ts.index(ti), os_.index(oi)] = c
+        flip = C.shape[0] > C.shape[1]
+        sol = _hungarian(C.T if flip else C)
+        for a, b in enumerate(sol):
+            r, k = (b, a) if flip else (a, b)
+            if b >= 0 and C[r, k] < BIG:
+                out.append((ts[r], os_[k]))
+    return out
+
+
+def _hist_d(a, b):
+    """옷 색 차이 0(같음)~1. 한쪽이라도 색 정보가 없으면(화면 밖 등) 0 = 판단 안 함."""
+    if a is None or b is None or a.sum() < 0.5 or b.sum() < 0.5:
+        return 0.0
+    return float(np.abs(a - b).sum()) / 2
+
+
 def _greedy_tracks(per, n, hold, dist_gate=1.0, ratio_gate=1.8):
-    """dist_gate·ratio_gate: 일반(얼굴) 매칭 허용치. 간판은 깜빡임·상자 출렁임이 커서 더 느슨하게 넘김."""
+    """dist_gate·ratio_gate: 일반(얼굴) 매칭 허용치. 간판은 깜빡임·상자 출렁임이 커서 더 느슨하게 넘김.
+    v0.7.55: 비용 = 거리 + 옷 색 차이, 얽힌 묶음은 최적 배정(_assign)."""
     tracks = []
     for f in range(n):
         obs = per[f]
@@ -486,13 +696,10 @@ def _greedy_tracks(per, n, hold, dist_gate=1.0, ratio_gate=1.8):
                 ratio = max(o[2], t["state"][2]) / max(1e-3, min(o[2], t["state"][2]))
                 body = o[5] == KIND_BODY or t.get("kind") == KIND_BODY
                 if dist < (1.8 if body else dist_gate) + 0.15 * dt and ratio < (2.5 if body else ratio_gate):
-                    pairs.append((dist + (0.3 if body else 0), ti, oi))
-        pairs.sort()
-        used_t, used_o = set(), set()
-        for dist, ti, oi in pairs:
-            if ti in used_t or oi in used_o:
-                continue
-            used_t.add(ti); used_o.add(oi)
+                    pairs.append((dist + (0.3 if body else 0) + 0.8 * _hist_d(t.get("hist"), o[6:6 + HIST]), ti, oi))
+        used_o = set()
+        for ti, oi in _assign(pairs):
+            used_o.add(oi)
             t = live[ti]; o = obs[oi]
             dt = f - t["last"]
             v = (o[:2] - t["state"][:2]) / dt
@@ -505,10 +712,14 @@ def _greedy_tracks(per, n, hold, dist_gate=1.0, ratio_gate=1.8):
             else:
                 t["vel"] = t["vel"] * 0.6 + v * 0.4
             t["state"] = o[:4].copy(); t["last"] = f; t["obs"][f] = o; t["kind"] = o[5]
+            h = o[6:6 + HIST]
+            if h.sum() >= 0.5:
+                t["hist"] = h.copy() if t.get("hist") is None else t["hist"] * 0.8 + h * 0.2
         for oi, o in enumerate(obs):
             if oi not in used_o:
+                h = o[6:6 + HIST]
                 tracks.append({"last": f, "state": o[:4].copy(), "vel": np.zeros(2, np.float32), "obs": {f: o},
-                               "kind": o[5]})
+                               "kind": o[5], "hist": h.copy() if h.sum() >= 0.5 else None})
     return tracks
 
 
@@ -624,12 +835,16 @@ def blur_track(z, params, two_pass=True) -> BlurTrack:
         if not params.get("body", True):
             keep &= det[:, 6] != KIND_BODY
         det = det[keep]
+    # v0.7.55 카메라 움직임을 뺀 '기준 좌표'에서 잇기·빈 구간·떨림 보정 → 끝에 프레임 좌표로 되돌림.
+    # 놓친 구간·앞뒤 여유 구간의 블러가 팬·줌을 따라감(예전: 마지막 검출 자리에 멈춤).
+    S, T = cam_world(z, n)
     per = [[] for _ in range(n)]
     for row in det:
         f = int(row[0])
         if f < n:
             x0, y0, x1, y1, sc = row[1:6]
-            per[f].append(np.r_[np.array([(x0 + x1) / 2, (y0 + y1) / 2, x1 - x0, y1 - y0, sc], np.float32),
+            per[f].append(np.r_[np.array([((x0 + x1) / 2 - T[f, 0]) / S[f], ((y0 + y1) / 2 - T[f, 1]) / S[f],
+                                          (x1 - x0) / S[f], (y1 - y0) / S[f], sc], np.float32),
                                 row[6:7], row[7:]])
     raw = _greedy_tracks(per, n, hold)
     raw = [t for t in raw if len(t["obs"]) >= 3 or max(o[4] for o in t["obs"].values()) >= 0.6]
@@ -659,8 +874,14 @@ def blur_track(z, params, two_pass=True) -> BlurTrack:
         nb = sum(1 for f in fs if t["obs"][f][5] == KIND_BODY)
         sg = max(sig * 3, 3.0) if nb > len(fs) / 2 else sig     # 몸 위주 트랙은 더 부드럽게
         arr = _smooth_series(arr, okm, sg)
+        Sk = S[a2:a2 + L, None].astype(np.float32)
+        arr[:, :2] = arr[:, :2] * Sk + T[a2:a2 + L].astype(np.float32)      # 기준 좌표 → 프레임 좌표
+        arr[:, 2:] = arr[:, 2:] * Sk
         out_id += 1
-        tracks[out_id] = {"f0": a2, "box": arr, "obs": val, "ok": okm}
+        # 의심 트랙(검수용 표시, 자동 삭제 안 함): 관측이 아주 짧거나 평균 점수가 낮음
+        msc = float(np.mean([t["obs"][f][4] for f in fs]))
+        sus = len(fs) < 8 or msc < (0.5 if nb > len(fs) / 2 else 0.6)
+        tracks[out_id] = {"f0": a2, "box": arr, "obs": val, "ok": okm, "sus": bool(sus), "score": msc}
         for k in range(L):
             if okm[k]:
                 frames[a2 + k].append((out_id, *arr[k], bool(val[k])))

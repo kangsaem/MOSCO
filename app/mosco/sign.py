@@ -20,7 +20,14 @@ from . import ff, models
 
 KIND_TEXT = 3
 QOFF = 7 + A.HIST          # 행에서 quad 시작 열
-DET_SIDE = 960              # 검출 입력 긴 변(px)
+DET_SIDE = 960              # 검출 입력 긴 변(px) — FHD 이하 기본
+
+
+def det_side(info) -> int:
+    """v0.7.55 원본 해상도에 맞춘 검출 크기: 긴 변의 절반(32 배수), 960~1920. FHD=960(그대로), 4K=1920.
+    큰 원본의 작은·먼 간판을 놓치지 않게. 분석 시간은 면적에 비례(4K ≈ 4배)."""
+    long = max(int(info.w), int(info.h))
+    return int(min(1920, max(DET_SIDE, round(long / 2 / 32) * 32)))
 MERGE_MARGIN = 0.6          # 줄 합치기 기준(글자 높이 배)
 
 _lock = threading.Lock()
@@ -245,7 +252,7 @@ def sign_frame(rgb, side=DET_SIDE):
     return rows
 
 
-def analyze_sign(info: ff.Info, progress=None, cancel=None, hw=False, workers=None, side=DET_SIDE):
+def analyze_sign(info: ff.Info, progress=None, cancel=None, hw=False, workers=None, side=None):
     """프레임마다 독립 검출 → 여러 스레드로 병렬(얼굴 블러와 같은 구조)."""
     import os
     from collections import deque
@@ -256,6 +263,8 @@ def analyze_sign(info: ff.Info, progress=None, cancel=None, hw=False, workers=No
     rows = []
     i = 0
     q = deque()
+    side = side or det_side(info)
+    cam, cams = A.CamEst(), []
 
     def drain(block):
         while q and (block or q[0][1].done()):
@@ -270,6 +279,7 @@ def analyze_sign(info: ff.Info, progress=None, cancel=None, hw=False, workers=No
                 fr = r.read()
                 if fr is None:
                     break
+                cams.append(cam.step(fr))
                 q.append((i, pool.submit(sign_frame, fr.copy(), side)))
                 i += 1
                 while len(q) > workers * 2:
@@ -287,7 +297,7 @@ def analyze_sign(info: ff.Info, progress=None, cancel=None, hw=False, workers=No
     if i == 0:
         raise RuntimeError("프레임을 읽지 못했습니다")
     det = np.array(rows, np.float32) if rows else np.zeros((0, 1 + QOFF + 9), np.float32)
-    return {"det": det, "n": np.array(i), "sign": np.array(1)}
+    return {"det": det, "n": np.array(i), "sign": np.array(1), "cam": np.array(cams, np.float32).reshape(-1, 3)}
 
 
 # ------------------------------------------------------------ 트랙
@@ -319,13 +329,19 @@ def sign_track(z, params, two_pass=True) -> SignTrack:
     maxn = int(params.get("max_count", 20))
     if len(det):
         det = det[(det[:, 5] >= thr) & (det[:, -1] >= mins)]
+    # v0.7.55 카메라 움직임을 뺀 기준 좌표에서 잇기·평균(간판은 세상에 고정 → 팬·줌 중에도 사각형이 간판에 붙음)
+    S, T = A.cam_world(z, n)
     per = [[] for _ in range(n)]
     for row in det:
         f = int(row[0])
         if f < n:
             x0, y0, x1, y1, sc = row[1:6]
-            per[f].append(np.r_[np.array([(x0 + x1) / 2, (y0 + y1) / 2, x1 - x0, y1 - y0, sc], np.float32),
-                                row[6:]])           # kind, hist, quad8, h
+            o = np.r_[np.array([((x0 + x1) / 2 - T[f, 0]) / S[f], ((y0 + y1) / 2 - T[f, 1]) / S[f],
+                                (x1 - x0) / S[f], (y1 - y0) / S[f], sc], np.float32), row[6:]]   # kind, hist, quad8, h
+            qw = (o[6 + A.HIST:6 + A.HIST + 8].reshape(4, 2) - T[f]) / S[f]
+            o[6 + A.HIST:6 + A.HIST + 8] = qw.reshape(-1)
+            o[6 + A.HIST + 8] /= S[f]
+            per[f].append(o.astype(np.float32))
     # 간판: 글자 검출이 프레임마다 깜빡이고 상자 크기도 출렁여 얼굴보다 느슨하게 이음(거리·크기비 완화)
     raw = A._greedy_tracks(per, n, hold, dist_gate=1.2, ratio_gate=2.0)
     raw = [t for t in raw if len(t["obs"]) >= 2 or max(o[4] for o in t["obs"].values()) >= 0.7]
@@ -369,9 +385,12 @@ def sign_track(z, params, two_pass=True) -> SignTrack:
         hh = A._smooth_series(hh, okm, sig_shape)
         quads = np.zeros((L, 8), np.float32)
         for k in range(L):
-            quads[k] = grow(cen[k] + rel[k].reshape(4, 2), margin * float(hh[k, 0])).reshape(-1)
+            qk = grow(cen[k] + rel[k].reshape(4, 2), margin * float(hh[k, 0]))
+            quads[k] = (qk * S[a2 + k] + T[a2 + k]).reshape(-1)             # 기준 좌표 → 프레임 좌표
         out_id += 1
-        tracks[out_id] = {"f0": a2, "box": quads, "obs": val, "ok": okm}
+        msc = float(np.mean([t["obs"][f][4] for f in fs]))
+        sus = len(fs) < 6 or msc < thr + 0.08                               # 의심 트랙(검수용 표시)
+        tracks[out_id] = {"f0": a2, "box": quads, "obs": val, "ok": okm, "sus": bool(sus), "score": msc}
         for k in range(L):
             if okm[k]:
                 frames[a2 + k].append((out_id, quads[k].reshape(4, 2), bool(val[k])))

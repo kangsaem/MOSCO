@@ -592,6 +592,7 @@ class EllipseLanes(QWidget):
         self.sel = None
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.StrongFocus)     # Del 키 받기
+        self.setToolTip("타원·사각형별 구간. 주황 번호? = 의심 트랙(아주 짧거나 검출 점수 낮음) — 오검출인지 확인")
         self._drag = None        # (lane_idx, "in"|"out")
         self._preview = None     # (key, f_in, f_out) 드래그 중 미리보기
         self._scrub = False      # 재생선 드래그 중
@@ -774,6 +775,11 @@ class EllipseLanes(QWidget):
                 p.drawPolygon([QPointF(kx, cy - r), QPointF(kx + r, cy), QPointF(kx, cy + r), QPointF(kx - r, cy)])
             p.setPen(Qt.NoPen)
             # 라벨
+            # 의심 트랙(짧거나 검출 점수 낮음) = 주황 라벨 + "?" — 오검출인지 먼저 확인할 곳
+            if d.get("sus"):
+                p.setPen(QColor("#ff9d4d"))
+                p.drawText(QRectF(4, y0, 40, y1 - y0), Qt.AlignVCenter | Qt.AlignLeft, d["label"] + "?")
+                continue
             p.setPen(QColor("#e6e6e6") if sel else QColor("#9aa0a6"))
             p.drawText(QRectF(4, y0, 40, y1 - y0), Qt.AlignVCenter | Qt.AlignLeft, d["label"])
         x = self._x(self.cur + 0.5)
