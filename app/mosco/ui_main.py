@@ -436,6 +436,7 @@ class MainWindow(QMainWindow):
         self.bar.del_key.connect(lambda k: self.state.delete_key(k))
         self.lanes.select.connect(self.on_select)
         self.lanes.segments_changed.connect(self._on_segments)
+        self.lanes.seek.connect(self.seek)               # 레인 재생선 드래그 → 프레임 이동
         self.ruler.seek.connect(self.seek)
         self.panel.tool.connect(self.on_tool)
         self.mon.add_at.connect(self.on_add)

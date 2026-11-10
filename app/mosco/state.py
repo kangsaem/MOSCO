@@ -22,6 +22,39 @@ def _z_level(z, mode):
         return analyze.SMALL_MIN
 
 
+def _lane_geo(it, p, fx):
+    """레인 오토 키 계산용 기하 벡터 (cx, cy, w, h, 회전길이px). 간판(quad)은 외접 타원으로."""
+    import math
+    if fx._is_quad(it):
+        from .sign import quad_ell
+        cx, cy, w, h, ang = quad_ell(fx.item_quad(it, p))
+    else:
+        cx, cy, w, h, ang = fx._item_ell(it, p)
+    return (cx, cy, w, h, math.radians(ang) * 0.5 * max(w, h))   # 회전 1° ≈ 호 길이(px)로 환산
+
+
+def _auto_keys(frames, geo, intervals):
+    """오토 트랙의 키 위치(근사): 구간마다 기하를 선형보간 오차 ≤ TOL 로 줄인 프레임.
+    AE 내보내기(aefx.reduce_keys)와 같은 기준이라 실제 키가 찍히는 곳과 거의 일치(샘플 간격 한도)."""
+    from .aefx import TOL, reduce_keys
+    if not frames:
+        return []
+    fa = np.asarray(frames)
+    out = []
+    for a, b in intervals:
+        m = (fa >= a) & (fa <= b)
+        idx = np.nonzero(m)[0]
+        if idx.size == 0:
+            continue
+        sub = [geo[j] for j in idx]
+        if len(sub) <= 2:
+            out += [int(frames[j]) for j in idx]
+            continue
+        for ki in reduce_keys(sub, TOL):
+            out.append(int(frames[idx[ki]]))
+    return sorted(set(out))
+
+
 class AppState(QObject):
     changed = Signal()                 # 목록·값 변경(화면 갱신)
     current_changed = Signal()         # 선택 소스 바뀜
@@ -618,9 +651,11 @@ class AppState(QObject):
                tuple(json.dumps(edits.get(s, m), sort_keys=True) for _, m in resolvers))
         if getattr(self, "_spans_cache", (None,))[0] == sig:
             return self._spans_cache[1]
+        from . import fx                              # 지연 import(순환 방지)
         step = max(1, n // 800)
         seen, order = {}, []
         for res, mode in resolvers:
+            p = s.params_for(mode)
             for i in range(0, n, step):
                 for it in res.items(i):
                     sk = (mode, it.key)                 # 종류로 구분(얼굴·간판 키가 겹칠 수 있음)
@@ -628,11 +663,12 @@ class AppState(QObject):
                         lbl = str(it.tid) if it.tid is not None else ("+" if it.manual else "·")
                         if it.minus:
                             lbl = "−" + (lbl if lbl not in ("+", "·") else "")
-                        seen[sk] = {"label": lbl, "frames": [], "minus": it.minus, "mode": mode,
+                        seen[sk] = {"label": lbl, "frames": [], "geo": [], "minus": it.minus, "mode": mode,
                                     "quad": bool(getattr(it, "pts", None) is not None
                                                  and np.asarray(it.pts).size == 8), "manual": it.manual}
                         order.append(sk)
                     seen[sk]["frames"].append(i)
+                    seen[sk]["geo"].append(_lane_geo(it, p, fx))   # 오토 키 계산용 기하
         out = []
         for sk in order:
             mode, k = sk
@@ -646,7 +682,10 @@ class AppState(QObject):
                 prev = f
             intervals.append((a, prev))
             groups = {g["gid"]: g for g in edits.get(s, mode)["groups"]}
-            keys = sorted(int(x) for x in groups[k[1]].get("keys", {})) if k[0] == "g" and k[1] in groups else []
+            if k[0] == "g" and k[1] in groups:          # 수동 그룹 = 사용자가 찍은 키
+                keys = sorted(int(x) for x in groups[k[1]].get("keys", {}))
+            else:                                       # 오토 트랙 = AE 내보낼 때 키가 찍히는 위치(근사)
+                keys = _auto_keys(fr, d["geo"], intervals)
             out.append({"key": k, "mode": mode, "label": d["label"], "intervals": intervals, "keys": keys, "n": n,
                         "minus": d["minus"], "quad": d["quad"], "manual": d["manual"]})
         self._spans_cache = (sig, out)

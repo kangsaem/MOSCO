@@ -578,6 +578,7 @@ class EllipseLanes(QWidget):
     레인(바 가운데) 클릭 = 그 타원 선택."""
     select = Signal(object, object)          # (타원 key, mode) — 동시 블러 때 그 종류로 전환
     segments_changed = Signal(object, object)  # key, [(in, out), ...] — 구간별 양끝 편집·틈 메우기
+    seek = Signal(int)                       # 재생선을 잡고 드래그 → 프레임 이동(소스 타임라인과 동일)
 
     LANE_H = 16
     PAD = 3
@@ -591,6 +592,7 @@ class EllipseLanes(QWidget):
         self.setMouseTracking(True)
         self._drag = None        # (lane_idx, "in"|"out")
         self._preview = None     # (key, f_in, f_out) 드래그 중 미리보기
+        self._scrub = False      # 재생선 드래그 중
         self._fit()
 
     def _fit(self):
@@ -635,6 +637,10 @@ class EllipseLanes(QWidget):
         return idx, "mid"
 
     def mousePressEvent(self, e):
+        if self.n and abs(e.position().x() - self._x(self.cur + 0.5)) <= 6:
+            self._scrub = True                           # 재생선을 잡음 → 스크럽
+            self.seek.emit(self._frame(e.position().x()))
+            return
         idx, where = self._hit(e.position())
         if idx is None:
             return
@@ -647,7 +653,12 @@ class EllipseLanes(QWidget):
             self.update()
 
     def mouseMoveEvent(self, e):
+        if self._scrub:                                  # 재생선 드래그 → 앞뒤 이동
+            self.seek.emit(self._frame(e.position().x()))
+            return
         if self._drag is None:
+            near = bool(self.n) and abs(e.position().x() - self._x(self.cur + 0.5)) <= 6
+            self.setCursor(Qt.SizeHorCursor if near else Qt.ArrowCursor)
             return
         idx, (edge, si) = self._drag
         d = self.spans[idx]
@@ -665,6 +676,9 @@ class EllipseLanes(QWidget):
         self.update()
 
     def mouseReleaseEvent(self, e):
+        if self._scrub:
+            self._scrub = False
+            return
         if self._drag is not None and self._preview is not None:
             key, segs = self._preview
             self.segments_changed.emit(key, segs)
