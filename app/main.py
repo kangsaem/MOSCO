@@ -78,8 +78,15 @@ def _hard_exit(code):
     if os.name == "nt":
         try:
             import ctypes
+            from ctypes import wintypes
             k = ctypes.windll.kernel32
-            k.TerminateProcess(k.GetCurrentProcess(), code)
+            # 프로토타입을 지정해야 64비트에서 현재 프로세스 의사 핸들(-1)이 잘리지 않는다.
+            # (안 하면 핸들이 32비트로 잘려 TerminateProcess 가 실패 → os._exit 로 떨어져
+            #  네이티브 DLL 로더락 교착으로 프로세스가 안 죽고 폴더를 계속 잠그는 원인이 됨)
+            k.GetCurrentProcess.restype = wintypes.HANDLE
+            k.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+            k.TerminateProcess.restype = wintypes.BOOL
+            k.TerminateProcess(k.GetCurrentProcess(), code & 0xFFFFFFFF)
         except Exception:  # noqa: BLE001
             pass
     os._exit(code)
