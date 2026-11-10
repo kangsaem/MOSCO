@@ -118,30 +118,41 @@ def render_samples(src, info: ff.Info, opts: dict, progress=None, cancel=None):
     idxs = [int(round((k + 0.5) * n / count)) for k in range(count)]
     idxs = [min(n - 1, max(0, i)) for i in idxs]
     bskip = float(opts.get("bottom_skip", 0.0) or 0.0)
-    z = analyze.load(info, src.mode, analyze.level_for(src.mode, src.params()), bskip)
-    track = make_track(src, z, {}) if z is not None else None
-    resolver = edits.Resolver(src, track)
+    # 종류별(뷰티 / 얼굴블러 / 간판블러, 동시 블러면 둘 다) 분석 캐시·트랙·리졸버 — 렌더 build_plan 과 같은 규칙
+    kinds = src.blur_kinds() or ["beauty"]
+    plan = []
+    for kind in kinds:
+        kb = bskip if kind != "beauty" else 0.0
+        z = analyze.load(info, kind, analyze.level_for(kind, src.params_for(kind)), kb)
+        track = make_track(src, z, {}, kind) if z is not None else None
+        plan.append((kind, track, edits.Resolver(src, track, kind)))
     p16 = opts.get("fmt") == "png16"
     saved = []
     for k, i in enumerate(idxs):
         if cancel is not None and cancel.is_set():
             raise analyze.Cancelled()
         fr = decoder.grab(info, i, 16)
-        items = resolver.items(i)
-        if track is None:
-            # 분석 전: 그 프레임만 검출
-            from .ui_main import temp_items     # 지연 import(순환 방지)
-            items = temp_items(src, (fr >> 8).astype(np.uint8)) + items
+
+        def items_of(kind, track, resolver):
+            items = resolver.items(i)
+            if track is None:
+                # 분석 전: 그 프레임만 검출
+                from .ui_main import temp_items     # 지연 import(순환 방지)
+                items = temp_items(src, (fr >> 8).astype(np.uint8), mode=kind) + items
+            return items
         sw = opts.get("size") or 0
-        if src.mode == "beauty":
+        if kinds == ["beauty"]:
             # 뷰티: 얼굴 확대 반반(왼쪽 원본 / 오른쪽 보정본)
+            items = items_of(*plan[0])
             r = fx.beauty(fr, items, src.beauty, i)
             ell_items = [it for it, _ in r.ells]
             rect = _face_rect(ell_items or items, info.w, info.h)
             bgr = _compose_crop(fr, r.out, rect, sw, p16)
         else:
-            # 블러: 전체 블러 보정본만(크롭·반반 없음)
-            out, _, _ = fx.blur(fr, items, src.blur, False)
+            # 블러: 전체 블러 보정본만(크롭·반반 없음). 종류마다 자기 설정값으로 이어서 블러(얼굴 → 간판)
+            out = fr
+            for kind, track, resolver in plan:
+                out, _, _ = fx.blur(out, items_of(kind, track, resolver), src.params_for(kind), False)
             bgr = _full(out, sw, p16)
         path = unique(out_dir / filename(src, opts, k + 1))
         q = [cv2.IMWRITE_JPEG_QUALITY, 95] if opts.get("fmt") == "jpg" else []

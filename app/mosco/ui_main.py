@@ -73,17 +73,18 @@ def gray8(m):
 
 
 # ------------------------------------------------------------ 미리보기 계산(작업 스레드)
-def temp_items(src, rgb8, scale=1.0):
+def temp_items(src, rgb8, scale=1.0, mode=None):
     """분석 전: 이 프레임만 빠르게 검출(가볍게). 좌표는 rgb8(=보기 화질) 기준.
     블러는 기본 얼굴 검출만(작은 얼굴·몸·타일 제외) — 정확한 건 [분석]·렌더 때.
-    min_size 는 원본 px 기준이므로 scale 을 곱해 비교."""
-    p = src.params()
+    min_size 는 원본 px 기준이므로 scale 을 곱해 비교. mode = 종류(기본 활성 모드, 동시 블러용)."""
+    mode = mode or src.mode
+    p = src.params_for(mode)
     out = []
-    if src.mode == "beauty":
+    if mode == "beauty":
         pts, _ = analyze.beauty_frame(rgb8, None)
         if pts is not None:
             out.append(edits.Item(("t", 1), 1, analyze.head_ellipse(pts, p["size"], p["neck"]), pts))
-    elif src.mode == "sign":
+    elif mode == "sign":
         from . import sign
         for k, row in enumerate(sign.sign_frame(rgb8), 1):
             if row[4] >= sign.score_thr(p["sensitivity"]) and row[-1] >= p["min_size"] * scale:

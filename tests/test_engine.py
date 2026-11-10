@@ -107,6 +107,25 @@ def sign_check(work: Path):
     outs2 = render(sb, dict(RENDER_DEFAULT), str(work))
     assert ff.probe(outs2["main"]).frames == info.frames
     print(f"both OK  동시 블러 간판 {nsign}")
+    # v0.7.53 샘플: 간판 모드는 간판 설정(src.sign)으로 블러해야 함(예전엔 얼굴블러 설정 src.blur 를 씀)
+    from mosco import sample as smp
+    outs_s = {}
+    for kind in ("blur", "mosaic"):
+        ss = Source(str(clip), "sign")
+        ss.sign["kind"] = kind                 # 얼굴블러 설정(ss.blur)은 기본 그대로
+        d = work / f"smp_{kind}"
+        p = smp.render_samples(ss, info, {"out_dir": str(d), "count": 1, "fmt": "png8"})
+        outs_s[kind] = cv2.imread(p[0])
+    assert np.abs(outs_s["blur"].astype(int) - outs_s["mosaic"].astype(int)).max() > 20, "샘플이 간판 설정을 안 씀"
+    sb2 = Source(str(clip), "blur")
+    sb2.both = True
+    p = smp.render_samples(sb2, info, {"out_dir": str(work / "smp_both"), "count": 1, "fmt": "png8"})
+    orig = cv2.cvtColor((ff.grab(info, 15, 16) >> 8).astype(np.uint8), cv2.COLOR_RGB2BGR)
+    c = np.mean(boards[1][3], 0) - (22, 0)
+    x, y = int(c[0]), int(c[1])
+    diff = np.abs(cv2.imread(p[0]).astype(int) - orig.astype(int))[y - 10:y + 10, x - 10:x + 10].mean()
+    assert diff > 3, f"동시 블러 샘플에 간판 블러 없음({diff:.1f})"
+    print(f"sample OK  간판 설정 반영 · 동시 블러 간판 차이 {diff:.1f}")
 
 
 def check_output(src, outs, mode):
