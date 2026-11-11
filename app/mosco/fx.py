@@ -259,6 +259,9 @@ def _center_ref(img, ell, x0, y0):
     return float(np.median(cb)), float(np.median(cr))
 
 
+WR_OLD = False              # (비교 실험용) True = v0.7.64 이전 주름 메우기 식
+
+
 def beauty(frame16, items, p, frame_no=0, want_keys=False) -> BeautyResult:
     """frame16: (H,W,3) uint16. items: edits.Item 목록(자동·추가 타원). p: 뷰티 값."""
     res = BeautyResult()
@@ -343,11 +346,14 @@ def beauty(frame16, items, p, frame_no=0, want_keys=False) -> BeautyResult:
                 gf = g.astype(np.float32) / 255
                 gd = gf - low_pass(gf, sig)
                 # v0.7.65 얕은 골도 잡고(깊이 0.004 부터, 0.024 에서 최대 — 예전엔 0.125 라 얕은 주름은 20%만 메워짐),
-                # 메우는 양은 골 깊이까지만(≤100% → 주변보다 밝아져 뒤집혀 보이는 일 없음),
-                # 아주 깊고 어두운 것(머리카락·속눈썹·콧구멍 가장자리: 깊이 0.10 이상)은 서서히 제외.
+                # 메우는 양은 골 깊이까지만(≤100% → 주변보다 밝아져 뒤집혀 보이는 일 없음).
+                # v0.7.67: '아주 깊은 골 제외'(v0.7.65)는 삭제 — 코 옆 그림자의 가장자리만 밝아지고 가운데는 남아
+                # 그림자가 더 진하고 날카롭게 보였음(사용자 실영상).
                 depth = -gd
-                dark = np.clip((depth - 0.004) / 0.020, 0, 1) * np.clip(1.0 - (depth - 0.10) / 0.08, 0, 1)
+                dark = np.clip((depth - 0.004) / 0.020, 0, 1)
                 fill = np.minimum(1.0, wf * 1.2 * dark)[..., None]
+                if WR_OLD:                                       # (비교용) v0.7.64 이전 식
+                    fill = (np.clip(-gd * 8, 0, 1) * wf * 1.4)[..., None]
                 target = target + (-np.minimum(detail, 0)) * fill
             # ③ 소프트: 약한 가우시안을 섞음(최대 60%) — 윤곽을 지키는 '매끈'과 달리 전체를 살짝 뽀얗게
             if soft > 0:

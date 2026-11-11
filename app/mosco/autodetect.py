@@ -12,10 +12,10 @@ from . import decoder, ff, models
 from .project import BEAUTY_DEFAULT, BLUR_DEFAULT
 
 LABEL = {"beauty": "뷰티", "blur": "블러", "sign": "간판", "weak": "약", "mid": "중", "strong": "강", "strongplus": "강+"}
-STRENGTH = {"weak": 0, "mid": 1, "strong": 2, "strongplus": 2}   # 강+ = 강 + (뷰티만) 소프트·톤업·번들거림·톤
+STRENGTH = {"weak": 0, "mid": 1, "strong": 2, "strongplus": 2}   # 강+ = 강을 바탕으로 (뷰티만) STRONG_PLUS 값
 LEVELS = ("weak", "mid", "strong", "strongplus")
-# 강+(v0.7.66, 사용자가 실영상에서 정한 값): 강 위에 얹는 뷰티 값
-STRONG_PLUS = {"soft": 30, "toneup": 40, "shine": 30, "tint": 20}
+# 강+(v0.7.66~67, 사용자가 실영상에서 정한 값): 강에서 바뀌는 뷰티 값(매끈 100·주름 40 + 소프트·톤업·번들거림·톤)
+STRONG_PLUS = {"strength": 100, "wrinkle": 40, "soft": 30, "toneup": 20, "shine": 30, "tint": 20}   # v0.7.67 값 변경(사용자)
 
 DET_W, DET_H = 960, 540      # 측정용 다운스케일
 
@@ -69,7 +69,7 @@ def measure(info: ff.Info, cancel=None, progress=None):
 def level_of(mode, params):
     """현재 설정이 약·중·강 중 어느 것인지(v0.7.60). 강도를 가르는 값(뷰티: 매끈·주름·질감 / 블러·간판: 강도)이
     정확히 같을 때만 "weak"/"mid"/"strong"/"strongplus", 직접 조정했으면 None."""
-    keys = ("strength", "wrinkle", "texture", *STRONG_PLUS) if mode == "beauty" else ("strength",)
+    keys = ("strength", "wrinkle", "texture", "soft", "toneup", "shine", "tint") if mode == "beauty" else ("strength",)
     for lv in LEVELS if mode == "beauty" else LEVELS[:3]:      # 블러·간판의 강+ 는 강과 같은 값 → '강'으로 표시
         _, p = to_params(mode, lv)
         if all(params.get(k) == p.get(k) for k in keys):

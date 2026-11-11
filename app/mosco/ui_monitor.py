@@ -665,13 +665,25 @@ class EllipseLanes(QWidget):
             return None, None
         d = self.spans[idx]
         for si, (a, b) in enumerate(d["intervals"]):     # 구간마다 양끝 손잡이
-            if abs(pos.x() - self._x(a)) <= 7:
+            xa, xb = self._x(a), self._x(b + 1)
+            tol = 9 if xb - xa >= 24 else max(3.0, (xb - xa) / 3)   # 넉넉하게(짧은 구간은 양끝이 겹치지 않게)
+            if abs(pos.x() - xa) <= tol:
                 return idx, ("seg_in", si)
-            if abs(pos.x() - self._x(b + 1)) <= 7:
+            if abs(pos.x() - xb) <= tol:
                 return idx, ("seg_out", si)
         return idx, "mid"
 
     def mousePressEvent(self, e):
+        # v0.7.67 구간 끝 손잡이가 최우선(예전: 재생선 → 키 ◆ → 손잡이 순이라, 끝에 붙어 있는 ◆ 나 재생선이 먼저 잡혀
+        # 길이 조절이 거의 안 됐음)
+        hidx, hwhere = self._hit(e.position())
+        if hidx is not None and isinstance(hwhere, tuple):
+            d = self.spans[hidx]
+            self.sel = d["key"]
+            self.select.emit(d["key"], d.get("mode"))
+            self._drag = (hidx, hwhere)
+            self.update()
+            return
         if self.n and abs(e.position().x() - self._x(self.cur + 0.5)) <= 6:
             self._scrub = True                           # 재생선을 잡음 → 스크럽
             self.seek.emit(self._frame(e.position().x()))
@@ -702,7 +714,9 @@ class EllipseLanes(QWidget):
             return
         if self._drag is None:
             near = bool(self.n) and abs(e.position().x() - self._x(self.cur + 0.5)) <= 6
-            self.setCursor(Qt.SizeHorCursor if near else Qt.ArrowCursor)
+            hi, hw = self._hit(e.position())
+            on_handle = hi is not None and isinstance(hw, tuple)      # 구간 끝 = 좌우 화살표 커서(잡을 수 있음 표시)
+            self.setCursor(Qt.SizeHorCursor if (near or on_handle) else Qt.ArrowCursor)
             return
         idx, (edge, si) = self._drag
         d = self.spans[idx]

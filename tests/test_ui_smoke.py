@@ -56,6 +56,35 @@ def sign_ui(app, w, st, vids, out):
     sc = w._vscale()
     assert abs(float(it.pts[2][0]) - q[4] / sc) < 1.5, (it.pts[2], q[4] / sc)
     w.grab().save(str(out / "9_sign.png"))
+    # v0.7.67 레인 끝 손잡이: 끝에 키 ◆·재생선이 겹쳐 있어도 손잡이가 먼저 잡혀 길이를 줄일 수 있어야 함
+    from PySide6.QtCore import QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+    from PySide6.QtCore import QEvent
+    ln = w.lanes
+    pump(app, 0.5)
+    d0 = ln.spans[0]
+    a0, b0 = d0["intervals"][0]
+    w.seek(a0)                                   # 재생선을 구간 시작에 겹쳐 둠
+    pump(app, 0.5)
+    y = ln.PAD + ln.LANE_H / 2
+
+    def mouse(t, x):
+        pos = QPointF(x, y)
+        btn_ = Qt.LeftButton if t != QEvent.MouseMove else Qt.NoButton
+        ln_ev = QMouseEvent(t, pos, ln.mapToGlobal(pos), btn_, Qt.LeftButton, Qt.NoModifier)
+        {QEvent.MouseButtonPress: ln.mousePressEvent, QEvent.MouseMove: ln.mouseMoveEvent,
+         QEvent.MouseButtonRelease: ln.mouseReleaseEvent}[t](ln_ev)
+    x_in = ln._x(a0)
+    mouse(QEvent.MouseButtonPress, x_in + 1)
+    assert ln._drag is not None and ln._drag[1][0] == "seg_in", "끝 손잡이가 안 잡힘(재생선·키가 먼저 잡힘)"
+    tgt = a0 + max(3, (b0 - a0) // 3)
+    mouse(QEvent.MouseMove, ln._x(tgt + 0.5))
+    mouse(QEvent.MouseButtonRelease, ln._x(tgt + 0.5))
+    pump(app, 1.0)
+    starts0 = sorted(x["intervals"][0][0] for x in ln.spans)
+    assert any(abs(x["intervals"][0][0] - tgt) <= 1 for x in ln.spans), f"시작 지점이 안 바뀜 {a0} → 목표 {tgt}, 지금 {starts0}"
+    st.undo()
+    pump(app, 0.5)
     # v0.7.14 AE 보내기: 실제 간판 트랙 → .jsx (사각형 마스크, 고친 꼭짓점 키 포함)
     jsx = out / "sign_AE.jsx"
     j = w.export_ae(str(jsx))
