@@ -156,8 +156,12 @@ class ControlPanel(QWidget):
         # 뷰티: 눈·입 제외
         self.t_feat = Toggle("눈·입 제외", w=88, tip="눈·눈썹·입은 보정하지 않음")
         self.t_feat.toggled2.connect(lambda v: self.state.set_param("features", v, undo=True))
+        self.t_eye = Toggle("눈가 포함", w=88, tip="눈 근처(눈꺼풀·눈밑·눈꼬리)는 색과 상관없이 보정 — 짙은 아이섀도 때문에 눈가 주름이 안 잡힐 때.\n"
+                            "화장 색은 유지(색 통일 제외). 안경테·눈을 덮은 앞머리도 같이 매끈해질 수 있음")
+        self.t_eye.toggled2.connect(lambda v: self.state.set_param("eye_area", v, undo=True))
         rr2 = QHBoxLayout()
         rr2.addStretch(1)
+        rr2.addWidget(self.t_eye)
         rr2.addWidget(self.t_feat)
         wf = QWidget()
         wf.setLayout(rr2)
@@ -385,7 +389,8 @@ class ControlPanel(QWidget):
                 row.set(s.params_for(m)[k])
             self.kind.set(s.blur["kind"])
             self.skind.set(s.sign.get("kind", "blur"))
-            for t, v in ((self.t_body, s.blur.get("body", True)), (self.t_feat, s.beauty.get("features", True))):
+            for t, v in ((self.t_body, s.blur.get("body", True)), (self.t_feat, s.beauty.get("features", True)),
+                         (self.t_eye, s.beauty.get("eye_area", False))):
                 t.blockSignals(True)
                 t.setChecked(bool(v))
                 set_on(t, bool(v))

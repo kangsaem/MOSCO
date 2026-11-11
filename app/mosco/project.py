@@ -23,6 +23,7 @@ def out_stem(name: str) -> str:
 BEAUTY_DEFAULT = {
     "strength": 50, "wrinkle": 50, "texture": 35, "grain": 15, "skin_range": 40, "unify": 20,   # v0.7.57 피부 범위 50→40
     "size": 165, "feather": 20, "neck": 40, "stabilize": 50, "skin_ref": None, "features": True,
+    "eye_area": False,   # v0.7.62 눈가 포함: 눈 근처는 피부색 판정을 건너뜀(짙은 아이섀도). 기본 꺼짐
 }
 BLUR_DEFAULT = {
     "kind": "blur", "strength": 70, "margin": 160, "feather": 10, "stabilize": 50,

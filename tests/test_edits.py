@@ -202,7 +202,40 @@ def main():
     sign_check()
     skin_range_migration()
     names_and_presets()
+    eye_area()
     print("EDITS OK")
+
+
+def eye_area():
+    """v0.7.62 '눈가 포함': 눈 근처는 색과 상관없이 보정 영역에 들어감 · 꺼져 있으면 그대로 · 눈가 밖은 영향 없음."""
+    from mosco import fx, models
+    from mosco.project import BEAUTY_DEFAULT
+    rng = np.random.default_rng(3)
+    pts = np.zeros((468, 2), np.float32)
+    oval = np.array(models.FACE_OVAL)
+    t = np.linspace(0, 2 * np.pi, len(oval), endpoint=False)
+    pts[oval] = np.c_[300 + 150 * np.cos(t), 300 + 190 * np.sin(t)]
+    for eye, brow, cx in ((models.LEFT_EYE, models.LEFT_BROW, 360), (models.RIGHT_EYE, models.RIGHT_BROW, 240)):
+        te = np.linspace(0, 2 * np.pi, len(eye), endpoint=False)
+        pts[eye] = np.c_[cx + 28 * np.cos(te), 260 + 10 * np.sin(te)]
+        pts[brow] = np.c_[np.linspace(cx - 32, cx + 32, len(brow)), np.full(len(brow), 232)]
+    pts[models.LIPS] = np.c_[300 + 40 * np.cos(np.linspace(0, 6.28, len(models.LIPS))),
+                             400 + 12 * np.sin(np.linspace(0, 6.28, len(models.LIPS)))]
+    m = fx.eye_area_mask(pts, (0, 0, 600, 600), 300.0)
+    assert m[282, 360] > 0.9 and m[246, 240] > 0.9 and m[330, 300] < 0.05 and m[150, 300] < 0.05, "눈가 영역이 다름"
+    skin = np.array([0.78, 0.60, 0.50], np.float32)
+    img = np.tile(skin, (600, 600, 1)) + rng.normal(0, 0.01, (600, 600, 3)).astype(np.float32)
+    img[225:300, 190:410] = (0.25, 0.12, 0.30)                      # 짙은 아이섀도(피부색 아님)
+    fr = (np.clip(img, 0, 1) * 65535).astype(np.uint16)
+    it = edits.Item(("t", 1), 1, (300.0, 300.0, 420.0, 520.0, 0.0), pts)
+    reg = {}
+    for on in (False, True):
+        r = fx.beauty(fr, [it], dict(BEAUTY_DEFAULT, eye_area=on, skin_ref=[-0.06, 0.07]), 0, want_keys=True)
+        reg[on] = r.region
+    assert reg[False][284, 360] < 0.3 and reg[True][284, 360] > 0.7, (reg[False][284, 360], reg[True][284, 360])
+    assert abs(reg[True][340, 300] - reg[False][340, 300]) < 0.02, "눈가 밖이 바뀜"
+    assert reg[True][260, 360] < 0.2, "눈 자체는 제외돼야 함"
+    print("eye area OK")
 
 
 def names_and_presets():

@@ -187,6 +187,20 @@ def feature_mask(pts, roi, face_w):
     return cv2.GaussianBlur(m, (0, 0), max(1.0, face_w * 0.012))
 
 
+def eye_area_mask(pts, roi, face_w):
+    """눈가 영역(1=눈가) — 눈꺼풀~눈썹 아래 · 눈밑 · 눈꼬리 바깥(v0.7.62 '눈가 포함').
+    이 안은 피부색 판정을 건너뛰어 짙은 아이섀도 위의 주름도 보정됨. 눈·눈썹 자체는 feature_mask 가 따로 가림."""
+    x0, y0, x1, y1 = roi
+    m = np.zeros((y1 - y0, x1 - x0), np.float32)
+    off = np.array([x0, y0], np.float32)
+    _fill_groups(m, pts, off, (models.LEFT_EYE + models.LEFT_BROW, models.RIGHT_EYE + models.RIGHT_BROW),
+                 face_w * EYE_AREA_PAD)
+    return cv2.GaussianBlur(m, (0, 0), max(1.0, face_w * 0.02))
+
+
+EYE_AREA_PAD = 0.07      # 눈+눈썹 윤곽에서 바깥으로 넓히는 양(얼굴 폭 비율) — 눈밑·눈꼬리까지
+
+
 def nostril_mask(yimg, pts, x0, y0, face_w):
     """콧구멍 제외(1=제외): 콧구멍 랜드마크 둘레 작은 창 안에서 '주변 피부보다 어두운' 화소만 부드럽게.
     고정 원이 아니라 실제 어두운 그림자 모양을 따라감. 창 2개(작음)라 비용은 사실상 0.
@@ -278,6 +292,11 @@ def beauty(frame16, items, p, frame_no=0, want_keys=False) -> BeautyResult:
             ref = (-0.06, 0.07)
         res.ref = res.ref or ref
         skin = skin_mask_soft(img, ref, p["skin_range"], face_w)
+        eye_area = None
+        if pts is not None and p.get("eye_area"):
+            # '눈가 포함': 눈 근처는 색과 상관없이 피부로(짙은 아이섀도 때문에 눈가 주름이 빠지던 것)
+            eye_area = eye_area_mask(pts, roi, face_w)
+            skin = np.maximum(skin, eye_area)
         if pts is not None:
             # 목 유지(더 길게) + 경계는 타원 페더로 부드럽게 끊음
             skin = skin * face_region_mask(pts, roi, face_w, p.get("neck", 0), feather)
@@ -326,6 +345,8 @@ def beauty(frame16, items, p, frame_no=0, want_keys=False) -> BeautyResult:
         if p["unify"] > 0:
             y, cb, cr = _ycc(res_img)
             u = region * (p["unify"] / 100 * 0.6)
+            if eye_area is not None:
+                u = u * (1 - eye_area)                       # 눈가는 색 통일 제외(화장 색 유지)
             res_img = _rgb(y, cb + (ref[0] - cb) * u, cr + (ref[1] - cr) * u)
         if o is None:
             o = frame16.copy()
