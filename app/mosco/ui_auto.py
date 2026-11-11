@@ -284,8 +284,10 @@ class AutoDialog(DragMove, QDialog):
         self.w_beauty = _b("뷰티", h=30, on=lambda: self._set_work("beauty"))
         self.w_face = _b("얼굴 블러", h=30, on=lambda: self._toggle_work("blur"))
         self.w_sign = _b("간판 블러", h=30, on=lambda: self._toggle_work("sign"))
+        ww = max(b.sizeHint().width() for b in (self.w_beauty, self.w_face, self.w_sign))
         for b in (self.w_beauty, self.w_face, self.w_sign):
             b.setCheckable(True)
+            b.setFixedWidth(ww)                  # v0.7.57 세 버튼 같은 폭([뷰티]만 좁던 것)
             wk.addWidget(b)
         wk.addStretch(1)
         self.seg_work = QWidget()

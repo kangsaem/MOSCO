@@ -200,7 +200,38 @@ def main():
     print("beauty multiface OK")
     minus_check()
     sign_check()
+    skin_range_migration()
     print("EDITS OK")
+
+
+def skin_range_migration():
+    """v0.7.57 피부 범위 기본 50→40: 예전 기본값으로 저장된 값·기본 프리셋만 한 번 40으로."""
+    import json
+    import tempfile
+    from mosco import paths
+    old_sp, old_pd = paths.settings_path, paths.preset_dir
+    try:
+        from mosco import paths
+        d=Path(tempfile.mkdtemp())
+        paths.settings_path=lambda: d/"settings.json"; paths.preset_dir=lambda: (d/"presets").mkdir(exist_ok=True) or d/"presets"
+        from mosco import project as P
+        P.paths=paths
+        # 예전 상태: 저장된 사용자 기본값 50, 기본 프리셋 50, 사용자 프리셋 50
+        (d/"settings.json").write_text(json.dumps({"beauty":{"skin_range":50,"strength":60}}))
+        for n in P.BUILTIN_BEAUTY+("내 프리셋",): P.save_preset(n,"beauty",{**P.BEAUTY_DEFAULT,"skin_range":50})
+        s=P.Settings()
+        assert s.d["beauty"]["skin_range"]==40 and s.d["beauty"]["strength"]==60
+        assert all(P.load_preset(n)["params"]["skin_range"]==40 for n in P.BUILTIN_BEAUTY)
+        assert P.load_preset("내 프리셋")["params"]["skin_range"]==50
+        # 한 번만: 다시 50으로 바꾸면 그대로 유지
+        j=json.loads((d/"settings.json").read_text()); j["beauty"]["skin_range"]=50; (d/"settings.json").write_text(json.dumps(j))
+        assert P.Settings().d["beauty"]["skin_range"]==50
+        # 직접 바꾼 값(55)은 안 건드림
+        (d/"settings.json").write_text(json.dumps({"beauty":{"skin_range":55}}))
+        assert P.Settings().d["beauty"]["skin_range"]==55
+        print("skin_range migration OK")
+    finally:
+        paths.settings_path, paths.preset_dir = old_sp, old_pd
 
 
 if __name__ == "__main__":

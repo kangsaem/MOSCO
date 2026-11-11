@@ -6,6 +6,30 @@ from PySide6.QtGui import QColor, QIntValidator, QPainter
 from PySide6.QtWidgets import (QDialog, QFrame, QButtonGroup, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSlider,
                                QVBoxLayout, QWidget)
 
+def bring_front(w):
+    """창을 다른 프로그램들보다 맨 앞으로(v0.7.57 처음 실행 때 뒤에 숨어 안 보이던 것).
+    윈도우는 프로그램이 스스로 앞으로 나오는 걸 막을 때가 있어서, 잠깐 '항상 위'로 올렸다가 바로 해제
+    (창 순서만 맨 위로, 계속 위에 붙어 있지는 않음) + 포커스 요청."""
+    try:
+        w.raise_()
+        w.activateWindow()
+    except Exception:  # noqa: BLE001
+        pass
+    import sys
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        u = ctypes.windll.user32
+        hwnd = int(w.winId())
+        flags = 0x0001 | 0x0002 | 0x0040          # SWP_NOSIZE | SWP_NOMOVE | SWP_SHOWWINDOW
+        u.SetWindowPos(hwnd, -1, 0, 0, 0, 0, flags)   # HWND_TOPMOST
+        u.SetWindowPos(hwnd, -2, 0, 0, 0, 0, flags)   # HWND_NOTOPMOST
+        u.SetForegroundWindow(hwnd)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 BTN = (76, 28)
 BTN_MAIN = (88, 32)
 

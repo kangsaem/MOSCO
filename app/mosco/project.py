@@ -9,7 +9,7 @@ from pathlib import Path
 from . import paths
 
 BEAUTY_DEFAULT = {
-    "strength": 50, "wrinkle": 50, "texture": 35, "grain": 15, "skin_range": 50, "unify": 20,
+    "strength": 50, "wrinkle": 50, "texture": 35, "grain": 15, "skin_range": 40, "unify": 20,   # v0.7.57 피부 범위 50→40
     "size": 165, "feather": 20, "neck": 40, "stabilize": 50, "skin_ref": None, "features": True,
 }
 BLUR_DEFAULT = {
@@ -126,6 +126,13 @@ class Settings:
                 self.d[k].update(j.get(k, {}))
             for k in ("last_folder", "default_mode", "view_scale"):
                 self.d[k] = j.get(k, self.d[k])
+            if not j.get("skin_range40"):
+                # v0.7.57 한 번만: 예전 기본값(50)으로 저장된 사용자 기본값·기본 프리셋 → 40. 직접 바꾼 값(50 아님)은 그대로
+                if self.d["beauty"].get("skin_range") == 50:
+                    self.d["beauty"]["skin_range"] = 40
+                _migrate_presets_skin_range()
+                self.d["skin_range40"] = True
+                self.save()
         except Exception:  # noqa: BLE001
             pass
 
@@ -163,6 +170,23 @@ def delete_preset(name):
 
 def rename_preset(old, new):
     (paths.preset_dir() / f"{old}.json").rename(paths.preset_dir() / f"{new}.json")
+
+
+BUILTIN_BEAUTY = ("인터뷰 기본", "인터뷰 약하게", "인터뷰 강하게")
+
+
+def _migrate_presets_skin_range():
+    """기본 뷰티 프리셋 3개의 피부 범위가 예전 기본값(50)이면 40으로(v0.7.57). 사용자가 만든 프리셋은 손대지 않음."""
+    for name in BUILTIN_BEAUTY:
+        f = paths.preset_dir() / f"{name}.json"
+        try:
+            d = json.loads(f.read_text(encoding="utf-8"))
+            prm = d.get("params", d)
+            if prm.get("skin_range") == 50:
+                prm["skin_range"] = 40
+                f.write_text(json.dumps(d, ensure_ascii=False, indent=1), encoding="utf-8")
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def ensure_builtin_presets():

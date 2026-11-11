@@ -43,6 +43,10 @@ def main():
     assert all(w.state.analysis(s) is None for s in w.state.project.sources)
 
     dlg = AutoDialog(w, w.state)
+    # v0.7.57 작업 버튼 세 개 같은 폭 · 뷰티 피부 범위 기본 40(약·중·강 모두)
+    assert dlg.w_beauty.width() == dlg.w_face.width() == dlg.w_sign.width(), "작업 버튼 폭이 다름"
+    from mosco import autodetect
+    assert all(autodetect.to_params("beauty", k)[1]["skin_range"] == 40 for k in ("weak", "mid", "strong"))
     assert len(dlg.clips) == 2 and dlg.width() == 998
     # v0.7.3: 창을 열 때는 아무 작업도 안 함(버튼을 눌러야 측정)
     pump(app, 1)

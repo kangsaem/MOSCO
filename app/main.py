@@ -36,6 +36,10 @@ def main():
     args = [a for a in sys.argv[1:] if Path(a).suffix.lower() in VIDEO_EXT]
     if os.environ.get("MOSCO_SELFTEST") or args:
         w.showMaximized()                      # 빌드 점검·파일을 끌어다 실행 = 바로 편집 화면(전체 창)
+        if not os.environ.get("MOSCO_SELFTEST"):
+            from PySide6.QtCore import QTimer
+            from mosco.ui_widgets import bring_front
+            QTimer.singleShot(0, lambda: bring_front(w))     # 다른 프로그램 뒤에 숨지 않게 맨 앞으로
     else:
         # 시작 창 [AUTO]/[편집]. 창 사이를 오가므로 '마지막 창 닫힘 = 종료'는 끄고 직접 종료
         from mosco.ui_start import StartWindow
@@ -43,6 +47,9 @@ def main():
         start = StartWindow(w)
         start.center()
         start.show()
+        from PySide6.QtCore import QTimer
+        from mosco.ui_widgets import bring_front
+        QTimer.singleShot(0, lambda: bring_front(start))     # v0.7.57 처음 실행: 다른 프로그램보다 맨 앞으로
         if not os.environ.get("MOSCO_SELFTEST"):
             from PySide6.QtCore import QTimer
 
