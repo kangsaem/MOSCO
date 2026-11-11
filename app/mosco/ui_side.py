@@ -25,7 +25,7 @@ class SourceDelegate(QStyledItemDelegate):
         self.state = state
 
     def sizeHint(self, opt, idx):
-        return QSize(200, 27)
+        return QSize(200, 26)
 
     def paint(self, p: QPainter, opt, idx):
         i = idx.row()
@@ -33,7 +33,7 @@ class SourceDelegate(QStyledItemDelegate):
         if i >= len(srcs):
             return
         s = srcs[i]
-        r = opt.rect.adjusted(0, 1, 0, -2)
+        r = opt.rect.adjusted(0, 0, 0, -2)        # v0.7.70 줄 사이 간격 좁힘(4px → 2px)
         err = self.state.errors.get(s.path)
         a = self.state.analysis(s)
         # 진행 단계: 샘플(state.busy) > 분석(진행 중) — 색 = ui_widgets.PROG(DTME 와 같음)
@@ -110,7 +110,7 @@ class SourceList(QListWidget):
         self.state = state
         self.setItemDelegate(SourceDelegate(state))
         self.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        self.setSpacing(1)
+        self.setSpacing(0)
         self.setMouseTracking(True)
         self.itemSelectionChanged.connect(self._sel)
         self.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -251,14 +251,14 @@ class RenderDelegate(QStyledItemDelegate):
         self.panel = panel
 
     def sizeHint(self, opt, idx):
-        return QSize(200, 25)
+        return QSize(200, 24)
 
     def paint(self, p, opt, idx):
         items = self.panel.items
         if idx.row() >= len(items):
             return
         it = items[idx.row()]
-        r = opt.rect.adjusted(0, 1, 0, -2)
+        r = opt.rect.adjusted(0, 0, 0, -2)        # v0.7.70 줄 사이 간격 좁힘(4px → 2px)
         done = it.state == "완료"
         p.save()
         p.setRenderHint(QPainter.Antialiasing)
@@ -337,7 +337,7 @@ class RenderPanel(QWidget):
         lay.addLayout(r)
         self.list = QListWidget()
         self.list.setItemDelegate(RenderDelegate(self))
-        self.list.setSpacing(1)
+        self.list.setSpacing(0)
         self.list.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.list.customContextMenuRequested.connect(self._menu)
@@ -439,7 +439,8 @@ class RenderSettings(DragMove, QDialog):
         self.main.setChecked(rs.get("main", True))
         self.prores = QComboBox()
         self.prores.addItems(list(ff.PRORES))
-        self.prores.setCurrentText(rs.get("prores", "422 HQ"))
+        self.prores.setCurrentText(ff.prores_kind(rs.get("prores", "422 HQ")))
+        self.prores.setToolTip("ProRes 종류: 422 HQ(가장 높은 품질) · 422 · LT")
         r.addWidget(self.main)
         r.addWidget(self.prores)
         r.addStretch(1)

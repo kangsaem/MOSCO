@@ -279,7 +279,15 @@ def grab(info: Info, frame: int, depth=16, size=None):
         r.close()
 
 
-PRORES = {"422 HQ": 3, "422": 2, "422 LT": 1}
+# 출력 종류 = 버튼 이름 그대로의 ProRes 프로파일(v0.7.70 에서 일반 422 를 잠깐 없앴다가 사용자 요청으로 되살림):
+# "422 HQ" = ProRes 422 HQ · "422" = ProRes 422 · "LT" = ProRes 422 LT. 인코더 기본(표준 목표 비트레이트) 그대로.
+PRORES = {"422 HQ": 3, "422": 2, "LT": 1}
+
+
+def prores_kind(kind) -> str:
+    """저장된 출력 종류 → "422 HQ" | "422" | "LT" (옛 이름 "422 LT" 포함, 모르는 값은 422 HQ)."""
+    k = str(kind or "422 HQ")
+    return "LT" if k == "422 LT" else (k if k in PRORES else "422 HQ")
 
 
 class Writer:
@@ -306,7 +314,7 @@ class Writer:
                      "-vendor", "apl0", "-pix_fmt", "yuva444p10le"]
         else:
             vf = f"scale=out_color_matrix={m}:out_range=tv:flags=accurate_rnd+full_chroma_int,format=yuv422p10le"
-            args += ["-vf", vf, "-c:v", "prores_ks", "-profile:v", str(PRORES.get(kind, 3)),
+            args += ["-vf", vf, "-c:v", "prores_ks", "-profile:v", str(PRORES[prores_kind(kind)]),
                      "-vendor", "apl0", "-pix_fmt", "yuv422p10le"]
         if info.field_order in ("tt", "bb", "tb", "bt") and not h264:
             # 인터레이스 원본: 필드 순서 유지(프레임 단위 처리, 4:2:2 라 색 번짐 없음)

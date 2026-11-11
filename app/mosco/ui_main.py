@@ -299,6 +299,11 @@ class MainWindow(QMainWindow):
 
         mid = QVBoxLayout()
         mid.setSpacing(4)
+        # v0.7.70 안내·진행 글자 줄을 미리보기 위로(예전: 맨 아래라 잘 안 보였음)
+        self.status = QLabel("")
+        self.status.setFixedHeight(22)
+        self.status.setStyleSheet("background:#1c1c1c;border-radius:3px;color:#7fd18b;padding-left:8px;font-size:12px")
+        mid.addWidget(self.status)
         self.mon = Monitor()
         self.bar = TimeBar()
         self.lanes = EllipseLanes()
@@ -365,10 +370,6 @@ class MainWindow(QMainWindow):
         self.b_toqueue.setIconSize(QSize(26, 14))
         tr.addWidget(self.b_toqueue)
         mid.addLayout(tr)
-        self.status = QLabel("")
-        self.status.setFixedHeight(20)
-        self.status.setStyleSheet("background:#1c1c1c;border-radius:3px;color:#7fd18b;padding-left:8px")
-        mid.addWidget(self.status)
         midw = QWidget()
         midw.setLayout(mid)
         # v0.7.59 최소 폭 = 재생 줄이 겹치지 않는 폭(예전 360 고정 → 창을 줄이면 버튼이 겹쳐 엉망)
@@ -1182,7 +1183,7 @@ class MainWindow(QMainWindow):
         dlg.move(self.geometry().center() - dlg.rect().center())
         dlg.exec()
 
-    def render_auto(self, idxs, out_dir, name):
+    def render_auto(self, idxs, out_dir, name, prores=None):
         """AUTO 보정+렌더: 렌더 목록에 넣고 바로 시작. 만든 RenderItem 목록을 돌려줌(AUTO 창이 진행률 표시)."""
         made = []
         rs = dict(self.state.settings.render)
@@ -1191,7 +1192,7 @@ class MainWindow(QMainWindow):
         for idx in idxs:
             if 0 <= idx < len(self.state.project.sources):
                 s = self.state.project.sources[idx]
-                it = RenderItem(s, rs, out_dir)
+                it = RenderItem(s, dict(rs, prores=ff.prores_kind((prores or {}).get(idx, rs.get("prores")))), out_dir)
                 self.rpanel.add(it)
                 self._start_render(it)
                 made.append(it)

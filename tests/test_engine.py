@@ -230,6 +230,23 @@ def main():
         dec.CACHE_BYTES = old
         dec.focus("다른 소스")
         assert len(fs.cache) <= dec.IDLE_FRAMES
+    # v0.7.70 출력 = 버튼 이름대로의 ProRes 프로파일(422 HQ > 422 > LT) · 옛 이름 호환 · 다시 인코딩해도 원본과 거의 같음
+    assert ff.prores_kind("422 HQ") == "422 HQ" and ff.prores_kind("422") == "422" and ff.prores_kind("422 LT") == "LT"
+    src_fr = [ff.grab(info, k, 16) for k in range(6)]
+    res_q = {}
+    for kind, tag in (("422 HQ", "apch"), ("422", "apcn"), ("LT", "apcs")):
+        qf = work / f"q_{kind.replace(' ', '')}.mov"
+        wq = ff.Writer(str(qf), info, kind, audio=False)
+        for f_ in src_fr:
+            wq.write(f_)
+        wq.close()
+        iq = ff.probe(str(qf))
+        d = np.mean([(np.abs(ff.grab(iq, k, 16).astype(np.float64) - src_fr[k]) / 65535).mean() for k in range(6)])
+        res_q[kind] = (d, qf.stat().st_size)
+        with open(qf, "rb") as fh:
+            assert tag.encode() in fh.read(), f"{kind} 가 {tag} 로 안 나감"
+    assert res_q["422 HQ"][0] < 0.004, res_q
+    assert res_q["422 HQ"][1] > res_q["422"][1] > res_q["LT"][1], res_q
     # v0.7.54 인코더가 먼저 죽으면 멈추지 않고 이유를 알림
     wbad = ff.Writer(str(work / "없는폴더" / "x.mov"), info, audio=False)
     try:

@@ -198,7 +198,7 @@ class AutoDialog(DragMove, QDialog):
                 continue
             self.clips.append({"idx": i, "name": s.name, "inc": True, "mode": s.mode if s.mode != "sign" else "sign",
                                "both": bool(getattr(s, "both", False)), "measured": None, "prog": None,
-                               "c": s.custom, "outp": "HQ"})
+                               "c": s.custom, "outp": ff.prores_kind(rs.get("prores", "422 HQ"))})
         # 창 높이: 클립 수에 맞춰 늘리되 최대 LIST_MAX 줄(넘으면 목록만 스크롤). 폭은 고정.
         rows = min(len(self.clips), LIST_MAX)
         list_h = rows * CLIP_ROW + 12                    # 목록 몸통(ClipRow 30 + 간격 4 ≈ CLIP_ROW)
@@ -302,8 +302,11 @@ class AutoDialog(DragMove, QDialog):
         self.seg_strength, self.set_strength = _seg([("weak", "약"), ("mid", "중"), ("strong", "강"), ("strongplus", "강+")], self.strength,
                                                     self._on_strength, lw=AUTO_LW, label="강도")
         right.addWidget(self.seg_strength)
+        # 출력 = 버튼 이름 그대로의 ProRes(422 HQ · 422 · LT). 처음 선택 = ⚙ 렌더 설정값
+        _cur = ff.prores_kind(self.state.settings.render.get("prores", "422 HQ"))
         self.seg_out, self.set_out = _seg([("hq", "422 HQ"), ("std", "422"), ("lt", "LT")],
-                                          "hq", self._on_out, lw=AUTO_LW, label="출력")
+                                          {"422 HQ": "hq", "422": "std", "LT": "lt"}[_cur],
+                                          self._on_out, lw=AUTO_LW, label="출력")
         right.addWidget(self.seg_out)
         nrow = QHBoxLayout()
         nlb = QLabel("이름")
@@ -484,11 +487,11 @@ class AutoDialog(DragMove, QDialog):
         return c["mode"]
 
     def _out_chip(self, c):
-        return c["outp"] + ("+α" if self._resolved_work(c) in ("blur", "sign") else "")
+        return {"422 HQ": "HQ"}.get(c["outp"], c["outp"]) + ("+α" if self._resolved_work(c) in ("blur", "sign") else "")
 
     def _on_out(self, k):
         for c in self._targets():
-            c["outp"] = {"hq": "HQ", "std": "422", "lt": "LT"}[k]
+            c["outp"] = {"hq": "422 HQ", "std": "422", "lt": "LT"}[k]
         self._refresh()
 
     def _on_name(self, t):
@@ -819,7 +822,8 @@ class AutoDialog(DragMove, QDialog):
             self._render_t0 = time.monotonic()        # 경과시간용
             self._render_out = out_dir                 # [폴더 열기]용
             mw._suppress_render_popup = True           # MainWindow 중복 팝업 억제(이 창이 직접 띄움)
-            self._renders = mw.render_auto(idxs, out_dir, self.name)
+            # 클립마다 고른 출력(422/LT)을 실제 렌더에 반영(예전: 표시만 바뀌고 렌더는 ⚙ 설정값으로 나갔음)
+            self._renders = mw.render_auto(idxs, out_dir, self.name, {c["idx"]: c["outp"] for c in self.clips})
             from PySide6.QtCore import QTimer
             self._rt = QTimer(self, interval=250, timeout=self._render_tick)
             self._rt.start()

@@ -269,7 +269,7 @@ class ControlPanel(QWidget):
         for s in (self.sec_beauty, self.sec_bell, self.sec_blur, self.sec_xell, self.sec_det, *self.sign_secs,
                   self.sec_edit):
             self.bl.addWidget(s)
-        # [분석] — 패널 맨 아래 고정, 눈에 띄게 크고 파랗게(분석=측정 색)
+        # [분석] — 타원 편집 묶음 바로 아래(v0.7.70 사용자: 맨 아래 고정은 눈에 안 띔), 크고 파랗게(분석=측정 색)
         from PySide6.QtWidgets import QSizePolicy
         self.b_analyze = btn("분석", "이 클립을 분석(얼굴·트래킹) — 타원·검수·재생이 정확해집니다",
                              size=BTN_MAIN, on_click=self.analyze_clicked.emit)
@@ -279,15 +279,15 @@ class ControlPanel(QWidget):
         self.b_analyze.setFixedHeight(BTN_MAIN[1] + 8)
         self.b_analyze.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         _ar = QHBoxLayout()
-        _ar.setContentsMargins(6, 8, 6, 2)
+        _ar.setContentsMargins(6, 10, 6, 6)
         _ar.addWidget(self.b_analyze)
         _aw = QWidget()
         _aw.setLayout(_ar)
         self.multi_lb = QLabel("")
         self.multi_lb.setStyleSheet("background:#3a3320;color:#f0d37a;border-radius:3px;padding:4px 8px;font-size:11px")
         self.multi_lb.setVisible(False)
+        self.bl.addWidget(_aw)               # 타원 편집 묶음 바로 아래(스크롤 안)
         outer.addWidget(self.multi_lb)
-        outer.addWidget(_aw)                 # v0.7.54 스크롤 밖(패널 맨 아래 고정) — 창이 작아도 항상 보임
         self.bl.addStretch(1)
 
         self.state.current_changed.connect(self.refresh)

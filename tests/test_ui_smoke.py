@@ -276,7 +276,7 @@ def main():
     w.grab().save(str(out / "2_beauty_split.png"))
     # v0.7.54 키는 볼 때만 계산 · [분석] 버튼은 스크롤 밖(항상 보임) · 피부색 찍기 동작
     assert "final" not in w.result, "키 보기가 꺼져 있는데 키를 계산함"
-    assert not w.panel.b_analyze.visibleRegion().isEmpty(), "[분석] 버튼이 안 보임"
+    assert w.panel.b_analyze.parentWidget() is not None      # v0.7.70: [분석] 은 타원 편집 묶음 아래(스크롤 안)
     w.panel.set_key("final")
     assert pump(app, 10, lambda: w.result is not None and "final" in w.result), "키를 켰는데 계산 안 됨"
     w.grab().save(str(out / "3_beauty_split_key.png"))
