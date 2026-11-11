@@ -6,10 +6,12 @@ from PySide6.QtGui import QColor, QIntValidator, QPainter
 from PySide6.QtWidgets import (QDialog, QFrame, QButtonGroup, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSlider,
                                QVBoxLayout, QWidget)
 
-def bring_front(w):
-    """창을 다른 프로그램들보다 맨 앞으로(v0.7.57 처음 실행 때 뒤에 숨어 안 보이던 것).
-    윈도우는 프로그램이 스스로 앞으로 나오는 걸 막을 때가 있어서, 잠깐 '항상 위'로 올렸다가 바로 해제
-    (창 순서만 맨 위로, 계속 위에 붙어 있지는 않음) + 포커스 요청."""
+def bring_front(w, retry=True):
+    """창을 다른 프로그램들보다 맨 앞으로(v0.7.57 처음 실행 때 뒤에 숨어 안 보이던 것, v0.7.58 실제로 동작하게).
+    윈도우는 '지금 앞에 있는 프로그램'이 아니면 스스로 앞으로 나오는 걸 막음(실행 중 몇 초 사이 탐색기 등을 누른 경우).
+    순서: 창 순서 맨 위(잠깐 TOPMOST → NOTOPMOST) → 앞 프로그램 입력에 잠깐 붙어서 포커스 가져오기
+    → 그래도 안 되면 Alt 키 한 번(윈도우가 허용하는 방법) → 그래도 안 되면 작업표시줄 깜빡임.
+    프로그램이 뜨는 동안 다른 창이 앞을 다시 가져갈 수 있어 0.4초·1.2초 뒤 한 번씩 더 확인."""
     try:
         w.raise_()
         w.activateWindow()
@@ -19,15 +21,78 @@ def bring_front(w):
     if sys.platform != "win32":
         return
     try:
-        import ctypes
-        u = ctypes.windll.user32
-        hwnd = int(w.winId())
-        flags = 0x0001 | 0x0002 | 0x0040          # SWP_NOSIZE | SWP_NOMOVE | SWP_SHOWWINDOW
-        u.SetWindowPos(hwnd, -1, 0, 0, 0, 0, flags)   # HWND_TOPMOST
-        u.SetWindowPos(hwnd, -2, 0, 0, 0, 0, flags)   # HWND_NOTOPMOST
-        u.SetForegroundWindow(hwnd)
+        _win_front(int(w.winId()))
     except Exception:  # noqa: BLE001
         pass
+    if retry:
+        from PySide6.QtCore import QTimer
+        for ms in (400, 1200):
+            QTimer.singleShot(ms, lambda: w.isVisible() and bring_front(w, retry=False))
+
+
+_U32 = None
+
+
+def _user32():
+    """user32 함수 형식 지정(64비트에서 창 번호·HWND_TOPMOST(-1)가 32비트로 잘려 엉뚱하게 넘어가던 것 방지)."""
+    global _U32
+    if _U32 is None:
+        import ctypes
+        from ctypes import wintypes as wt
+        u = ctypes.WinDLL("user32", use_last_error=True)
+        u.SetWindowPos.argtypes = [wt.HWND, wt.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wt.UINT]
+        u.SetWindowPos.restype = wt.BOOL
+        u.GetForegroundWindow.restype = wt.HWND
+        u.GetWindowThreadProcessId.argtypes = [wt.HWND, ctypes.POINTER(wt.DWORD)]
+        u.GetWindowThreadProcessId.restype = wt.DWORD
+        u.AttachThreadInput.argtypes = [wt.DWORD, wt.DWORD, wt.BOOL]
+        u.SetForegroundWindow.argtypes = [wt.HWND]
+        u.BringWindowToTop.argtypes = [wt.HWND]
+        u.ShowWindow.argtypes = [wt.HWND, ctypes.c_int]
+        u.IsIconic.argtypes = [wt.HWND]
+        u.keybd_event.argtypes = [wt.BYTE, wt.BYTE, wt.DWORD, ctypes.c_size_t]
+        u.FlashWindowEx.argtypes = [ctypes.c_void_p]
+        _U32 = u
+    return _U32
+
+
+def _win_front(hwnd) -> bool:
+    import ctypes
+    from ctypes import wintypes as wt
+    u = _user32()
+    k32 = ctypes.WinDLL("kernel32")
+    h = wt.HWND(hwnd)
+    if u.IsIconic(h):
+        u.ShowWindow(h, 9)                                   # SW_RESTORE
+    flags = 0x0001 | 0x0002 | 0x0040                         # SWP_NOSIZE | SWP_NOMOVE | SWP_SHOWWINDOW
+    u.SetWindowPos(h, wt.HWND(-1), 0, 0, 0, 0, flags)       # HWND_TOPMOST
+    u.SetWindowPos(h, wt.HWND(-2), 0, 0, 0, 0, flags)       # HWND_NOTOPMOST(계속 위에 붙어 있지 않게)
+    fg = u.GetForegroundWindow()
+    if fg == hwnd:
+        return True
+    me = k32.GetCurrentThreadId()
+    other = u.GetWindowThreadProcessId(fg, None) if fg else 0
+    attached = bool(other and other != me and u.AttachThreadInput(me, other, True))
+    try:
+        u.BringWindowToTop(h)
+        u.SetForegroundWindow(h)
+    finally:
+        if attached:
+            u.AttachThreadInput(me, other, False)
+    if u.GetForegroundWindow() == hwnd:
+        return True
+    u.keybd_event(0x12, 0, 0, 0)                             # Alt 누름/뗌 → 포커스 가져오기 허용
+    u.keybd_event(0x12, 0, 2, 0)
+    u.SetForegroundWindow(h)
+    if u.GetForegroundWindow() == hwnd:
+        return True
+
+    class FLASHWINFO(ctypes.Structure):
+        _fields_ = [("cbSize", wt.UINT), ("hwnd", wt.HWND), ("dwFlags", wt.DWORD),
+                    ("uCount", wt.UINT), ("dwTimeout", wt.DWORD)]
+    fi = FLASHWINFO(ctypes.sizeof(FLASHWINFO), h, 0x3 | 0xC, 3, 0)  # 창+작업표시줄, 앞에 올 때까지
+    u.FlashWindowEx(ctypes.byref(fi))
+    return False
 
 
 BTN = (76, 28)

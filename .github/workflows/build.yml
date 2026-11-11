@@ -154,6 +154,14 @@ jobs:
           python tests/test_ui_smoke.py engine_test/synth.mov ui_shots
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
+      - name: Front test (창 맨 앞으로, 윈도우 데스크톱)
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $env:PYTHONIOENCODING = "utf-8"
+          $env:PYTHONUNBUFFERED = "1"
+          python tests/test_front.py
+
       - name: Smoke test (exe 실행 + 모델 로드)
         shell: pwsh
         run: |
