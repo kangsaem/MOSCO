@@ -207,7 +207,7 @@ def main():
 
 
 def eye_area():
-    """v0.7.62 '눈가 포함': 눈 근처는 색과 상관없이 보정 영역에 들어감 · 꺼져 있으면 그대로 · 눈가 밖은 영향 없음."""
+    """v0.7.63 추가 피부색(섀도 등) · 눈 제외 크기 슬라이더."""
     from mosco import fx, models
     from mosco.project import BEAUTY_DEFAULT
     rng = np.random.default_rng(3)
@@ -218,24 +218,41 @@ def eye_area():
     for eye, brow, cx in ((models.LEFT_EYE, models.LEFT_BROW, 360), (models.RIGHT_EYE, models.RIGHT_BROW, 240)):
         te = np.linspace(0, 2 * np.pi, len(eye), endpoint=False)
         pts[eye] = np.c_[cx + 28 * np.cos(te), 260 + 10 * np.sin(te)]
-        pts[brow] = np.c_[np.linspace(cx - 32, cx + 32, len(brow)), np.full(len(brow), 232)]
+        pts[brow] = np.c_[np.linspace(cx - 32, cx + 32, len(brow)), np.full(len(brow), 222)]
     pts[models.LIPS] = np.c_[300 + 40 * np.cos(np.linspace(0, 6.28, len(models.LIPS))),
                              400 + 12 * np.sin(np.linspace(0, 6.28, len(models.LIPS)))]
-    m = fx.eye_area_mask(pts, (0, 0, 600, 600), 300.0)
-    assert m[282, 360] > 0.9 and m[246, 240] > 0.9 and m[330, 300] < 0.05 and m[150, 300] < 0.05, "눈가 영역이 다름"
+    roi = (0, 0, 600, 600)
+    # 눈 제외 크기: 0 = 눈 구멍 없음 · 50 = 줄어듦 · 100 = 기본 · 200 = 넓어짐. 눈썹·입은 그대로
+    fm = {e: fx.feature_mask(pts, roi, 300.0, e) for e in (0, 50, 100, 200)}
+    assert fm[0][260, 360] < 0.05 and fm[100][260, 360] > 0.9, "눈 가운데"
+    assert fm[50][260, 384] < 0.2 < fm[100][260, 384], "50% 면 눈 가장자리는 빠져야 함"
+    assert fm[200][260, 398] > fm[100][260, 398] + 0.3, "200% 면 넓어져야 함"
+    for e in fm:
+        assert fm[e][400, 300] > 0.9 and fm[e][222, 360] > 0.5 and abs(fm[e][222, 360] - fm[100][222, 360]) < 1e-6, \
+            "눈썹·입 제외는 그대로"
     skin = np.array([0.78, 0.60, 0.50], np.float32)
     img = np.tile(skin, (600, 600, 1)) + rng.normal(0, 0.01, (600, 600, 3)).astype(np.float32)
-    img[225:300, 190:410] = (0.25, 0.12, 0.30)                      # 짙은 아이섀도(피부색 아님)
+    img[232:300, 190:410] = (0.42, 0.26, 0.48)                      # 보라 섀도(피부색 아님)
     fr = (np.clip(img, 0, 1) * 65535).astype(np.uint16)
     it = edits.Item(("t", 1), 1, (300.0, 300.0, 420.0, 520.0, 0.0), pts)
-    reg = {}
-    for on in (False, True):
-        r = fx.beauty(fr, [it], dict(BEAUTY_DEFAULT, eye_area=on, skin_ref=[-0.06, 0.07]), 0, want_keys=True)
-        reg[on] = r.region
-    assert reg[False][284, 360] < 0.3 and reg[True][284, 360] > 0.7, (reg[False][284, 360], reg[True][284, 360])
-    assert abs(reg[True][340, 300] - reg[False][340, 300]) < 0.02, "눈가 밖이 바뀜"
-    assert reg[True][260, 360] < 0.2, "눈 자체는 제외돼야 함"
-    print("eye area OK")
+    shadow = fx.pick_skin(fr, 300, 280)
+    assert len(shadow) == 3 and fx.ref_rgb(shadow)[2] > fx.ref_rgb(shadow)[1], shadow
+    base = dict(BEAUTY_DEFAULT, skin_ref=[-0.06, 0.07], unify=60)
+    r0 = fx.beauty(fr, [it], base, 0, want_keys=True)
+    r1 = fx.beauty(fr, [it], dict(base, skin_extra=[shadow]), 0, want_keys=True)
+    assert r0.region[284, 300] < 0.2 and r1.region[284, 300] > 0.7, (r0.region[284, 300], r1.region[284, 300])
+    assert abs(r1.region[340, 300] - r0.region[340, 300]) < 0.02, "섀도 밖이 바뀜"
+    # 추가 피부색 영역은 색 통일 제외 → 섀도 색 유지
+    def chroma(o):
+        f = o[276:292, 280:320].astype(np.float32) / 65535
+        return float((f[..., 2] - f[..., 1]).mean())
+    nw = dict(base, wrinkle=0, grain=0)             # (주름 메우기는 이 합성의 각진 어두운 면을 골로 보고 올림 → 빼고 비교)
+    kept = fx.beauty(fr, [it], dict(nw, skin_extra=[shadow]), 0).out
+    assert abs(chroma(kept) - chroma(fr)) < 0.004, (chroma(kept), chroma(fr))
+    # 눈 구멍 0 + 추가 피부색 → 눈 자리까지 보정 영역
+    r2 = fx.beauty(fr, [it], dict(base, skin_extra=[shadow], eye_hole=0), 0, want_keys=True)
+    assert r1.region[260, 360] < 0.2 < 0.7 < r2.region[260, 360]
+    print("skin extra · eye hole OK")
 
 
 def names_and_presets():

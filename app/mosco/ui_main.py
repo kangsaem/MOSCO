@@ -149,6 +149,7 @@ def compute_preview(src, frame16, plan, i, scale=1.0, keys=True):
         r = fx.beauty(frame16, items, p, i, want_keys=keys)
         out["fx"] = to8(r.out)
         out["ells"] = entries(r.ells)
+        out["ref"] = r.ref                           # 이 프레임에서 쓴 기준 피부색(자동이면 계산값) — 칩 표시용
         focus = next((e for it, e in r.ells if not it.manual), r.ells[0][1] if r.ells else None)
         out["focus"] = focus
         if keys:
@@ -901,6 +902,8 @@ class MainWindow(QMainWindow):
                 self._overlay_from_track(self.f)
             return
         v = self.panel.view_mode()
+        if r.get("ref") is not None:
+            self.panel.set_auto_ref(r["ref"])
         k = self.panel.key_mode
         if k != "off" and "final" not in r:      # 키를 방금 켬 — 이 프레임의 키를 계산(그동안은 보정 화면)
             self._param_t.start()
@@ -1002,7 +1005,19 @@ class MainWindow(QMainWindow):
     def on_pick(self, x, y):
         if not self.frame_cache:
             return
-        ref = fx.pick_skin(self.frame_cache[3], x, y)      # (path, i, scale, frame16)
+        ref = fx.pick_skin(self.frame_cache[3], x, y)      # (path, i, scale, frame16) → [cb, cr, y]
+        if self.panel.pick_target == "extra":              # v0.7.63 추가 피부색(최대 2개)
+            s = self.state.source()
+            ex = [list(e) for e in (s.beauty.get("skin_extra") or [])] if s else []
+            if len(ex) >= 2:
+                self.panel.stop_pick()
+                self.flash("추가 피부색은 2개까지 — 칩을 눌러 지운 뒤 다시 찍으세요")
+                return
+            self.state.set_param("skin_extra", ex + [ref], undo=True)
+            self.panel.stop_pick()
+            self.flash(f"추가 피부색 {len(ex) + 1}/2: Cb {ref[0]:+.3f} · Cr {ref[1]:+.3f}"
+                       + (" — 어두운 색입니다(머리카락·눈썹까지 들어갈 수 있음)" if ref[2] < 0.12 else ""))
+            return
         self.state.set_param("skin_ref", ref, undo=True)
         self.panel.stop_pick()
         self.flash(f"피부색: Cb {ref[0]:+.3f} · Cr {ref[1]:+.3f}")

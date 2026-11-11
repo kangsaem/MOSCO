@@ -125,7 +125,7 @@ def info_popup(parent, title, msg, buttons):
         res["v"] = v
         dlg.accept()
     for label, value, red, w in buttons:
-        row.addWidget(btn(label, w=w, red=red, on_click=lambda v=value: pick(v)))
+        row.addWidget(btn(label, w=w, red=red, on_click=lambda _=False, v=value: pick(v)))
     lay.addLayout(row)
     dlg.exec()
     return res["v"]

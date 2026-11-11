@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import QPoint, Qt, Signal
 from PySide6.QtWidgets import (QDialog, QFrame, QGridLayout, QHBoxLayout, QInputDialog, QLabel, QMenu,
-                               QMessageBox, QScrollArea, QToolButton, QVBoxLayout, QWidget)
+                               QMessageBox, QPushButton, QScrollArea, QToolButton, QVBoxLayout, QWidget)
 
 from . import autodetect as ad
 from . import project as P
@@ -128,10 +128,40 @@ class ControlPanel(QWidget):
         self.b_pick.setCheckable(True)
         self.b_pick.toggled.connect(self._pick)
         rr.addWidget(self.b_pick)
-        rr.addWidget(btn("자동", "피부색 자동(얼굴에서)", on_click=lambda: self.state.set_param("skin_ref", None, undo=True)))
+        rr.addWidget(btn("자동", "피부색 자동(얼굴에서)", w=48, on_click=lambda: self.state.set_param("skin_ref", None, undo=True)))
+        self.b_addskin = btn("피부색 추가", "피부색이 아닌 화장(섀도·볼터치 등)을 모니터에서 클릭 → 그 색도 피부로 보정. 최대 2개.\n"
+                             "검은색(아이라인·속눈썹)은 찍지 마세요 — 머리카락·눈썹까지 피부가 됩니다", w=88)
+        self.b_addskin.setCheckable(True)
+        self.b_addskin.toggled.connect(self._pick_extra)
+        rr.addWidget(self.b_addskin)
         w = QWidget()
         w.setLayout(rr)
         self.sec_beauty.add(w)
+        # 피부색 칩: 기준색 1 + 추가색 2 (v0.7.63)
+        self.pick_target = "base"
+        self.auto_ref = None                  # 자동일 때 마지막으로 계산된 피부색(표시용)
+        cr_ = QHBoxLayout()
+        cr_.setSpacing(4)
+        cr_.addStretch(1)
+        lb = QLabel("피부색")
+        lb.setStyleSheet("color:#9a9a9a;font-size:11px")
+        cr_.addWidget(lb)
+        self.chip_base = QPushButton()
+        self.chips_extra = [QPushButton(), QPushButton()]
+        for k, c in enumerate([self.chip_base] + self.chips_extra):
+            c.setFixedSize(22, 18)
+            c.setFocusPolicy(Qt.NoFocus)
+            if k == 1:
+                plus = QLabel("+")
+                plus.setStyleSheet("color:#9a9a9a;font-size:11px")
+                cr_.addWidget(plus)
+            cr_.addWidget(c)
+        self.chip_base.setEnabled(False)
+        for k, c in enumerate(self.chips_extra):
+            c.clicked.connect(lambda _=False, k=k: self._del_extra(k))
+        wc = QWidget()
+        wc.setLayout(cr_)
+        self.sec_beauty.add(wc)
         self._rows(self.sec_beauty, "beauty", P.BEAUTY_SLIDERS)
         self.sec_bell = Section("타원")
         self._rows(self.sec_bell, "beauty", P.BEAUTY_ELLIPSE)
@@ -154,14 +184,10 @@ class ControlPanel(QWidget):
         wb.setLayout(rb)
         self.sec_det.add(wb)
         # 뷰티: 눈·입 제외
-        self.t_feat = Toggle("눈·입 제외", w=88, tip="눈·눈썹·입은 보정하지 않음")
+        self.t_feat = Toggle("눈·입 제외", w=88, tip="눈·눈썹·입은 보정하지 않음. 눈 구멍 크기는 [눈 제외 크기] 슬라이더로(0 = 눈 구멍 없음)")
         self.t_feat.toggled2.connect(lambda v: self.state.set_param("features", v, undo=True))
-        self.t_eye = Toggle("눈가 포함", w=88, tip="눈 근처(눈꺼풀·눈밑·눈꼬리)는 색과 상관없이 보정 — 짙은 아이섀도 때문에 눈가 주름이 안 잡힐 때.\n"
-                            "화장 색은 유지(색 통일 제외). 안경테·눈을 덮은 앞머리도 같이 매끈해질 수 있음")
-        self.t_eye.toggled2.connect(lambda v: self.state.set_param("eye_area", v, undo=True))
         rr2 = QHBoxLayout()
         rr2.addStretch(1)
-        rr2.addWidget(self.t_eye)
         rr2.addWidget(self.t_feat)
         wf = QWidget()
         wf.setLayout(rr2)
@@ -286,12 +312,68 @@ class ControlPanel(QWidget):
 
     def _pick(self, v):
         set_on(self.b_pick, v)
-        self.pick_skin.emit(v)
+        if v:
+            self.pick_target = "base"
+            if self.b_addskin.isChecked():
+                self.b_addskin.setChecked(False)
+        self.pick_skin.emit(v or self.b_addskin.isChecked())
+
+    def _pick_extra(self, v):
+        set_on(self.b_addskin, v)
+        if v:
+            self.pick_target = "extra"
+            if self.b_pick.isChecked():
+                self.b_pick.setChecked(False)
+        self.pick_skin.emit(v or self.b_pick.isChecked())
 
     def stop_pick(self):
-        if self.b_pick.isChecked():
-            self.b_pick.setChecked(False)
+        for b in (self.b_pick, self.b_addskin):
+            if b.isChecked():
+                b.setChecked(False)
         self.stop_tool()
+        self._chips()
+
+    def _del_extra(self, k):
+        s = self.state.source()
+        ex = list(s.beauty.get("skin_extra") or []) if s else []
+        if k < len(ex):
+            ex.pop(k)
+            self.state.set_param("skin_extra", ex, undo=True)
+
+    def set_auto_ref(self, ref):
+        """자동 피부색일 때 방금 계산된 값(칩 표시용)."""
+        if ref is not None and (self.auto_ref is None or tuple(ref[:2]) != tuple(self.auto_ref[:2])):
+            self.auto_ref = tuple(ref)
+            self._chips()
+
+    def _chips(self):
+        from . import fx
+        s = self.state.source()
+        b = s.beauty if s else {}
+        ref = b.get("skin_ref")
+
+        def paint(c, rgb, dashed=False, tip=""):
+            if rgb is None:
+                c.setStyleSheet("QPushButton{background:#1c1c1c;border:1px dashed #555;border-radius:2px}")
+            else:
+                c.setStyleSheet(f"QPushButton{{background:rgb({rgb[0]},{rgb[1]},{rgb[2]});"
+                                f"border:1px {'dashed' if dashed else 'solid'} #cfcfcf;border-radius:2px}}")
+            c.setToolTip(tip)
+        if ref:
+            paint(self.chip_base, fx.ref_rgb(ref), tip="기준 피부색(찍은 색)")
+        elif self.auto_ref is not None:
+            paint(self.chip_base, fx.ref_rgb(self.auto_ref), True, "기준 피부색: 자동(얼굴에서 계산)")
+        else:
+            paint(self.chip_base, None, tip="기준 피부색: 자동")
+        ex = list(b.get("skin_extra") or [])
+        for k, c in enumerate(self.chips_extra):
+            if k < len(ex):
+                paint(c, fx.ref_rgb(ex[k]), tip="추가 피부색 — 클릭하면 지움")
+                c.setEnabled(True)
+            else:
+                paint(c, None, tip="추가 피부색 없음([피부색 추가]로 찍기)")
+                c.setEnabled(False)
+        self.b_addskin.setEnabled(len(ex) < 2 or self.b_addskin.isChecked())
 
     def _tool(self, name, v):
         tog = {"add": self.b_add, "del": self.b_del, "merge": self.b_merge}
@@ -389,12 +471,12 @@ class ControlPanel(QWidget):
                 row.set(s.params_for(m)[k])
             self.kind.set(s.blur["kind"])
             self.skind.set(s.sign.get("kind", "blur"))
-            for t, v in ((self.t_body, s.blur.get("body", True)), (self.t_feat, s.beauty.get("features", True)),
-                         (self.t_eye, s.beauty.get("eye_area", False))):
+            for t, v in ((self.t_body, s.blur.get("body", True)), (self.t_feat, s.beauty.get("features", True))):
                 t.blockSignals(True)
                 t.setChecked(bool(v))
                 set_on(t, bool(v))
                 t.blockSignals(False)
+            self._chips()
         self.sec_edit.setEnabled(en)
         self._sync_preset(s)
 
@@ -564,7 +646,7 @@ class PresetGridPopup(DragMove, QDialog):          # 빈 바탕을 끌어 옮김
             wrap.setHorizontalSpacing(6)
             wrap.setVerticalSpacing(6)
             for i, n in enumerate(names):
-                b = btn(n, f"'{n}' 적용", w=104, on_click=lambda n=n: self._use_named(n))
+                b = btn(n, f"'{n}' 적용", w=104, on_click=lambda _=False, n=n: self._use_named(n))
                 b.setContextMenuPolicy(Qt.CustomContextMenu)
                 b.customContextMenuRequested.connect(lambda pos, n=n, b=b: self._named_menu(n, b.mapToGlobal(pos)))
                 wrap.addWidget(b, i // 3, i % 3)

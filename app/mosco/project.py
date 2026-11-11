@@ -23,7 +23,8 @@ def out_stem(name: str) -> str:
 BEAUTY_DEFAULT = {
     "strength": 50, "wrinkle": 50, "texture": 35, "grain": 15, "skin_range": 40, "unify": 20,   # v0.7.57 피부 범위 50→40
     "size": 165, "feather": 20, "neck": 40, "stabilize": 50, "skin_ref": None, "features": True,
-    "eye_area": False,   # v0.7.62 눈가 포함: 눈 근처는 피부색 판정을 건너뜀(짙은 아이섀도). 기본 꺼짐
+    "skin_extra": [],    # v0.7.63 추가 피부색(최대 2개, [cb, cr, y]) — 섀도 등 피부색이 아닌 화장을 피부로 판정
+    "eye_hole": 100,     # v0.7.63 눈 제외 크기 %(0 = 눈 구멍 없음 … 100 = 기본 … 200 = 넓게). 눈썹·입은 [눈·입 제외]
 }
 BLUR_DEFAULT = {
     "kind": "blur", "strength": 70, "margin": 160, "feather": 10, "stabilize": 50,
@@ -40,6 +41,7 @@ BEAUTY_SLIDERS = [
     ("strength", "매끈 강도", 0, 100, ""), ("wrinkle", "주름 메우기", 0, 100, ""),
     ("texture", "질감 보존", 0, 100, ""), ("grain", "그레인", 0, 100, ""),
     ("skin_range", "피부 범위", 0, 100, ""), ("unify", "색 통일", 0, 100, ""),
+    ("eye_hole", "눈 제외 크기", 0, 200, "%"),
 ]
 BEAUTY_ELLIPSE = [
     ("size", "크기", 100, 220, "%"), ("feather", "페더", 0, 30, "%"), ("neck", "목 확장", 0, 100, ""),

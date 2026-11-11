@@ -545,8 +545,7 @@ class AutoDialog(DragMove, QDialog):
                     ("피부 범위", params["skin_range"]), ("색 통일", params["unify"]),
                     ("타원 크기", f"{params['size']}%"), ("페더", f"{params['feather']}%"),
                     ("목 확장", params["neck"]), ("떨림 보정", params["stabilize"]),
-                    ("눈·입 제외", "켬" if params.get("features", True) else "끔"),
-                    ("눈가 포함", "켬" if params.get("eye_area") else "끔")]
+                    ("눈·입 제외", "켬" if params.get("features", True) else "끔")]
         elif mode == "sign":
             keys = [("민감도", params["sensitivity"]), ("최소 글자", f"{params['min_size']}px"),
                     ("최대 개수", params["max_count"]), ("여유", f"{params['margin']}%"),

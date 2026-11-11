@@ -125,7 +125,39 @@ def extras(app, w, st, vids, out):
     st.set_param("strength", 61)
     dlg = PresetGridPopup(w.panel, "beauty", st.source())
     assert dlg.sseg.value() is None and not dlg.b_apply.isEnabled()
-    print("redo · relink · autosave · preset OK")
+    # v0.7.63 버튼 클릭 신호(checked=False)가 인자를 덮던 버그: 저장된 프리셋 버튼 · 팝업 버튼
+    dlg = PresetGridPopup(w.panel, "beauty", st.source())
+    nm = next(iter(dlg.named))
+    dlg.named[nm].click()
+    assert dlg.label == nm and dlg.result is not None, dlg.label
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QDialog, QPushButton
+    from mosco.ui_widgets import info_popup
+
+    def press():
+        for d2 in app.topLevelWidgets():
+            if isinstance(d2, QDialog) and d2.isVisible():
+                [b for b in d2.findChildren(QPushButton) if b.text() == "복구"][0].click()
+    QTimer.singleShot(300, press)
+    assert info_popup(w, "t", "m", [("버리기", "drop", False, 80), ("복구", "restore", True, 88)]) == "restore"
+    # v0.7.63 피부색 추가(최대 2개) · 칩 · 눈 제외 크기 슬라이더
+    assert ("beauty", "eye_hole") in w.panel.rows and not hasattr(w.panel, "t_eye")
+    st.select(0)
+    w.seek(5)
+    assert pump(app, 10, lambda: w.frame_cache is not None and w.result is not None)
+    for k in range(3):
+        w.panel.b_addskin.setChecked(True)
+        assert w.panel.pick_target == "extra"
+        w.on_pick(200 + k * 40, 200)
+    assert len(st.source().beauty["skin_extra"]) == 2 and not w.panel.b_addskin.isEnabled(), st.source().beauty["skin_extra"]
+    w.panel.chips_extra[0].click()
+    assert len(st.source().beauty["skin_extra"]) == 1 and w.panel.b_addskin.isEnabled()
+    w.panel.b_pick.setChecked(True)
+    w.on_pick(300, 300)
+    assert st.source().beauty.get("skin_ref") and len(st.source().beauty["skin_extra"]) == 1
+    st.set_param("skin_extra", [])
+    st.set_param("skin_ref", None)
+    print("redo · relink · autosave · preset · skin extra OK")
 
 
 def main():

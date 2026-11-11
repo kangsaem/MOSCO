@@ -118,21 +118,23 @@ def skin_ref_auto(rgbf, pts, x0, y0):
     return float(np.median(cb)), float(np.median(cr))
 
 
-def skin_mask(rgbf, ref, rng):
-    """피부색 키(0~1). ref=(cb,cr), rng=피부 범위 0~100."""
+def skin_mask(rgbf, ref, rng, extra=()):
+    """피부색 키(0~1). ref=(cb,cr), rng=피부 범위 0~100. extra = 추가 피부색들(v0.7.63, 섀도 등) — 어느 색에든 가까우면 피부."""
     y, cb, cr = _ycc(rgbf)
     sig = 0.012 + rng / 100 * 0.05
     d2 = (cb - ref[0]) ** 2 + (cr - ref[1]) ** 2
+    for e in extra or ():
+        d2 = np.minimum(d2, (cb - e[0]) ** 2 + (cr - e[1]) ** 2)
     m = np.exp(-d2 / (2 * sig * sig))
     m *= np.clip((y - 0.04) / 0.08, 0, 1)            # 아주 어두운 곳 제외
     return m.astype(np.float32)
 
 
-def skin_mask_soft(rgbf, ref, rng, face_w):
+def skin_mask_soft(rgbf, ref, rng, face_w, extra=()):
     """주름 골(어둡고 색이 다른 가는 선)이 빠지지 않게: 흐린 영상으로 색 판정 → 구멍 메움 → 부드럽게.
     v0.7.17: 피부로 판정된 안쪽은 음영이 있어도 고르게 희게(ease-out), 바깥(0)은 그대로."""
     sig = max(1.0, face_w / 70)
-    m = skin_mask(cv2.GaussianBlur(rgbf, (0, 0), sig), ref, rng)
+    m = skin_mask(cv2.GaussianBlur(rgbf, (0, 0), sig), ref, rng, extra)
     k = max(3, int(face_w / 30) | 1)
     m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
     m = cv2.GaussianBlur(m, (0, 0), sig)
@@ -175,30 +177,30 @@ def _fill_groups(m, pts, off, groups, pad_px):
     np.maximum(m, g, out=m)
 
 
-def feature_mask(pts, roi, face_w):
+def feature_mask(pts, roi, face_w, eye=100):
     """눈·눈썹·입 제외 마스크(1=제외). v0.7.21: 눈·눈썹 제외 영역을 작게 — 눈가·눈밑 주름은 보정에 포함.
-    (눈꺼풀 자체만 가리고, 바깥쪽 crow's feet·눈밑은 살림. 입은 그대로.)"""
+    eye = '눈 제외 크기' %(v0.7.63): 100 = 기본, 0 = 눈 구멍 없음, 100 미만 = 눈 가운데로 줄어듦, 초과 = 넓어짐.
+    눈썹·입은 그대로."""
     x0, y0, x1, y1 = roi
     m = np.zeros((y1 - y0, x1 - x0), np.float32)
     off = np.array([x0, y0], np.float32)
-    _fill_groups(m, pts, off, (models.LEFT_EYE, models.RIGHT_EYE), face_w * 0.012)   # 눈: 아주 작게
-    _fill_groups(m, pts, off, (models.LEFT_BROW, models.RIGHT_BROW), face_w * 0.015)  # 눈썹: 작게
-    _fill_groups(m, pts, off, (models.LIPS,), face_w * 0.015)                         # 입: 작게(입가·팔자 주름 살림, 입술만 가림)
-    return cv2.GaussianBlur(m, (0, 0), max(1.0, face_w * 0.012))
-
-
-def eye_area_mask(pts, roi, face_w):
-    """눈가 영역(1=눈가) — 눈꺼풀~눈썹 아래 · 눈밑 · 눈꼬리 바깥(v0.7.62 '눈가 포함').
-    이 안은 피부색 판정을 건너뛰어 짙은 아이섀도 위의 주름도 보정됨. 눈·눈썹 자체는 feature_mask 가 따로 가림."""
-    x0, y0, x1, y1 = roi
-    m = np.zeros((y1 - y0, x1 - x0), np.float32)
-    off = np.array([x0, y0], np.float32)
-    _fill_groups(m, pts, off, (models.LEFT_EYE + models.LEFT_BROW, models.RIGHT_EYE + models.RIGHT_BROW),
-                 face_w * EYE_AREA_PAD)
-    return cv2.GaussianBlur(m, (0, 0), max(1.0, face_w * 0.02))
-
-
-EYE_AREA_PAD = 0.07      # 눈+눈썹 윤곽에서 바깥으로 넓히는 양(얼굴 폭 비율) — 눈밑·눈꼬리까지
+    s = max(0.0, float(eye)) / 100.0
+    if s > 0:
+        g = np.zeros_like(m)
+        k = min(1.0, s) if s <= 1 else 1.0 + (s - 1.0) * 0.5         # 윤곽 자체를 가운데 기준으로 줄이거나 키움
+        for grp in (models.LEFT_EYE, models.RIGHT_EYE):
+            q = pts[grp]
+            c = q.mean(0)
+            p = (((q - c) * k + c - off) * 16).astype(np.int32)
+            cv2.fillPoly(g, [cv2.convexHull(p)], 1.0, cv2.LINE_AA, 4)
+        pad = max(0, int(face_w * 0.012 * s))
+        if pad:
+            g = cv2.dilate(g, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * pad + 1, 2 * pad + 1)))
+        np.maximum(m, cv2.GaussianBlur(g, (0, 0), max(0.6, face_w * 0.012 * min(1.0, s))), out=m)
+    b = np.zeros_like(m)
+    _fill_groups(b, pts, off, (models.LEFT_BROW, models.RIGHT_BROW), face_w * 0.015)  # 눈썹: 작게
+    _fill_groups(b, pts, off, (models.LIPS,), face_w * 0.015)                         # 입: 작게(입가·팔자 주름 살림, 입술만 가림)
+    return np.maximum(m, cv2.GaussianBlur(b, (0, 0), max(1.0, face_w * 0.012)))
 
 
 def nostril_mask(yimg, pts, x0, y0, face_w):
@@ -291,12 +293,12 @@ def beauty(frame16, items, p, frame_no=0, want_keys=False) -> BeautyResult:
         if ref is None:
             ref = (-0.06, 0.07)
         res.ref = res.ref or ref
-        skin = skin_mask_soft(img, ref, p["skin_range"], face_w)
-        eye_area = None
-        if pts is not None and p.get("eye_area"):
-            # '눈가 포함': 눈 근처는 색과 상관없이 피부로(짙은 아이섀도 때문에 눈가 주름이 빠지던 것)
-            eye_area = eye_area_mask(pts, roi, face_w)
-            skin = np.maximum(skin, eye_area)
+        extra = [e for e in (p.get("skin_extra") or []) if e and len(e) >= 2]
+        skin = skin_mask_soft(img, ref, p["skin_range"], face_w, extra)
+        added = None                # 추가 피부색으로만 들어온 비율(0~1) — 색 통일에서 뺌(화장 색 유지)
+        if extra:
+            base = skin_mask_soft(img, ref, p["skin_range"], face_w)
+            added = np.clip(1.0 - base / np.maximum(skin, 1e-3), 0, 1)
         if pts is not None:
             # 목 유지(더 길게) + 경계는 타원 페더로 부드럽게 끊음
             skin = skin * face_region_mask(pts, roi, face_w, p.get("neck", 0), feather)
@@ -309,7 +311,7 @@ def beauty(frame16, items, p, frame_no=0, want_keys=False) -> BeautyResult:
             skin = skin * (1 - nostril_mask(yimg, pts, x0, y0, face_w))   # 콧구멍 어두운 그림자 따라 제외
         region = alpha * skin
         if pts is not None and p.get("features", True):
-            region = region * (1 - feature_mask(pts, roi, face_w))
+            region = region * (1 - feature_mask(pts, roi, face_w, p.get("eye_hole", 100)))
         if want_keys:
             np.maximum(res.region[y0:y1, x0:x1], region, out=res.region[y0:y1, x0:x1])
             np.maximum(res.alpha[y0:y1, x0:x1], alpha, out=res.alpha[y0:y1, x0:x1])
@@ -345,8 +347,8 @@ def beauty(frame16, items, p, frame_no=0, want_keys=False) -> BeautyResult:
         if p["unify"] > 0:
             y, cb, cr = _ycc(res_img)
             u = region * (p["unify"] / 100 * 0.6)
-            if eye_area is not None:
-                u = u * (1 - eye_area)                       # 눈가는 색 통일 제외(화장 색 유지)
+            if added is not None:
+                u = u * (1 - added)                          # 추가 피부색(섀도 등)은 색 통일 제외 → 화장 색 유지
             res_img = _rgb(y, cb + (ref[0] - cb) * u, cr + (ref[1] - cr) * u)
         if o is None:
             o = frame16.copy()
@@ -361,7 +363,7 @@ def skin_key_full(frame16, p, ref=None, face_w=300):
     img = frame16.astype(np.float32) * K
     if ref is None:
         ref = tuple(p["skin_ref"]) if p.get("skin_ref") else (-0.06, 0.07)
-    return skin_mask_soft(img, ref, p["skin_range"], face_w)
+    return skin_mask_soft(img, ref, p["skin_range"], face_w, [e for e in (p.get("skin_extra") or []) if e])
 
 
 def pick_skin(frame16, x, y):
@@ -369,8 +371,15 @@ def pick_skin(frame16, x, y):
     h, w = frame16.shape[:2]
     x, y = int(np.clip(x, 3, w - 4)), int(np.clip(y, 3, h - 4))
     v = frame16[y - 3:y + 4, x - 3:x + 4].reshape(-1, 3).astype(np.float32) * K
-    _, cb, cr = _ycc(v)
-    return [round(float(np.median(cb)), 4), round(float(np.median(cr)), 4)]
+    yy, cb, cr = _ycc(v)
+    return [round(float(np.median(cb)), 4), round(float(np.median(cr)), 4), round(float(np.median(yy)), 3)]
+
+
+def ref_rgb(ref, y=None):
+    """피부색 값 (cb, cr[, y]) → 화면 표시용 (r, g, b) 0~255. 밝기가 없으면 0.6."""
+    yv = float(ref[2]) if len(ref) > 2 and y is None else float(0.6 if y is None else y)
+    rgb = _rgb(np.float32(yv), np.float32(ref[0]), np.float32(ref[1]))
+    return tuple(int(v) for v in np.clip(rgb, 0, 1) * 255)
 
 
 # ------------------------------------------------------------ 블러
