@@ -14,6 +14,14 @@ STRIP_TAGS = ("클린", "clean")
 _TAG_RE = re.compile(r"[\s_\-]*[\(\[（]\s*(?:" + "|".join(STRIP_TAGS) + r")\s*[\)\]）]", re.IGNORECASE)
 
 
+def join_name(base: str, name: str, pos: str = "front") -> str:
+    """명칭(base)을 원본 이름 앞("front", 기본) 또는 뒤("back")에 붙임(v0.7.68). 명칭이 없으면 원본 이름 그대로."""
+    base = (base or "").strip()
+    if not base:
+        return name
+    return f"{name}_{base}" if pos == "back" else f"{base}_{name}"
+
+
 def out_stem(name: str) -> str:
     """출력 파일 이름의 몸통: 소스 이름에서 "(클린)" 같은 꼬리표를 뺌. 다 빠져 비면 원래 이름."""
     s = _TAG_RE.sub("", name).strip(" _-")
@@ -62,7 +70,8 @@ SIGN_DETECT = [("sensitivity", "민감도", 0, 100, ""), ("min_size", "최소 �
                ("link", "다시 잇기", 0, 300, "f"), ("max_count", "최대 개수", 1, 50, "")]
 
 RENDER_DEFAULT = {
-    "out_dir": "", "name": "", "main": True, "prores": "422 HQ", "overlay": True, "review": False,
+    "out_dir": "", "name": "", "name_pos": "front",   # 명칭을 원본 이름 앞(front)·뒤(back)에
+    "main": True, "prores": "422 HQ", "overlay": True, "review": False,
     "audio": True, "hw": False, "two_pass": True, "gpu": False,
     "workers": 0,      # 렌더 작업자(스레드) 수. 0 = 자동(코어-2, 최대 12)
 }

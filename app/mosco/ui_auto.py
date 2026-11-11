@@ -187,6 +187,7 @@ class AutoDialog(DragMove, QDialog):
         # 클립 상태
         rs = state.settings.render
         self.name = (rs.get("name") or "").strip()
+        self.name_pos = rs.get("name_pos") if rs.get("name_pos") in ("front", "back") else "front"
         self.strength = state.settings.d.get("auto_strength", "mid")
         self.keep_existing = False          # 항상 '기존 보정 무시 · 키프레임 자동'으로 시작
         self.keep_keys = False
@@ -311,10 +312,14 @@ class AutoDialog(DragMove, QDialog):
         nrow.addWidget(nlb)
         self.name_edit = QLineEdit(self.name)
         self.name_edit.setFixedWidth(160)
-        self.name_edit.setPlaceholderText("앞에 붙일 이름")
+        self.name_edit.setPlaceholderText("붙일 이름")
         self.name_edit.setStyleSheet("background:#1a1a1a;border:1px solid #555;border-radius:3px;padding:0 8px;color:#eee")
         self.name_edit.textChanged.connect(self._on_name)
         nrow.addWidget(self.name_edit)
+        # v0.7.68 이름을 원본 이름 앞/뒤 어디에 붙일지
+        self.b_pos = _b("앞에" if self.name_pos == "front" else "뒤에", w=48, h=26,
+                        tip="붙일 이름의 위치 — 누를 때마다 앞에 ↔ 뒤에 (앞: 이름_원본.mov · 뒤: 원본_이름.mov)", on=self._toggle_pos)
+        nrow.addWidget(self.b_pos)
         self.fname = QLabel("")
         self.fname.setStyleSheet("color:#c4cad1;font-family:Consolas,monospace")
         nrow.addWidget(self.fname)
@@ -490,6 +495,12 @@ class AutoDialog(DragMove, QDialog):
         self.name = t.strip()
         self._refresh()
 
+    def _toggle_pos(self):
+        self.name_pos = "back" if self.name_pos == "front" else "front"
+        self.b_pos.setText("앞에" if self.name_pos == "front" else "뒤에")
+        self.state.settings.render["name_pos"] = self.name_pos
+        self._refresh()
+
     def _on_keep(self, k):
         self.keep_existing = k == "keep"
 
@@ -533,9 +544,8 @@ class AutoDialog(DragMove, QDialog):
         if p:
             mode, params = ad.to_params(p["mode"], self.strength, p["measured"])
             self.detail.setText(self._detail_text(p, mode, params))
-            from .project import out_stem
-            nm = out_stem(p["name"])
-            self.fname.setText((f"{self.name}_{nm}" if self.name else nm) + ".mov")
+            from .project import join_name
+            self.fname.setText(join_name(self.name, out_stem(p["name"]), self.name_pos) + ".mov")
 
     def _detail_text(self, clip, mode, params):
         title = ad.LABEL.get(mode, mode)
@@ -713,6 +723,7 @@ class AutoDialog(DragMove, QDialog):
         d["auto_after"] = self.after
         if self.name:
             self.state.settings.render["name"] = self.name
+        self.state.settings.render["name_pos"] = self.name_pos
         self.state.settings.save()
 
     def _busy(self, on):
@@ -1097,7 +1108,8 @@ class SampleDialog(DragMove, QDialog):
         self.setStyleSheet("SampleDialog{background:#262626;border:1px solid #555;border-radius:6px}QLabel{color:#ddd}")
         self.setFixedWidth(560)
         ss = state.settings.d.get("sample", {})
-        self.opts = {"out_dir": out_dir, "name": name, "size": ss.get("size", 1920),
+        self.opts = {"out_dir": out_dir, "name": name, "name_pos": state.settings.render.get("name_pos", "front"),
+                     "size": ss.get("size", 1920),
                      "fmt": ss.get("fmt", "png8"), "num": ss.get("num", True), "date": ss.get("date", False),
                      "count": 6, "bottom_skip": state.bottom_skip}
         self.saved = []

@@ -309,6 +309,10 @@ def names_and_presets():
     plain.write_bytes(b"x")
     assert render.out_names(Source(str(plain), "beauty"), {}, str(d))["main"].name == "D_02_2.mov", "원본을 덮어씀"
     assert render.out_names(Source(str(plain), "beauty"), {"name": "최종"}, str(d))["main"].name == "최종_D_02.mov"
+    # v0.7.68 명칭을 뒤에 붙이기
+    back = render.out_names(Source(str(plain), "beauty"), {"name": "최종", "name_pos": "back"}, str(d))
+    assert back["main"].name == "D_02_최종.mov" and back["overlay"].name == "D_02_최종_BLUR4444.mov", back
+    assert render.out_names(Source(str(src), "beauty"), {"name": "v2", "name_pos": "back"}, str(d))["main"].name == "C_01_v2.mov"
     old_pd = paths.preset_dir
     try:
         paths.preset_dir = lambda: d

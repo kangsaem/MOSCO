@@ -491,6 +491,31 @@ class AppState(QObject):
         self._tracks[k] = (sig, t)
         return t
 
+    def beauty_gap(self, s: Source) -> bool:
+        """뷰티: 분석은 끝났는데 얼굴(타원 레이어)이 클립 전체에 깔리지 않았는가(v0.7.68, 소스 목록 노란색 표시용).
+        얼굴을 못 찾은 프레임이 처음·끝에 있거나(3프레임 이상), 중간에 '놓침 유지'보다 길게 비면 True.
+        타원 편집으로 끈 구간은 세지 않음(자동 검출 기준)."""
+        if s is None or s.mode != "beauty":
+            return False
+        a = self.an.get((s.path, "beauty"))
+        z = a.get("z") if a and a.get("state") == "done" else None
+        if z is None or "lm" not in z:
+            return False
+        hold = 15
+        if "_gap" not in a:                      # 분석 기록에 한 번만 계산해 둠(새로 분석하면 기록이 새로 생김)
+            lm = z["lm"]
+            miss = np.isnan(lm[:, :, 0, 0]).all(1) if lm.ndim == 4 else np.isnan(lm[:, 0, 0])
+            gap = False
+            n = len(miss)
+            if n:
+                idx = np.where(~miss)[0]
+                if len(idx) == 0:
+                    gap = True
+                else:
+                    gap = idx[0] >= 3 or (n - 1 - idx[-1]) >= 3 or bool((np.diff(idx) - 1 > hold).any())
+            a["_gap"] = bool(gap)
+        return a["_gap"]
+
     def has_track(self, s: Source, mode=None) -> bool:
         mode = mode or s.mode
         hit = self._tracks.get((s.path, mode))

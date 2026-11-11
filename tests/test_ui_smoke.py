@@ -214,7 +214,32 @@ def extras(app, w, st, vids, out):
     w.sources.setCurrentRow(0)
     pump(app, 0.3)
     assert w.panel.sec_bell.isEnabled() and w.panel.b_pick.isEnabled() and not w.panel.multi_lb.isVisible()
-    print("redo · relink · autosave · preset · skin extra · multi OK")
+    # v0.7.68 뷰티: 얼굴이 클립 전체에 안 깔린 소스 = 노랑 표시 판정 · 렌더 대기 항목의 분석 진행 표시
+    import numpy as np
+    s0 = st.project.sources[0]
+    s0.mode = "beauty"
+    def fake(miss):
+        lm = np.zeros((60, 4, 468, 2), np.float16)
+        lm[:, 1:] = np.nan
+        lm[miss, 0] = np.nan
+        st.an[(s0.path, "beauty")] = {"z": {"lm": lm, "n": np.array(60)}, "p": 1.0, "state": "done", "err": "", "level": 0, "bskip": 0.0}
+    keep = st.an.get((s0.path, "beauty"))
+    fake(slice(0, 0)); assert not st.beauty_gap(s0)
+    fake(slice(20, 30)); assert not st.beauty_gap(s0), "짧은 빈 구간(놓침 유지 이내)은 노랑 아님"
+    fake(slice(20, 45)); assert st.beauty_gap(s0), "긴 빈 구간"
+    fake(slice(0, 8)); assert st.beauty_gap(s0), "처음에 얼굴 없음"
+    fake(slice(50, 60)); assert st.beauty_gap(s0), "끝에 얼굴 없음"
+    w.sources.viewport().repaint()
+    from mosco.ui_side import RenderItem as _RI
+    it2 = _RI(s0, {}, str(out))
+    it2.job = object()
+    st.an[(s0.path, "beauty")] = {"z": None, "p": 0.4, "state": "run", "err": "", "level": 0, "bskip": 0.0}
+    assert abs(w._render_analysis_p(it2) - 0.4) < 1e-6
+    st.an.pop((s0.path, "beauty"), None)
+    assert w._render_analysis_p(it2) is None
+    if keep is not None:
+        st.an[(s0.path, "beauty")] = keep
+    print("redo · relink · autosave · preset · skin extra · multi · gap OK")
 
 
 def main():

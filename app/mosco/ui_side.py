@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDialog,
                                QStyledItemDelegate, QVBoxLayout, QWidget)
 
 from . import ff
-from .ui_widgets import BTN_MAIN, PROG, PROG_TXT, DragMove, btn, tone
+from .ui_widgets import BTN_MAIN, PROG, PROG_TXT, DragMove, Seg, btn, tone
 from .project import out_stem
 
 VIDEO_EXT = {".mov", ".mp4", ".mxf", ".mts", ".m2ts", ".avi", ".mkv"}
@@ -68,7 +68,9 @@ class SourceDelegate(QStyledItemDelegate):
         elif not err and not b:                            # 분석 완료 = 줄 전체를 분석색(어두운 청록)으로 채움
             modes = s.blur_kinds() or [s.mode]
             if all((self.state.analysis(s, m) or {}).get("state") == "done" for m in modes):
-                p.setBrush(QColor(PROG["analyze"][0]))
+                # v0.7.68 뷰티인데 얼굴(타원 레이어)이 클립 전체에 안 깔림 = 노랑(타임라인 얼굴 레이어 색) → 확인할 클립
+                gap = self.state.beauty_gap(s)
+                p.setBrush(QColor(GAP_COLOR) if gap else QColor(PROG["analyze"][0]))
                 p.drawRoundedRect(r, 3, 3)
         if opt.state & QStyle.State_Selected:
             p.setPen(QColor("#4a8fe0"))
@@ -133,7 +135,10 @@ class SourceList(QListWidget):
         for i, s in enumerate(self.state.project.sources):
             it = self.item(i)
             err = self.state.errors.get(s.path)
-            it.setToolTip(f"{s.path}\n{err}" if err else s.path)
+            tip = f"{s.path}\n{err}" if err else s.path
+            if not err and self.state.beauty_gap(s):
+                tip += "\n노랑 = 얼굴(타원 레이어)이 클립 전체에 깔리지 않음 — 얼굴을 못 찾은 구간이 있습니다"
+            it.setToolTip(tip)
         self.viewport().update()
 
     def _cur(self):
@@ -169,6 +174,9 @@ class SourceList(QListWidget):
             m.addSeparator()
         m.addAction("불러오기", self.parent().add_dialog if hasattr(self.parent(), "add_dialog") else lambda: None)
         m.exec(self.mapToGlobal(pos))
+
+
+GAP_COLOR = "#8a7324"      # ui_monitor.LAYER_COLORS["face"] 의 어두운 노랑(레이어 막대 색)
 
 
 def eta_text(it) -> str:
@@ -222,6 +230,13 @@ class RenderDelegate(QStyledItemDelegate):
         # 대기 진회색 · 완료 연회색 · 실패 진빨강 (DTME RenderDelegate 기준)
         p.setBrush(QColor("#6b6b6b") if done else (QColor("#7a2a22") if it.state == "오류" else QColor("#3c3c3c")))
         p.drawRoundedRect(r, 3, 3)
+        # v0.7.68 렌더 차례 전에 분석이 돌고 있으면 그 진행을 청록으로 표시(예전: '대기'만 보여 멈춘 것처럼 보였음)
+        ap = None
+        if it.state == "대기" and it.job is not None and self.panel.analysis_p is not None:
+            ap = self.panel.analysis_p(it)
+        if ap is not None and ap > 0:
+            p.setBrush(QColor(PROG["analyze"][1]))
+            p.drawRoundedRect(QRect(r.left(), r.top(), int(r.width() * max(0.0, min(1.0, ap))), r.height()), 3, 3)
         if it.state == "진행" and it.p > 0:                 # 진행 = 막대 전체가 비율만큼 빨강으로 차오름
             pr = QRect(r.left(), r.top(), int(r.width() * max(0.0, min(1.0, it.p))), r.height())
             p.setBrush(QColor("#c0392b"))
@@ -235,6 +250,10 @@ class RenderDelegate(QStyledItemDelegate):
         p.setFont(f)
         p.setPen(QColor("#f2f2f2") if done else QColor("#e6e6e6"))
         st = f"{int(it.p * 100)}%{eta_text(it)}" if it.state == "진행" else it.state
+        if ap is not None:
+            st = f"분석 {int(ap * 100)}%"
+        elif it.state == "대기" and it.job is not None:
+            st = "차례 대기"                              # 렌더를 눌렀고 앞 항목이 끝나길 기다리는 중
         p.drawText(r.adjusted(6, 0, -6, 0), Qt.AlignVCenter | Qt.AlignRight, st)
         f.setBold(True)
         p.setFont(f)
@@ -251,6 +270,7 @@ class RenderPanel(QWidget):
 
     def __init__(self):
         super().__init__()
+        self.analysis_p = None     # 함수(it) → 그 항목의 분석 진행(0~1) 또는 None (MainWindow 가 연결)
         self.items: list[RenderItem] = []
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 4, 0, 0)
@@ -363,7 +383,14 @@ class RenderSettings(DragMove, QDialog):
         f.addRow("저장폴더", r)
         self.name = QLineEdit(rs.get("name", ""))
         self.name.setPlaceholderText("(비우면 원본 이름 그대로)")
-        f.addRow("명칭", self.name)
+        nr = QHBoxLayout()
+        nr.addWidget(self.name, 1)
+        self.name_pos = Seg([("front", "앞에"), ("back", "뒤에")])     # v0.7.68 명칭을 원본 이름 앞/뒤에
+        self.name_pos.set(rs.get("name_pos", "front") if rs.get("name_pos") in ("front", "back") else "front")
+        self.name_pos.setFixedWidth(110)
+        self.name_pos.setToolTip("명칭을 원본 이름 앞에 붙일지 뒤에 붙일지 — 앞: 명칭_원본.mov · 뒤: 원본_명칭.mov")
+        nr.addWidget(self.name_pos)
+        f.addRow("명칭", nr)
         r = QHBoxLayout()
         self.main = QCheckBox("ProRes")
         self.main.setChecked(rs.get("main", True))
@@ -425,7 +452,8 @@ class RenderSettings(DragMove, QDialog):
             self.dir.setText(d)
 
     def value(self):
-        return {"out_dir": self.dir.text().strip(), "name": self.name.text().strip(), "main": self.main.isChecked(),
+        return {"out_dir": self.dir.text().strip(), "name": self.name.text().strip(), "name_pos": self.name_pos.value() or "front",
+                "main": self.main.isChecked(),
                 "prores": self.prores.currentText(), "overlay": self.overlay.isChecked(),
                 "review": self.review.isChecked(), "audio": self.audio.isChecked(),
                 "hw": self.hw.currentIndex() == 1, "two_pass": self.two.currentIndex() == 0,

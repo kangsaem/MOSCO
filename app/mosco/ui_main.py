@@ -421,6 +421,8 @@ class MainWindow(QMainWindow):
         self.rpanel.ae_clicked.connect(self.export_ae)
         self.rpanel.queue_clicked.connect(self.queue_to_render)       # ▼ 선택 소스를 대기목록으로
         self.rpanel.on_rerender = self.rerender
+        self.rpanel.analysis_p = self._render_analysis_p
+        self.state.analysis_changed.connect(lambda *_: self.rpanel.list.viewport().update())
         rv.addWidget(self.rpanel)
         split = QSplitter(Qt.Horizontal)
         split.setChildrenCollapsible(False)       # 핸들은 Fusion 기본(그립) — DTME와 동일
@@ -1233,6 +1235,11 @@ class MainWindow(QMainWindow):
         j.signals.error.connect(lambda e: self._render_err(it, e))
         jobs.submit(jobs.RENDER_POOL, j)
         self.rpanel.refresh()
+
+    def _render_analysis_p(self, it):
+        """렌더 대기 항목의 분석 진행(돌고 있는 것 중 가장 덜 된 것). 분석이 안 돌고 있으면 None."""
+        ps = [a["p"] for (path, _m), a in self.state.an.items() if path == it.src.path and a.get("state") == "run"]
+        return min(ps) if ps else None
 
     def _render_done(self, it, outs):
         it.state, it.p, it.outs = "완료", 1.0, outs

@@ -227,7 +227,9 @@ def nostril_mask(yimg, pts, x0, y0, face_w):
         dark = np.clip((hi - patch) / max(1e-4, hi - lo), 0.0, 1.0)
         yy, xx = np.ogrid[ya:yb, xa:xb]           # 창 가장자리 원형 페더(사각형 티 제거)
         rad = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
-        fall = np.clip((R - rad) / max(1.0, R * 0.4), 0.0, 1.0)
+        # v0.7.68 페더를 창 반지름의 40% → 85% 로(콧구멍에서 멀어질수록 서서히 풀림).
+        # 예전엔 창 가장자리에서 급히 끊겨, 코 옆 그림자가 '콧방울 근처는 그대로 · 그 밖은 메워짐'으로 뚝 끊겨 보였음
+        fall = np.clip((R - rad) / max(1.0, R * 0.85), 0.0, 1.0)
         reg = m[ya:yb, xa:xb]
         np.maximum(reg, (dark * fall).astype(np.float32), out=reg)
     return cv2.GaussianBlur(m, (0, 0), max(1.0, face_w * 0.01))
@@ -259,6 +261,7 @@ def _center_ref(img, ell, x0, y0):
     return float(np.median(cb)), float(np.median(cr))
 
 
+WR_FEATHER = 0.02           # 주름 메우기 영역 페더(얼굴 폭 비율)
 WR_OLD = False              # (비교 실험용) True = v0.7.64 이전 주름 메우기 식
 
 
@@ -351,7 +354,12 @@ def beauty(frame16, items, p, frame_no=0, want_keys=False) -> BeautyResult:
                 # 그림자가 더 진하고 날카롭게 보였음(사용자 실영상).
                 depth = -gd
                 dark = np.clip((depth - 0.004) / 0.020, 0, 1)
-                fill = np.minimum(1.0, wf * 1.2 * dark)[..., None]
+                fill = np.minimum(1.0, wf * 1.2 * dark)
+                # v0.7.68 메우는 영역 페더: 골/골 아님의 경계가 가팔라 그림자가 중간에서 끊겨 보이던 것 →
+                # 조금 넓힌 뒤 흐려서 부드럽게 이어지게(골이 아닌 곳은 detail≥0 이라 밝아지지 않음)
+                fr_ = max(1, int(round(face_w * WR_FEATHER)))
+                fill = cv2.GaussianBlur(cv2.dilate(fill, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * fr_ + 1, 2 * fr_ + 1))),
+                                        (0, 0), fr_)[..., None]
                 if WR_OLD:                                       # (비교용) v0.7.64 이전 식
                     fill = (np.clip(-gd * 8, 0, 1) * wf * 1.4)[..., None]
                 target = target + (-np.minimum(detail, 0)) * fill
