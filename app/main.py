@@ -69,8 +69,29 @@ def main():
         QTimer.singleShot(2000, lambda: app.exit(0 if ok else 3))
     if args:
         w.state.add_files(args)
+    _watch_windows(app)
     code = app.exec()
     _hard_exit(code if isinstance(code, int) else 0)
+
+
+def _watch_windows(app):
+    """안전장치(v0.7.71): 보이는 창이 하나도 없는 상태가 6초쯤 이어지면 프로그램을 끝낸다.
+    시작 창 흐름에서는 '마지막 창이 닫히면 종료'를 꺼 두기 때문에, 어떤 경로로든 종료 호출이 빠지면
+    창 없이 프로세스(와 ffmpeg·DLL)가 남아 프로그램 폴더를 지울 수 없게 된다 → 그런 경우를 모두 막음.
+    (최소화된 창은 '보이는 창'으로 침. 창을 바꾸는 짧은 순간·파일 고르는 창은 6초보다 짧거나 다른 창이 떠 있음)"""
+    from PySide6.QtCore import QTimer
+    state = {"n": 0}
+
+    def tick():
+        vis = any(x.isVisible() for x in app.topLevelWidgets())
+        state["n"] = 0 if vis else state["n"] + 1
+        if state["n"] >= 4:
+            app.quit()
+    t = QTimer(app)
+    t.setInterval(1500)
+    t.timeout.connect(tick)
+    t.start()
+    app._mosco_watch = t
 
 
 def _hard_exit(code):

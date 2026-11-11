@@ -145,7 +145,10 @@ jobs:
           $env:QT_QPA_PLATFORM = "offscreen"
           $out = python tests/test_renderprog.py engine_test/synth.mov renderprog_test 2>&1 | Out-String
           Write-Host $out
-          if ($out -match "RENDERPROG OK") { exit 0 } else { exit 1 }
+          if (-not ($out -match "RENDERPROG OK")) { exit 1 }
+          $out = python tests/test_exit.py 2>&1 | Out-String
+          Write-Host $out
+          if ($out -match "EXIT OK") { exit 0 } else { exit 1 }
 
       - name: UI test (오프스크린)
         shell: pwsh

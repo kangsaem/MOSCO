@@ -1512,16 +1512,23 @@ class MainWindow(QMainWindow):
             except Exception:  # noqa: BLE001
                 pass
 
+    def _cancel_renders(self):
+        for it in self.rpanel.items:
+            if it.job is not None:
+                it.job.cancel.set()
+
     def closeEvent(self, e):
         if self._confirm_discard():
-            self.stop_play()
-            self.state.cancel_all()
-            for it in self.rpanel.items:
-                if it.job is not None:
-                    it.job.cancel.set()
-            self._clear_autosave()   # 정상 종료(저장했거나 버리기로 함) → 복구할 것 없음
-            decoder.close_all()  # 상주 디코더 닫기
-            ff.kill_all()        # 남은 ffmpeg 프로세스 강제 종료(종료 후 버벅임 방지)
+            # v0.7.71 정리 단계 하나가 오류를 내도 나머지와 종료는 반드시 진행
+            # (예전: 여기서 오류가 나면 창만 닫히고 프로세스는 창 없이 남아 폴더를 잠글 수 있었음)
+            for step in (self.stop_play, self.state.cancel_all, self._cancel_renders,
+                         self._clear_autosave,   # 정상 종료(저장했거나 버리기로 함) → 복구할 것 없음
+                         decoder.close_all,      # 상주 디코더 닫기
+                         ff.kill_all):           # 남은 ffmpeg 프로세스 강제 종료(종료 후 버벅임 방지)
+                try:
+                    step()
+                except Exception:  # noqa: BLE001
+                    pass
             e.accept()
             if getattr(self, "quit_on_close", False):      # 시작 창 흐름(main.py)에서는 본 창을 닫으면 종료
                 from PySide6.QtWidgets import QApplication
