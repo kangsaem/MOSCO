@@ -282,7 +282,7 @@ app/mosco/ui_auto.py      AUTO 팝업·샘플 창 (DTME AUTO_UI 틀)
 
 ### B-2c. 메모: 모아서 한 번에 코딩 (2026-11-11 사용자 "일단 메모만")
 - [ ] **AUTO 창 [뷰티] 버튼을 [얼굴 블러] 버튼과 같은 크기로.** 지금 [뷰티]만 글자 폭에 맞춰 좁음(`ui_auto.py` 작업 `_seg`).
-- [ ] **뷰티 약·중·강 모두 피부 범위(`skin_range`) = 40.** 지금은 약·중·강 모두 기본값 50(`autodetect.to_params` 가 매끈·주름·질감만 바꿈, `project.BEAUTY_DEFAULT["skin_range"]=50`). 바꿀 곳: `to_params` 뷰티에 `p["skin_range"] = 40`. 편집 화면 기본값(`BEAUTY_DEFAULT`)·저장된 사용자 기본값까지 40으로 할지는 코딩 때 확인.
+- [ ] **뷰티 약·중·강 모두 피부 범위(`skin_range`) = 40.** 지금은 약·중·강 모두 기본값 50(`autodetect.to_params` 가 매끈·주름·질감만 바꿈, `project.BEAUTY_DEFAULT["skin_range"]=50`). **확정: 모든 기본값을 40** — `project.BEAUTY_DEFAULT["skin_range"]` 50→40(편집 화면 기본값·AUTO 약·중·강 모두 여기서 나옴) + 기본 프리셋(`인터뷰 약하게/강하게` 등) 확인. 코딩 때 정할 것: 이미 settings.json 에 저장된 사용자 기본값(50)도 40으로 바꿀지(기본값으로 저장한 적이 있으면 그 값이 우선됨).
 
 ### B-2a. 실행 보호(기기별 활성화) — 설계 확정, 지금 구현 안 함(사용자 "나중에")
 > 취미·비상업용. Python/PyInstaller exe 라 "절대 못 뚫게"는 불가 — **작정한 사람만, 귀찮게** 수준이 목표. 저장소가 **public** 이라 지금은 어떤 보호도 무의미 → **업데이트 충분히 된 뒤 비공개/삭제 예정**. 보호는 그때 넣는다.
