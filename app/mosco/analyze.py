@@ -893,7 +893,8 @@ def blur_track(z, params, two_pass=True) -> BlurTrack:
                 okm[p + 1:q] = False
         nb = sum(1 for f in fs if t["obs"][f][5] == KIND_BODY)
         # 튀는 동작(떨림 보정 전, 카메라 움직임 뺀 좌표). 화면 가장자리에 걸린 프레임은 제외(들어오고 나갈 때 상자가 커지는 건 정상)
-        jumps = _jumps([(f, t["obs"][f][:4]) for f in fs], skip=_edge_frames(z, S, T, fs, t["obs"]))
+        jumps = _jumps([(f, t["obs"][f][:4]) for f in fs], skip=_edge_frames(z, S, T, fs, t["obs"]),
+                       kinds=[t["obs"][f][5] for f in fs])
         sg = max(sig * 3, 3.0) if nb > len(fs) / 2 else sig     # 몸 위주 트랙은 더 부드럽게
         arr = _smooth_series(arr, okm, sg)
         if prof > 0:
@@ -904,9 +905,9 @@ def blur_track(z, params, two_pass=True) -> BlurTrack:
         out_id += 1
         # 의심 트랙(검수용 표시, 자동 삭제 안 함): 관측이 아주 짧거나 평균 점수가 낮음
         msc = float(np.mean([t["obs"][f][4] for f in fs]))
-        why = [w for w, c in (("짧음", len(fs) < 8), ("점수 낮음", msc < (0.5 if nb > len(fs) / 2 else 0.6)),
-                              ("튐", jumps >= 1)) if c]
-        tracks[out_id] = {"f0": a2, "box": arr, "obs": val, "ok": okm, "sus": bool(why), "why": why, "score": msc}
+        why, note = sus_reason(len(fs), jumps, 8)
+        tracks[out_id] = {"f0": a2, "box": arr, "obs": val, "ok": okm, "sus": bool(why), "why": why, "note": note,
+                          "score": msc}
         for k in range(L):
             if okm[k]:
                 frames[a2 + k].append((out_id, *arr[k], bool(val[k])))
@@ -929,14 +930,32 @@ def _edge_frames(z, S, T, fs, obs) -> set:
     return out
 
 
-def _jumps(seq, move=0.5, grow=1.5, max_gap=2, skip=()) -> int:
+JUMP_MIN, JUMP_RATIO = 3, 0.10      # 튐: 이 횟수 이상 + 관측 프레임의 이 비율 이상일 때만 의심(v0.7.60)
+
+
+def sus_reason(n_obs, jumps, short):
+    """의심 트랙 판정(v0.7.60, 사용자 실영상 피드백으로 좁힘): 아주 짧음 / 반복해서 튐. 점수 기준은 뺌
+    (옆·뒷모습은 원래 점수가 낮아 멀쩡한 트랙이 대부분 주황이 됐음). 반환 (이유 목록, 화면에 보일 설명)."""
+    why, parts = [], []
+    if n_obs < short:
+        why.append("짧음")
+        parts.append(f"짧음 — 검출 {n_obs}프레임(기준 {short} 미만)")
+    if jumps >= JUMP_MIN and jumps >= JUMP_RATIO * n_obs:
+        why.append("튐")
+        parts.append(f"튐 {jumps}회 / 검출 {n_obs}프레임")
+    return why, " · ".join(parts)
+
+
+def _jumps(seq, move=0.5, grow=1.5, max_gap=2, skip=(), kinds=None) -> int:
     """튀는 동작 수(v0.7.59): 이어진 관측(간격 ≤ max_gap 프레임) 사이에 가운데가 자기 크기의 move 배 넘게(프레임당) 뛰거나
     크기가 grow 배 넘게 바뀐 횟수. seq = [(frame, (cx, cy, w, h))] — 카메라 움직임을 뺀 좌표."""
     n = 0
-    for (f0, a), (f1, b) in zip(seq[:-1], seq[1:]):
+    for k, ((f0, a), (f1, b)) in enumerate(zip(seq[:-1], seq[1:])):
         dt = f1 - f0
         if dt < 1 or dt > max_gap or f0 in skip or f1 in skip:
             continue
+        if kinds is not None and kinds[k] != kinds[k + 1]:
+            continue                    # 얼굴 ↔ 몸(머리 추정) ↔ 작은 얼굴 전환: 상자 기준이 달라 크기가 바뀌는 건 정상
         size = max(1e-3, (min(a[2], a[3]) + min(b[2], b[3])) / 2)
         d = float(np.hypot(b[0] - a[0], b[1] - a[1])) / size / dt
         r = max(a[2], b[2]) / max(1e-3, min(a[2], b[2]))

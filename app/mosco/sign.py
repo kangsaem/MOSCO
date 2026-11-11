@@ -390,11 +390,12 @@ def sign_track(z, params, two_pass=True) -> SignTrack:
             quads[k] = (qk * S[a2 + k] + T[a2 + k]).reshape(-1)             # 기준 좌표 → 프레임 좌표
         out_id += 1
         msc = float(np.mean([t["obs"][f][4] for f in fs]))
-        # 의심 트랙(검수용 표시): 아주 짧음 · 점수 낮음 · 튀는 동작(글자 상자는 출렁임이 커서 얼굴보다 느슨하게)
+        # 의심 트랙(검수용 표시): 아주 짧음 · 반복해서 튐(글자 상자는 출렁임이 커서 얼굴보다 느슨하게)
         jumps = A._jumps([(f, t["obs"][f][:4]) for f in fs], move=0.8, grow=1.8,
                          skip=A._edge_frames(z, S, T, fs, t["obs"]))
-        why = [w for w, c in (("짧음", len(fs) < 6), ("점수 낮음", msc < thr + 0.08), ("튐", jumps >= 1)) if c]
-        tracks[out_id] = {"f0": a2, "box": quads, "obs": val, "ok": okm, "sus": bool(why), "why": why, "score": msc}
+        why, note = A.sus_reason(len(fs), jumps, 6)
+        tracks[out_id] = {"f0": a2, "box": quads, "obs": val, "ok": okm, "sus": bool(why), "why": why, "note": note,
+                          "score": msc}
         for k in range(L):
             if okm[k]:
                 frames[a2 + k].append((out_id, quads[k].reshape(4, 2), bool(val[k])))

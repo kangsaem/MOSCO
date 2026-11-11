@@ -115,7 +115,17 @@ def extras(app, w, st, vids, out):
     assert st.project.sources[n0].params()[key] == 33
     w._clear_autosave()
     assert w.autosave_pending() is None
-    print("redo · relink · autosave OK")
+    # v0.7.60 프리셋 창: 현재 클립 설정(약·중·강)을 선택된 상태로 보여 줌, 직접 조정했으면 선택 없음
+    from mosco import autodetect as ad
+    from mosco.ui_panel import PresetGridPopup
+    st.select(0)
+    st.set_params("beauty", ad.to_params("beauty", "strong")[1])
+    dlg = PresetGridPopup(w.panel, "beauty", st.source())
+    assert dlg.sseg.value() == "strong" and dlg.b_apply.isEnabled(), dlg.sseg.value()
+    st.set_param("strength", 61)
+    dlg = PresetGridPopup(w.panel, "beauty", st.source())
+    assert dlg.sseg.value() is None and not dlg.b_apply.isEnabled()
+    print("redo · relink · autosave · preset OK")
 
 
 def main():

@@ -63,6 +63,17 @@ def measure(info: ff.Info, cancel=None, progress=None):
 
 
 # ------------------------------------------------------------ 작업+강도(+측정) → 보정값
+def level_of(mode, params):
+    """현재 설정이 약·중·강 중 어느 것인지(v0.7.60). 강도를 가르는 값(뷰티: 매끈·주름·질감 / 블러·간판: 강도)이
+    정확히 같을 때만 "weak"/"mid"/"strong", 직접 조정했으면 None."""
+    keys = ("strength", "wrinkle", "texture") if mode == "beauty" else ("strength",)
+    for lv in ("weak", "mid", "strong"):
+        _, p = to_params(mode, lv)
+        if all(params.get(k) == p.get(k) for k in keys):
+            return lv
+    return None
+
+
 def to_params(mode, strength="mid", measured=None):
     """사용자가 고른 작업(beauty/blur)과 강도 → (mode, params). 블러는 측정값 일부 자동 반영."""
     s = STRENGTH.get(strength, 1)

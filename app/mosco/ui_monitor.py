@@ -597,11 +597,26 @@ class EllipseLanes(QWidget):
         self.sel = None
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.StrongFocus)     # Del 키 받기
-        self.setToolTip("타원·사각형별 구간. 주황 = 의심 트랙(아주 짧음 · 검출 점수 낮음 · 튀는 동작) — 오검출인지 확인. 블러는 그대로 적용됨")
+        self.setMouseTracking(True)             # 레인마다 다른 말풍선(주황인 이유)
         self._drag = None        # (lane_idx, "in"|"out")
         self._preview = None     # (key, f_in, f_out) 드래그 중 미리보기
         self._scrub = False      # 재생선 드래그 중
         self._fit()
+
+    def event(self, e):
+        """말풍선: 주황 레인 = 그 트랙이 주황인 이유와 횟수(v0.7.60). 그 밖 = 일반 설명."""
+        from PySide6.QtCore import QEvent
+        if e.type() == QEvent.ToolTip:
+            from PySide6.QtWidgets import QToolTip
+            idx = int((e.pos().y() - self.PAD) // self.LANE_H)
+            d = self.spans[idx] if 0 <= idx < len(self.spans) else None
+            if d is not None and d.get("sus"):
+                txt = f"{d['label']}번 주황 = {d.get('note') or '의심 트랙'}\n오검출인지 확인하세요. 블러는 그대로 적용됩니다"
+            else:
+                txt = "타원·사각형별 구간. 주황 = 의심 트랙(아주 짧음 · 반복해서 튐)"
+            QToolTip.showText(e.globalPos(), txt, self)
+            return True
+        return super().event(e)
 
     def _key_hit(self, pos):
         """키프레임 ◆ 클릭 판정 → (lane_key, mode, frame) 또는 None. 사용자 키(ukeys) 우선."""

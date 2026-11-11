@@ -104,7 +104,8 @@ def suspicious():
     rows = [_row(f, 400, 400, 80, 0.9) for f in range(40)] + [_row(f, 1200, 300, 40, 0.45) for f in range(10, 15)]
     tr = A.blur_track({"det": np.array(rows, np.float32), "n": np.array(40)}, dict(BLUR_DEFAULT, sensitivity=90))
     flags = sorted((round(float(t["box"][0][0])), t["sus"]) for t in tr.tracks.values())
-    assert flags == [(400, False), (1200, True)], flags
+    assert flags == [(400, False), (1200, True)], flags          # 5프레임 = 짧음
+    assert [t["note"] for t in tr.tracks.values() if t["sus"]] == ["짧음 — 검출 5프레임(기준 8 미만)"]
     print("suspicious OK")
 
 
@@ -152,18 +153,29 @@ def profile_and_jumps():
         assert abs((e1[1] + e1[3] / 2) - (e0[1] + e0[3] / 2)) < 1.5 and e1[1] - e1[3] / 2 < e0[1] - e0[3] / 2 - 15
     off = A.blur_track({"det": rows(0.9), "n": np.array(30)}, dict(p, profile=0))
     assert np.allclose(off.at(15)[0][1:5], (600, 400, 100, 100), atol=0.5), "옆모습 확장 0 인데 바뀜"
-    # 튐: 가만히 있다가 한 프레임 사이에 자기 크기의 0.8배 이동 → 의심(이유 '튐'). 천천히 움직이는 트랙은 아님
-    jump = [_row(f, 400 + (80 if f >= 15 else 0), 400, 100) for f in range(30)]
-    slow = [_row(f, 1200 + f * 8, 400, 100) for f in range(30)]
-    tr = A.blur_track({"det": np.array(jump + slow, np.float32), "n": np.array(30)}, dict(BLUR_DEFAULT, stabilize=0))
-    why = {round(float(t["box"][0][0]) // 400): t["why"] for t in tr.tracks.values()}
-    assert why == {1: ["튐"], 3: []}, why
-    # 화면 가장자리로 들어오며 상자가 커지는 것은 튐이 아님(화면 크기를 아는 분석만)
-    enter = [_row(f, 1900 - f * 12, 400, 24 + min(f, 2) * 16) for f in range(30)]
-    z = {"det": np.array(enter, np.float32), "n": np.array(30)}
-    assert A.blur_track(z, dict(BLUR_DEFAULT, stabilize=0)).tracks[1]["why"] == ["튐"]
-    z["wh"] = np.array([1920, 1080])
-    assert A.blur_track(z, dict(BLUR_DEFAULT, stabilize=0)).tracks[1]["why"] == [], "가장자리 진입을 튐으로 봄"
+    # v0.7.60 튐 = 반복해서 튈 때만(3회 이상 + 검출 프레임의 10% 이상). 한 번 튄 것·천천히 움직이는 것·점수 낮은 것은 아님
+    def zig(n_jump):
+        x, out = 400.0, []
+        for f in range(30):
+            if 0 < f <= n_jump * 3 and f % 3 == 0:
+                x += 80 if (f // 3) % 2 else -80
+            out.append(_row(f, x, 400, 100))
+        return out
+    P = dict(BLUR_DEFAULT, stabilize=0)
+    one = A.blur_track({"det": np.array(zig(1), np.float32), "n": np.array(30)}, P).tracks[1]
+    many = A.blur_track({"det": np.array(zig(4), np.float32), "n": np.array(30)}, P).tracks[1]
+    assert one["why"] == [] and many["why"] == ["튐"] and "튐 4회 / 검출 30프레임" in many["note"], (one, many["note"])
+    slow = [_row(f, 1200 + f * 8, 400, 100, 0.45) for f in range(30)]      # 점수 낮지만 정상
+    assert A.blur_track({"det": np.array(slow, np.float32), "n": np.array(30)}, dict(P, sensitivity=90)).tracks[1]["why"] == []
+    # 얼굴 ↔ 몸 전환으로 크기가 바뀌는 것은 튐이 아님
+    sw = [_row(f, 400, 400, 100 if (f // 2) % 2 else 170, kind=A.KIND_FACE if (f // 2) % 2 else A.KIND_BODY) for f in range(30)]
+    assert A.blur_track({"det": np.array(sw, np.float32), "n": np.array(30)}, P).tracks[1]["why"] == [], "얼굴↔몸 전환을 튐으로 봄"
+    # 화면 가장자리에 걸린 프레임은 세지 않음(화면 크기를 아는 분석만)
+    seq = [(f, (1900.0 - f * 2, 400.0, 30.0 + (f % 2) * 30, 60.0)) for f in range(12)]
+    z = {"wh": np.array([1920, 1080])}
+    S1, T1 = np.ones(12), np.zeros((12, 2))
+    obs = {f: np.array(b, np.float32) for f, b in seq}
+    assert A._jumps(seq) >= 3 and A._jumps(seq, skip=A._edge_frames(z, S1, T1, range(12), obs)) == 0
     print("profile · jumps OK")
 
 

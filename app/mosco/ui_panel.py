@@ -475,7 +475,7 @@ class ControlPanel(QWidget):
             self.state.message.emit("클립을 먼저 불러오세요")
             return
         set_on(self.b_preset, True)                       # 창이 떠 있는 동안 켜짐(파랑)
-        dlg = PresetGridPopup(self, s.mode)
+        dlg = PresetGridPopup(self, s.mode, s)
         dlg.move(self.b_preset.mapToGlobal(self.b_preset.rect().bottomLeft()) + QPoint(0, 4))
         ok = dlg.exec() == QDialog.Accepted
         self.b_preset.setChecked(False)
@@ -503,11 +503,12 @@ class PresetGridPopup(DragMove, QDialog):          # 빈 바탕을 끌어 옮김
     장면 자동판정(시장/정면 …)은 부정확해서 쓰지 않는다. 현재/선택 클립에 바로 적용.
     """
 
-    def __init__(self, parent, mode):
+    def __init__(self, parent, mode, src=None):
         super().__init__(parent)
         self.result = None
         self.label = ""
         self.mode = mode if mode in ("beauty", "blur", "sign") else "beauty"
+        self.src = src                 # 현재 클립 — 열 때 그 설정(약·중·강 / 저장된 프리셋)을 표시(v0.7.60)
         self.strength = "mid"
         self.setWindowFlag(Qt.FramelessWindowHint)
         self.setModal(True)
@@ -528,7 +529,7 @@ class PresetGridPopup(DragMove, QDialog):          # 빈 바탕을 끌어 옮김
         wr.addWidget(wlb)
         self.wseg = Seg([("beauty", "뷰티"), ("blur", "얼굴 블러"), ("sign", "간판 블러")])
         self.wseg.set(self.mode)
-        self.wseg.changed.connect(lambda v: setattr(self, "mode", v))
+        self.wseg.changed.connect(self._on_mode)
         wr.addWidget(self.wseg, 1)
         root.addLayout(wr)
 
@@ -538,10 +539,13 @@ class PresetGridPopup(DragMove, QDialog):          # 빈 바탕을 끌어 옮김
         slb.setFixedWidth(44)
         sr.addWidget(slb)
         self.sseg = Seg([("weak", "약"), ("mid", "중"), ("strong", "강")])
-        self.sseg.set(self.strength)
-        self.sseg.changed.connect(lambda v: setattr(self, "strength", v))
+        self.sseg.changed.connect(self._on_strength)
         sr.addWidget(self.sseg, 1)
         root.addLayout(sr)
+        self.cur_lb = QLabel("")
+        self.cur_lb.setStyleSheet("color:#8f8f8f;font-size:11px;margin-left:52px")
+        root.addWidget(self.cur_lb)
+        self.named = {}
 
         # 저장된 프리셋(바로 적용)
         names = P.list_presets()
@@ -559,15 +563,58 @@ class PresetGridPopup(DragMove, QDialog):          # 빈 바탕을 끌어 옮김
                 b.setContextMenuPolicy(Qt.CustomContextMenu)
                 b.customContextMenuRequested.connect(lambda pos, n=n, b=b: self._named_menu(n, b.mapToGlobal(pos)))
                 wrap.addWidget(b, i // 3, i % 3)
+                self.named[n] = b
             root.addLayout(wrap)
 
         br = QHBoxLayout()
         br.addStretch(1)
         br.addWidget(btn("취소", "", w=64, on_click=self.reject))
-        br.addWidget(btn("적용", "현재 클립에 적용", w=84, red=True, on_click=self._apply))
+        self.b_apply = btn("적용", "현재 클립에 적용", w=84, red=True, on_click=self._apply)
+        br.addWidget(self.b_apply)
         root.addLayout(br)
+        self._show_current()
+
+    def _on_mode(self, v):
+        self.mode = v
+        self._show_current()
+
+    def _on_strength(self, v):
+        self.strength = v
+        self.b_apply.setEnabled(True)
+
+    def _show_current(self):
+        """현재 클립의 설정을 표시: 약·중·강 중 같은 것 선택(직접 조정했으면 선택 없음) · 같은 저장 프리셋 강조."""
+        cur = self.src.params_for(self.mode) if self.src is not None else None
+        lv = ad.level_of(self.mode, cur) if cur else "mid"
+        self.sseg.group.setExclusive(False)
+        for k, b in self.sseg.btns.items():
+            b.setChecked(k == lv)
+        self.sseg.group.setExclusive(True)
+        self.strength = lv
+        self.b_apply.setEnabled(lv is not None)
+        same = []
+        for n, b in self.named.items():
+            hit = False
+            if cur:
+                try:
+                    d = P.load_preset(n)
+                    pr = d.get("params", {})
+                    hit = d.get("mode", "beauty") == self.mode and bool(pr) and all(cur.get(k) == v for k, v in pr.items())
+                except Exception:  # noqa: BLE001
+                    hit = False
+            set_on(b, hit)
+            if hit:
+                same.append(n)
+        if not cur:
+            self.cur_lb.setText("")
+        elif lv is not None:
+            self.cur_lb.setText(f"현재 클립: {ad.LABEL[lv]}" + (f" · 프리셋 '{same[0]}'" if same else ""))
+        else:
+            self.cur_lb.setText("현재 클립: " + (f"프리셋 '{same[0]}'" if same else "직접 조정한 값(약·중·강과 다름)"))
 
     def _apply(self):
+        if self.strength is None:
+            return
         self.result = ad.to_params(self.mode, self.strength)
         self.label = f"{ad.LABEL.get(self.mode, self.mode)} · {ad.LABEL.get(self.strength, self.strength)}"
         self.accept()
