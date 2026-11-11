@@ -8,11 +8,11 @@ from pathlib import Path
 from PySide6.QtCore import QRect, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout,
-                               QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMenu, QSpinBox, QStyle,
+                               QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMenu, QPushButton, QSpinBox, QStyle,
                                QStyledItemDelegate, QVBoxLayout, QWidget)
 
 from . import ff
-from .ui_widgets import BTN_MAIN, PROG, PROG_TXT, DragMove, Seg, btn, tone
+from .ui_widgets import BTN_MAIN, PROG, PROG_TXT, DragMove, Seg, add_shadow, btn, tone
 from .project import out_stem
 
 VIDEO_EXT = {".mov", ".mp4", ".mxf", ".mts", ".m2ts", ".avi", ".mkv"}
@@ -176,6 +176,42 @@ class SourceList(QListWidget):
         m.exec(self.mapToGlobal(pos))
 
 
+class ProgressButton(QPushButton):
+    """렌더 버튼(v0.7.69, DTME ui_render.ProgressButton 과 같음): 렌더 중 = 전체 진행 막대
+    (왼쪽부터 빨강, 글자 '3/35 · 42%'). frac None = 보통 버튼."""
+
+    def __init__(self, text, parent=None):
+        super().__init__(text, parent)
+        self.frac = None
+        self.ptext = ""
+        self.bad = False
+
+    def set_progress(self, frac, text="", bad=False):
+        self.frac, self.ptext, self.bad = frac, text, bad
+        self.update()
+
+    def paintEvent(self, e):
+        if self.frac is None:
+            return super().paintEvent(e)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        r = self.rect().adjusted(0, 0, -1, -1)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor("#4a1f1b"))
+        p.drawRoundedRect(r, 4, 4)
+        w = int(r.width() * max(0.0, min(1.0, self.frac)))
+        if w > 0:
+            p.setBrush(QColor("#8e2a20" if self.bad else "#c0392b"))
+            p.drawRoundedRect(r.adjusted(0, 0, w - r.width(), 0), 4, 4)
+        f = self.font()
+        f.setBold(True)
+        f.setPixelSize(12)
+        p.setFont(f)
+        p.setPen(QColor("#ffffff"))
+        p.drawText(r, Qt.AlignCenter, self.ptext)
+        p.end()
+
+
 GAP_COLOR = "#8a7324"      # ui_monitor.LAYER_COLORS["face"] 의 어두운 노랑(레이어 막대 색)
 
 
@@ -281,7 +317,14 @@ class RenderPanel(QWidget):
                            size=BTN_MAIN, on_click=self.queue_clicked.emit)
         tone(self.b_queue, "blue")              # ▼ = DTME 네이비 (타임라인으로 보내기)
         self.b_set = btn("⚙", "렌더 설정", size=BTN_MAIN, w=40, on_click=self.settings_clicked.emit)
-        self.b_render = btn("렌더", "렌더 목록(대기)을 모두 렌더 (Ctrl+R). ⬓ 로 목록에 보낸 뒤 사용", size=BTN_MAIN, red=True, on_click=self.render_clicked.emit)
+        self.render_tip = "렌더 목록(대기)을 모두 렌더 (Ctrl+R). ➜ 로 목록에 보낸 뒤 사용"
+        self.b_render = ProgressButton("렌더")           # 렌더 중에는 전체 진행 막대로 바뀜(DTME 와 같음)
+        self.b_render.setFixedSize(*BTN_MAIN)
+        self.b_render.setToolTip(self.render_tip)
+        self.b_render.setProperty("red", True)
+        self.b_render.setFocusPolicy(Qt.NoFocus)
+        self.b_render.clicked.connect(self.render_clicked.emit)
+        add_shadow(self.b_render)
         self.b_ae = btn("AE", "에펙으로 보내기 — 현재 소스의 타원·사각형 트랙을 마스크 키프레임 스크립트(.jsx)로 저장.\n"
                         "에펙: 소스 레이어 선택 → 파일 › 스크립트 › 스크립트 파일 실행", size=BTN_MAIN, red=True,
                         on_click=self.ae_clicked.emit)

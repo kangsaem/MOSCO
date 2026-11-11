@@ -620,7 +620,8 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------ 상태 표시
     def _title(self):
         f = Path(self.state.project.file).name if self.state.project.file else "새 프로젝트"
-        self.setWindowTitle(f"MOSCO {__version__} — {f}{' *' if self.state.dirty else ''}")
+        r = f"렌더 {self._rtext} — " if getattr(self, "_rtext", "") else ""       # 렌더 중: 제목에도 전체 진행
+        self.setWindowTitle(f"MOSCO {__version__} — {r}{f}{' *' if self.state.dirty else ''}")
 
     def flash(self, t):
         self.status.setText(t)
@@ -1221,6 +1222,12 @@ class MainWindow(QMainWindow):
         it.job = j
 
         self._render_batch = True            # 완료 팝업용: 렌더가 한 번이라도 시작됨
+        run = getattr(self, "_run_items", None)
+        if not run:                          # 새 묶음 시작(전체 진행 = [렌더] 버튼 막대 · 창 제목 · 작업 표시줄)
+            run = self._run_items = []
+            self._run_t0 = time.time()
+        if it not in run:
+            run.append(it)
 
         it.t0 = None
 
@@ -1230,11 +1237,61 @@ class MainWindow(QMainWindow):
             it.state = "진행"
             it.p = v
             self.rpanel.refresh()             # 진행은 렌더목록 바에만(소스목록 아님)
+            self._render_overall()
         j.signals.progress.connect(started)
         j.signals.done.connect(lambda outs: self._render_done(it, outs))
         j.signals.error.connect(lambda e: self._render_err(it, e))
         jobs.submit(jobs.RENDER_POOL, j)
         self.rpanel.refresh()
+        self._render_overall()
+
+    # ------------------------------------------------------------ 전체 렌더 진행(v0.7.69, DTME 와 같은 방식)
+    def _render_overall(self):
+        """이번 묶음 전체 진행(프레임 수 가중) → [렌더] 버튼 막대 '끝난 수/전체 · NN%' · 창 제목 · 작업 표시줄."""
+        run = getattr(self, "_run_items", None)
+        if not run:
+            return
+        from . import taskbar
+
+        def weight(it):
+            info = self.state.infos.get(it.src.path)
+            return max(1, int(getattr(info, "frames", 0) or 0)) if info is not None else 1
+        tot = sum(weight(it) for it in run)
+        got = sum(weight(it) * (1.0 if it.state in ("완료", "오류", "취소") else (it.p if it.state == "진행" else 0.0))
+                  for it in run)
+        frac = got / tot if tot else 0.0
+        k = sum(it.state in ("완료", "오류", "취소") for it in run)
+        bad = any(it.state == "오류" for it in run)
+        text = f"{k}/{len(run)} · {int(frac * 100)}%"
+        left = self._render_left(frac)
+        b = self.rpanel.b_render
+        b.set_progress(frac, text, bad)
+        b.setToolTip(f"남은 시간 {left}" if left else "렌더 중")
+        self._rtext = f"{text} · 남은 {left}" if left else text
+        self._title()
+        taskbar.set_progress(self, frac, bad)
+
+    def _render_left(self, frac: float) -> str:
+        """남은 시간: 지금까지 속도로 어림. 처음 10초·3% 전에는 안 보임(초반 값이 크게 흔들림)."""
+        el = time.time() - getattr(self, "_run_t0", time.time())
+        if el < 10 or frac < 0.03 or frac >= 1:
+            return ""
+        s = int(el * (1 - frac) / frac)
+        s = (s + 4) // 5 * 5 if s < 120 else (s + 29) // 30 * 30          # 숫자가 매초 바뀌지 않게
+        m, s = divmod(s, 60)
+        h, m = divmod(m, 60)
+        return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+    def _render_overall_end(self):
+        from . import taskbar
+        self._run_items = []
+        self._rtext = ""
+        b = self.rpanel.b_render
+        b.set_progress(None)
+        b.setToolTip(self.rpanel.render_tip)
+        self._title()
+        taskbar.clear(self)
+        taskbar.flash(self)                    # 창이 앞에 없으면 작업 표시줄 아이콘 깜빡임
 
     def _render_analysis_p(self, it):
         """렌더 대기 항목의 분석 진행(돌고 있는 것 중 가장 덜 된 것). 분석이 안 돌고 있으면 None."""
@@ -1259,6 +1316,10 @@ class MainWindow(QMainWindow):
         """진행·대기 중인 렌더가 하나도 없으면(= 전부 끝남) 결과 팝업 1번."""
         if not getattr(self, "_render_batch", False):
             return
+        self._render_overall()
+        run = getattr(self, "_run_items", None)
+        if run and all(it.state in ("완료", "오류", "취소") for it in run):
+            self._render_overall_end()          # 이번에 돌린 것이 다 끝남 → 버튼을 원래대로
         if any(it.state in ("진행", "대기") for it in self.rpanel.items):
             return
         self._render_batch = False

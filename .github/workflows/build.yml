@@ -141,7 +141,11 @@ jobs:
           # test_auto 는 끝에서 os._exit 로 즉시 종료(스레드 조인 회피)라 윈도우 종료코드가 불안정 → 성공 표식으로 판정
           $out = python tests/test_auto.py engine_test/synth.mov auto_test 2>&1 | Out-String
           Write-Host $out
-          if ($out -match "AUTO TEST OK") { exit 0 } else { exit 1 }
+          if (-not ($out -match "AUTO TEST OK")) { exit 1 }
+          $env:QT_QPA_PLATFORM = "offscreen"
+          $out = python tests/test_renderprog.py engine_test/synth.mov renderprog_test 2>&1 | Out-String
+          Write-Host $out
+          if ($out -match "RENDERPROG OK") { exit 0 } else { exit 1 }
 
       - name: UI test (오프스크린)
         shell: pwsh
