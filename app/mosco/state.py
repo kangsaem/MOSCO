@@ -71,6 +71,7 @@ class AppState(QObject):
         self.dirty = False
         self.undo_stack = []
         self.redo_stack = []           # 다시 실행(Ctrl+Shift+Z). 새 편집을 하면 비움
+        self.multi_sel = lambda: []    # 소스 목록의 선택 행(MainWindow 가 연결)
         self.infos: dict[str, ff.Info] = {}
         self.errors: dict[str, str] = {}
         self.an: dict = {}             # (path, mode) -> {"z", "p", "state", "err", "job"}
@@ -209,11 +210,34 @@ class AppState(QObject):
             return
         if undo:
             self.push_undo()
-        s.params()[key] = val
-        s.custom = True
+        for t in self.param_targets(key):
+            t.params_for(s.mode)[key] = copy.deepcopy(val)
+            t.custom = True
         self.dirty = True
         self.params_changed.emit()
         self.changed.emit()
+
+    # 여러 소스를 선택해도 한꺼번에 넣지 않는 값: 클립마다 다른 것(피부색)·타원 묶음(여러 개 선택 시 비활성)
+    SINGLE_KEYS = ("skin_ref", "skin_extra", "size", "feather", "neck", "stabilize", "margin", "profile")
+
+    def multi_selected(self):
+        """소스 목록에서 여러 개(2개 이상)를 선택했으면 그 소스들, 아니면 []."""
+        try:
+            idx = [i for i in self.multi_sel() if 0 <= i < len(self.project.sources)]
+        except Exception:  # noqa: BLE001
+            idx = []
+        return [self.project.sources[i] for i in idx] if len(idx) > 1 else []
+
+    def param_targets(self, key):
+        """이 값을 바꿀 소스들(v0.7.64): 현재 소스 + (여러 개 선택 중이면) 같은 작업 종류의 선택 소스.
+        바꾼 값 하나만 들어가고 나머지 값은 클립마다 그대로."""
+        s = self.source()
+        if s is None:
+            return []
+        out = [s]
+        if key not in self.SINGLE_KEYS:
+            out += [t for t in self.multi_selected() if t is not s and t.mode == s.mode]
+        return out
 
     def set_mode(self, mode):
         s = self.source()

@@ -317,10 +317,12 @@ def beauty(frame16, items, p, frame_no=0, want_keys=False) -> BeautyResult:
             np.maximum(res.alpha[y0:y1, x0:x1], alpha, out=res.alpha[y0:y1, x0:x1])
         st = it.ov.get("strength", p["strength"]) / 100          # 매끈 강도(양방향)
         wf = it.ov.get("wrinkle", p.get("wrinkle", 0)) / 100     # 주름 메우기(어두운 골만)
-        if st <= 0 and wf <= 0 and p["unify"] <= 0:
+        soft = float(p.get("soft", 0)) / 100                     # 소프트: 피부만 아주 약하게 흐림(v0.7.64)
+        tone = float(p.get("toneup", 0)) / 100                   # 톤업: 피부 밝기 올림(밝은 곳은 덜)
+        if st <= 0 and wf <= 0 and p["unify"] <= 0 and soft <= 0 and tone <= 0:
             continue
         res_img = img
-        if st > 0 or wf > 0:
+        if st > 0 or wf > 0 or soft > 0 or tone > 0:
             target = img
             # ① 매끈: 양방향 필터(엣지 보존 → 구조 안 뭉개짐) + 질감 되살리기
             if st > 0:
@@ -340,6 +342,16 @@ def beauty(frame16, items, p, frame_no=0, want_keys=False) -> BeautyResult:
                 gd = gf - low_pass(gf, sig)
                 dark = np.clip(-gd * 8, 0, 1)[..., None]        # v0.7.36 골 검출 ↑(더 많은 주름 포착)
                 target = target + (-np.minimum(detail, 0)) * dark * wf * 1.4   # v0.7.36 메우기량 ×1.4
+            # ③ 소프트: 약한 가우시안을 섞음(최대 60%) — 윤곽을 지키는 '매끈'과 달리 전체를 살짝 뽀얗게
+            if soft > 0:
+                target = target + (cv2.GaussianBlur(target, (0, 0), max(0.8, face_w / 130)) - target) * (soft * 0.6)
+            # ④ 톤업: 밝기에 따라 배율(중간·어두운 톤은 더, 하이라이트는 거의 그대로 → 이마·콧등이 날아가지 않음). 색은 유지
+            if tone > 0:
+                ty = np.clip(0.2126 * target[..., 0] + 0.7152 * target[..., 1] + 0.0722 * target[..., 2], 0, 1)
+                gain = 1.0 + tone * 0.30 * (1.0 - ty) ** 1.5 * np.clip(ty / 0.08, 0, 1)
+                if added is not None:
+                    gain = 1.0 + (gain - 1.0) * (1 - added)      # 추가 피부색(섀도 등)은 톤업 제외
+                target = target * gain[..., None]
             if p["grain"] > 0:
                 rng = np.random.default_rng(frame_no * 131 + x0)
                 target = target + rng.normal(0, p["grain"] / 100 * 0.03, img.shape[:2]).astype(np.float32)[..., None]

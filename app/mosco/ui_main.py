@@ -407,6 +407,8 @@ class MainWindow(QMainWindow):
         self.sources.add_dialog = self.add_dialog
         self.sources.queue_requested.connect(self.queue_to_render)   # 소스 우클릭 → 대기목록
         self.sources.relink_requested.connect(self.relink_missing)   # 소스 우클릭 → 원본 다시 연결
+        self.state.multi_sel = self.sources.selected                 # 여러 개 선택 → 값 하나를 한꺼번에(v0.7.64)
+        self.sources.itemSelectionChanged.connect(self.panel.refresh)
         rv.addWidget(self.sources, 1)
         line = QWidget()
         line.setFixedHeight(1)

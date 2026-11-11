@@ -157,7 +157,35 @@ def extras(app, w, st, vids, out):
     assert st.source().beauty.get("skin_ref") and len(st.source().beauty["skin_extra"]) == 1
     st.set_param("skin_extra", [])
     st.set_param("skin_ref", None)
-    print("redo · relink · autosave · preset · skin extra OK")
+    # v0.7.64 여러 소스 선택 → 바꾼 값 하나가 같은 작업의 선택 소스에 모두 · 타원·피부색은 잠금
+    n = len(st.project.sources)
+    assert n >= 2
+    for x in st.project.sources:
+        x.mode = "beauty"
+    st.project.sources[-1].mode = "blur"
+    st.project.sources[1].beauty["wrinkle"] = 7
+    w.sources.refresh()
+    w.sources.selectAll()
+    st.select(0)
+    pump(app, 0.3)
+    assert len(st.multi_selected()) == n
+    assert not w.panel.sec_bell.isEnabled() and not w.panel.sec_edit.isEnabled() and not w.panel.b_pick.isEnabled()
+    assert w.panel.multi_lb.isVisible()
+    st.set_param("strength", 66, undo=True)
+    got = [(x.mode, x.params_for("beauty")["strength"]) for x in st.project.sources]
+    assert all(v == 66 for m, v in got if m == "beauty") and got[-1] == ("blur", st.project.sources[-1].beauty["strength"]) \
+        and got[-1][1] != 66, got
+    assert st.project.sources[1].beauty["wrinkle"] == 7, "다른 값까지 복사됨"
+    assert st.project.sources[-1].blur["strength"] != 66, "다른 작업 클립에 들어감"
+    st.set_param("skin_ref", [0.0, 0.0])
+    assert st.project.sources[1].beauty.get("skin_ref") is None, "피부색은 한꺼번에 넣지 않음"
+    st.undo()
+    assert st.project.sources[1].beauty["strength"] != 66
+    w.sources.clearSelection()
+    w.sources.setCurrentRow(0)
+    pump(app, 0.3)
+    assert w.panel.sec_bell.isEnabled() and w.panel.b_pick.isEnabled() and not w.panel.multi_lb.isVisible()
+    print("redo · relink · autosave · preset · skin extra · multi OK")
 
 
 def main():

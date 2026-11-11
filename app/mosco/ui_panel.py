@@ -276,6 +276,10 @@ class ControlPanel(QWidget):
         _ar.addWidget(self.b_analyze)
         _aw = QWidget()
         _aw.setLayout(_ar)
+        self.multi_lb = QLabel("")
+        self.multi_lb.setStyleSheet("background:#3a3320;color:#f0d37a;border-radius:3px;padding:4px 8px;font-size:11px")
+        self.multi_lb.setVisible(False)
+        outer.addWidget(self.multi_lb)
         outer.addWidget(_aw)                 # v0.7.54 스크롤 밖(패널 맨 아래 고정) — 창이 작아도 항상 보임
         self.bl.addStretch(1)
 
@@ -477,7 +481,18 @@ class ControlPanel(QWidget):
                 set_on(t, bool(v))
                 t.blockSignals(False)
             self._chips()
-        self.sec_edit.setEnabled(en)
+        # v0.7.64 여러 소스 선택: 바꾼 값이 같은 작업의 선택 클립에 모두 들어감 → 클립마다 다른 것(타원·피부색)은 잠금
+        multi = self.state.multi_selected()
+        one = en and not multi
+        for w in (self.sec_bell, self.sec_xell, self.sec_sell, self.sec_edit):
+            w.setEnabled(one)
+        self.b_pick.setEnabled(one)
+        if not one:
+            self.b_addskin.setEnabled(False)
+        same = sum(1 for t in multi if s is not None and t.mode == s.mode)
+        self.multi_lb.setVisible(bool(multi))
+        if multi:
+            self.multi_lb.setText(f"소스 {len(multi)}개 선택 — 바꾼 값이 같은 작업 {same}개에 모두 적용")
         self._sync_preset(s)
 
     def _sync_preset(self, s):

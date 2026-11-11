@@ -252,7 +252,22 @@ def eye_area():
     # 눈 구멍 0 + 추가 피부색 → 눈 자리까지 보정 영역
     r2 = fx.beauty(fr, [it], dict(base, skin_extra=[shadow], eye_hole=0), 0, want_keys=True)
     assert r1.region[260, 360] < 0.2 < 0.7 < r2.region[260, 360]
-    print("skin extra · eye hole OK")
+    # v0.7.64 소프트(약한 블러) · 톤업(밝은 곳은 덜): 피부 안에서만, 기본 0 이면 그대로
+    plain = dict(base, strength=0, wrinkle=0, grain=0, unify=0, features=False)
+    assert np.array_equal(fx.beauty(fr, [it], plain, 0).out, fr), "아무 것도 안 켰는데 바뀜"
+    tn = fx.beauty(fr, [it], dict(plain, toneup=60), 0).out.astype(np.float32)
+    f0 = fr.astype(np.float32)
+    up = float((tn[330:350, 280:320] / f0[330:350, 280:320]).mean())
+    assert 1.01 < up < 1.12, up                                    # 피부(밝기 약 0.63): 조금 밝아짐
+    assert abs(float((tn[20:40, 20:60] / f0[20:40, 20:60]).mean()) - 1) < 1e-3, "피부 밖이 바뀜"
+    hi = fr.copy(); hi[:] = (np.array([0.97, 0.93, 0.90]) * 65535).astype(np.uint16)
+    hu = fx.beauty(hi, [it], dict(plain, toneup=100, skin_ref=fx.pick_skin(hi, 300, 340)[:2]), 0).out
+    assert float(hu[330:350, 280:320].max()) / 65535 < 1.0 and float((hu[330:350, 280:320].astype(np.float32) / hi[330:350, 280:320]).mean()) < 1.01, \
+        "하이라이트가 날아감"
+    sf = fx.beauty(fr, [it], dict(plain, soft=100), 0).out.astype(np.float32)
+    n0, n1 = float(f0[330:350, 280:320, 1].std()), float(sf[330:350, 280:320, 1].std())
+    assert n1 < n0 * 0.8 and abs(float(sf[330:350, 280:320].mean() - f0[330:350, 280:320].mean())) < 80, (n0, n1)
+    print("skin extra · eye hole · soft · toneup OK")
 
 
 def names_and_presets():

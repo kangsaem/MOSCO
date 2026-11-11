@@ -24,6 +24,7 @@ BEAUTY_DEFAULT = {
     "strength": 50, "wrinkle": 50, "texture": 35, "grain": 15, "skin_range": 40, "unify": 20,   # v0.7.57 피부 범위 50→40
     "size": 165, "feather": 20, "neck": 40, "stabilize": 50, "skin_ref": None, "features": True,
     "skin_extra": [],    # v0.7.63 추가 피부색(최대 2개, [cb, cr, y]) — 섀도 등 피부색이 아닌 화장을 피부로 판정
+    "soft": 0, "toneup": 0,   # v0.7.64 소프트(피부만 약한 블러) · 톤업(피부 밝기) — 기본 0 = 끔
     "eye_hole": 100,     # v0.7.63 눈 제외 크기 %(0 = 눈 구멍 없음 … 100 = 기본 … 200 = 넓게). 눈썹·입은 [눈·입 제외]
 }
 BLUR_DEFAULT = {
@@ -41,6 +42,7 @@ BEAUTY_SLIDERS = [
     ("strength", "매끈 강도", 0, 100, ""), ("wrinkle", "주름 메우기", 0, 100, ""),
     ("texture", "질감 보존", 0, 100, ""), ("grain", "그레인", 0, 100, ""),
     ("skin_range", "피부 범위", 0, 100, ""), ("unify", "색 통일", 0, 100, ""),
+    ("soft", "소프트", 0, 100, ""), ("toneup", "톤업", 0, 100, ""),
     ("eye_hole", "눈 제외 크기", 0, 200, "%"),
 ]
 BEAUTY_ELLIPSE = [
