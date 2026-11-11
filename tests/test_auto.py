@@ -47,6 +47,17 @@ def main():
     assert dlg.w_beauty.width() == dlg.w_face.width() == dlg.w_sign.width(), "작업 버튼 폭이 다름"
     from mosco import autodetect
     assert all(autodetect.to_params("beauty", k)[1]["skin_range"] == 40 for k in ("weak", "mid", "strong"))
+    # v0.7.66 강+ = 강 + 소프트 30·톤업 40·번들거림 30·톤 20(뷰티만). 블러·간판은 강과 같음
+    sp, st_ = autodetect.to_params("beauty", "strongplus")[1], autodetect.to_params("beauty", "strong")[1]
+    assert (sp["soft"], sp["toneup"], sp["shine"], sp["tint"]) == (30, 40, 30, 20) and st_["soft"] == 0
+    assert all(sp[k] == st_[k] for k in ("strength", "wrinkle", "texture")) and (sp["strength"], sp["wrinkle"], sp["texture"]) == (75, 55, 28)
+    assert autodetect.level_of("beauty", sp) == "strongplus" and autodetect.level_of("beauty", st_) == "strong"
+    assert autodetect.to_params("blur", "strongplus")[1] == autodetect.to_params("blur", "strong")[1]
+    assert autodetect.level_of("blur", autodetect.to_params("blur", "strongplus")[1]) == "strong"
+    dlg.set_strength("strongplus"); dlg._on_strength("strongplus")
+    assert dlg.strength == "strongplus"
+    dlg.grab().save(str(work / "auto_strongplus.png"))
+    dlg.set_strength("mid"); dlg._on_strength("mid")
     assert len(dlg.clips) == 2 and dlg.width() == 998
     # v0.7.3: 창을 열 때는 아무 작업도 안 함(버튼을 눌러야 측정)
     pump(app, 1)

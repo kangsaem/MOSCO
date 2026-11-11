@@ -298,7 +298,7 @@ class AutoDialog(DragMove, QDialog):
         div.setFrameShape(QFrame.HLine)
         div.setStyleSheet("color:#3a3a3a")
         right.addWidget(div)
-        self.seg_strength, self.set_strength = _seg([("weak", "약"), ("mid", "중"), ("strong", "강")], self.strength,
+        self.seg_strength, self.set_strength = _seg([("weak", "약"), ("mid", "중"), ("strong", "강"), ("strongplus", "강+")], self.strength,
                                                     self._on_strength, lw=AUTO_LW, label="강도")
         right.addWidget(self.seg_strength)
         self.seg_out, self.set_out = _seg([("hq", "422 HQ"), ("std", "422"), ("lt", "LT")],
@@ -327,7 +327,7 @@ class AutoDialog(DragMove, QDialog):
         self.detail.setTextFormat(Qt.RichText)
         self.detail.setAlignment(Qt.AlignTop | Qt.AlignLeft)
         self.detail.setStyleSheet("background:#1c1c1c;border:1px solid #333;border-radius:3px;padding:12px 16px;color:#ddd")
-        self.detail.setFixedHeight(186)           # 6줄(뷰티 11칸) 안 잘림
+        self.detail.setFixedHeight(232)           # 8줄(뷰티 15칸) 안 잘림
         drow = QHBoxLayout()
         m = self.style().pixelMetric(QStyle.PM_LayoutLeftMargin)    # [약|중|강] 줄과 같은 바깥 여백
         drow.setContentsMargins(m, 0, m, 0)
@@ -545,7 +545,9 @@ class AutoDialog(DragMove, QDialog):
                     ("피부 범위", params["skin_range"]), ("색 통일", params["unify"]),
                     ("타원 크기", f"{params['size']}%"), ("페더", f"{params['feather']}%"),
                     ("목 확장", params["neck"]), ("떨림 보정", params["stabilize"]),
-                    ("눈·입 제외", "켬" if params.get("features", True) else "끔")]
+                    ("눈·입 제외", "켬" if params.get("features", True) else "끔"),
+                    ("소프트", params.get("soft", 0)), ("톤업", params.get("toneup", 0)),
+                    ("번들거림", params.get("shine", 0)), ("톤", params.get("tint", 0))]
         elif mode == "sign":
             keys = [("민감도", params["sensitivity"]), ("최소 글자", f"{params['min_size']}px"),
                     ("최대 개수", params["max_count"]), ("여유", f"{params['margin']}%"),

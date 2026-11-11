@@ -647,7 +647,7 @@ class PresetGridPopup(DragMove, QDialog):          # 빈 바탕을 끌어 옮김
         slb = QLabel("강도")
         slb.setFixedWidth(44)
         sr.addWidget(slb)
-        self.sseg = Seg([("weak", "약"), ("mid", "중"), ("strong", "강")])
+        self.sseg = Seg([("weak", "약"), ("mid", "중"), ("strong", "강"), ("strongplus", "강+")])
         self.sseg.changed.connect(self._on_strength)
         sr.addWidget(self.sseg, 1)
         root.addLayout(sr)
