@@ -132,7 +132,43 @@ def slots():
     print("slots OK")
 
 
+def profile_and_jumps():
+    """v0.7.59 옆모습 → 뒤통수 쪽으로 타원 확장(정면은 그대로) · 튀는 트랙 = 의심."""
+    def rows(yaw):
+        return np.array([np.r_[_row(f, 600, 400, 100), [yaw]] for f in range(30)], np.float32)
+    p = dict(BLUR_DEFAULT, stabilize=0, profile=50)
+    box = {}
+    for name, yaw in (("front", 0.05), ("right", 0.9), ("left", -0.9)):
+        tr = A.blur_track({"det": rows(yaw), "n": np.array(30)}, p)
+        box[name] = np.array(tr.at(15)[0][1:5])
+    assert np.allclose(box["front"], (600, 400, 100, 100), atol=0.5), box["front"]
+    for name, sgn in (("right", 1), ("left", -1)):
+        cx, cy, w, h = box[name]
+        assert abs(w - 150) < 1 and abs(h - 112.5) < 1, box[name]            # 가로 +50%, 세로 +12.5%
+        # 타원(여유 160%) 기준: 코 쪽 끝은 제자리, 반대쪽(뒤통수)만 늘어남 · 아래는 제자리, 위만 늘어남
+        e0, e1 = A.face_to_head(600, 400, 100, 100, 160), A.face_to_head(cx, cy, w, h, 160)
+        assert abs((e1[0] + sgn * e1[2] / 2) - (e0[0] + sgn * e0[2] / 2)) < 1.5, name
+        assert sgn * ((e0[0] - sgn * e0[2] / 2) - (e1[0] - sgn * e1[2] / 2)) > 70, name
+        assert abs((e1[1] + e1[3] / 2) - (e0[1] + e0[3] / 2)) < 1.5 and e1[1] - e1[3] / 2 < e0[1] - e0[3] / 2 - 15
+    off = A.blur_track({"det": rows(0.9), "n": np.array(30)}, dict(p, profile=0))
+    assert np.allclose(off.at(15)[0][1:5], (600, 400, 100, 100), atol=0.5), "옆모습 확장 0 인데 바뀜"
+    # 튐: 가만히 있다가 한 프레임 사이에 자기 크기의 0.8배 이동 → 의심(이유 '튐'). 천천히 움직이는 트랙은 아님
+    jump = [_row(f, 400 + (80 if f >= 15 else 0), 400, 100) for f in range(30)]
+    slow = [_row(f, 1200 + f * 8, 400, 100) for f in range(30)]
+    tr = A.blur_track({"det": np.array(jump + slow, np.float32), "n": np.array(30)}, dict(BLUR_DEFAULT, stabilize=0))
+    why = {round(float(t["box"][0][0]) // 400): t["why"] for t in tr.tracks.values()}
+    assert why == {1: ["튐"], 3: []}, why
+    # 화면 가장자리로 들어오며 상자가 커지는 것은 튐이 아님(화면 크기를 아는 분석만)
+    enter = [_row(f, 1900 - f * 12, 400, 24 + min(f, 2) * 16) for f in range(30)]
+    z = {"det": np.array(enter, np.float32), "n": np.array(30)}
+    assert A.blur_track(z, dict(BLUR_DEFAULT, stabilize=0)).tracks[1]["why"] == ["튐"]
+    z["wh"] = np.array([1920, 1080])
+    assert A.blur_track(z, dict(BLUR_DEFAULT, stabilize=0)).tracks[1]["why"] == [], "가장자리 진입을 튐으로 봄"
+    print("profile · jumps OK")
+
+
 if __name__ == "__main__":
+    profile_and_jumps()
     cam_est()
     cam_follow()
     match()

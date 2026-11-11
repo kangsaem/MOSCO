@@ -409,7 +409,9 @@ class Monitor(QWidget):
                     cx, cy, ew, eh, ang = ent["ell"]
                     sel = ent["key"] == self.sel and self.sel is not None
                     # 종류별 색: 선택=흰·제외=초록·간판=청록·추가=파랑·얼굴=노랑
+                    # 의심 트랙(짧음·점수 낮음·튐) = 주황(v0.7.59)
                     col = (QColor("#ffffff") if sel else QColor("#6fd38a") if ent.get("minus")
+                           else QColor("#ff9d4d") if ent.get("sus")
                            else QColor("#3fd8c4") if ent.get("quad") is not None
                            else QColor("#7fd1ff") if ent.get("manual") else QColor("#f2c94c"))
                     pen = QPen(col, 2 if not sel else 2.5, Qt.SolidLine if sel else Qt.DashLine)
@@ -554,12 +556,15 @@ LAYER_COLORS = {
     "sign":   ("#2e6a64", "#3fb8a0"),    # 간판 = 청록
     "manual": ("#3d6690", "#5aa0f0"),    # 추가 타원 = 파랑
     "face":   ("#8a7324", "#e6c24a"),    # 얼굴(자동) = 노랑
+    "sus":    ("#a8581c", "#ff9d4d"),    # 의심 트랙(짧음·점수 낮음·튐) = 주황 — 얼굴·간판 공통
 }
 
 
 def layer_kind(d) -> str:
     if d.get("minus"):
         return "minus"
+    if d.get("sus"):
+        return "sus"
     if d.get("quad"):
         return "sign"
     if d.get("manual"):
@@ -592,7 +597,7 @@ class EllipseLanes(QWidget):
         self.sel = None
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.StrongFocus)     # Del 키 받기
-        self.setToolTip("타원·사각형별 구간. 주황 번호? = 의심 트랙(아주 짧거나 검출 점수 낮음) — 오검출인지 확인")
+        self.setToolTip("타원·사각형별 구간. 주황 = 의심 트랙(아주 짧음 · 검출 점수 낮음 · 튀는 동작) — 오검출인지 확인. 블러는 그대로 적용됨")
         self._drag = None        # (lane_idx, "in"|"out")
         self._preview = None     # (key, f_in, f_out) 드래그 중 미리보기
         self._scrub = False      # 재생선 드래그 중
@@ -777,7 +782,7 @@ class EllipseLanes(QWidget):
             # 라벨
             # 의심 트랙(짧거나 검출 점수 낮음) = 주황 라벨 + "?" — 오검출인지 먼저 확인할 곳
             if d.get("sus"):
-                p.setPen(QColor("#ff9d4d"))
+                p.setPen(QColor("#ffe7cf"))             # 주황 막대 위에서도 읽히게 밝은 색
                 p.drawText(QRectF(4, y0, 40, y1 - y0), Qt.AlignVCenter | Qt.AlignLeft, d["label"] + "?")
                 continue
             p.setPen(QColor("#e6e6e6") if sel else QColor("#9aa0a6"))

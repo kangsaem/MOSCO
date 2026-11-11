@@ -36,6 +36,7 @@ class Item:
     gid: int | None = None
     keyed: bool = False        # 이 프레임에 키 있음
     minus: bool = False        # 블러 제외 타원
+    sus: bool = False          # 의심 트랙(짧음·점수 낮음·튐) — 주황 표시(검수용, 블러는 그대로)
 
 
 def empty():
@@ -210,6 +211,11 @@ class Resolver:
             return gv[-1] * w if w > 0 else None
         return _interp_keys(gk, gv, i)
 
+    def _sus(self, tid) -> bool:
+        t = getattr(self.track, "tracks", None)
+        info = t.get(tid) if isinstance(t, dict) else None
+        return bool(info and info.get("sus"))
+
     # ------------------------------------------------------------ 최종
     def items(self, i) -> list[Item]:
         out = []
@@ -231,9 +237,10 @@ class Resolver:
                     else:
                         ell = (*(np.array(ell[:4]) + o), ell[4])
                 seen.add(gid)
+            minus = bool(g and g.get("minus"))
             out.append(Item(("g", gid) if gid is not None else ("t", tid), tid, ell, pts, pres,
                             dict(g.get("ov", {})) if g else {}, False, gid,
-                            bool(g and str(i) in g.get("keys", {})), bool(g and g.get("minus"))))
+                            bool(g and str(i) in g.get("keys", {})), minus, not minus and self._sus(tid)))
         for g in self.e["groups"]:
             gid = g["gid"]
             if gid in seen or g.get("off_all") or _off(g, i):

@@ -297,7 +297,8 @@ def analyze_sign(info: ff.Info, progress=None, cancel=None, hw=False, workers=No
     if i == 0:
         raise RuntimeError("프레임을 읽지 못했습니다")
     det = np.array(rows, np.float32) if rows else np.zeros((0, 1 + QOFF + 9), np.float32)
-    return {"det": det, "n": np.array(i), "sign": np.array(1), "cam": np.array(cams, np.float32).reshape(-1, 3)}
+    return {"det": det, "n": np.array(i), "sign": np.array(1), "cam": np.array(cams, np.float32).reshape(-1, 3),
+            "wh": np.array([info.w, info.h])}
 
 
 # ------------------------------------------------------------ 트랙
@@ -389,8 +390,11 @@ def sign_track(z, params, two_pass=True) -> SignTrack:
             quads[k] = (qk * S[a2 + k] + T[a2 + k]).reshape(-1)             # 기준 좌표 → 프레임 좌표
         out_id += 1
         msc = float(np.mean([t["obs"][f][4] for f in fs]))
-        sus = len(fs) < 6 or msc < thr + 0.08                               # 의심 트랙(검수용 표시)
-        tracks[out_id] = {"f0": a2, "box": quads, "obs": val, "ok": okm, "sus": bool(sus), "score": msc}
+        # 의심 트랙(검수용 표시): 아주 짧음 · 점수 낮음 · 튀는 동작(글자 상자는 출렁임이 커서 얼굴보다 느슨하게)
+        jumps = A._jumps([(f, t["obs"][f][:4]) for f in fs], move=0.8, grow=1.8,
+                         skip=A._edge_frames(z, S, T, fs, t["obs"]))
+        why = [w for w, c in (("짧음", len(fs) < 6), ("점수 낮음", msc < thr + 0.08), ("튐", jumps >= 1)) if c]
+        tracks[out_id] = {"f0": a2, "box": quads, "obs": val, "ok": okm, "sus": bool(why), "why": why, "score": msc}
         for k in range(L):
             if okm[k]:
                 frames[a2 + k].append((out_id, quads[k].reshape(4, 2), bool(val[k])))

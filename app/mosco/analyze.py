@@ -19,13 +19,16 @@ VERSION = 5      # v5(0.7.55): 카메라 움직임(cam) 저장 · 뷰티 등장 
 LOW_SCORE = 0.3          # 분석 때 낮게 저장 → 민감도로 후처리
 
 
+MODE_VER = {"blur": ".1"}   # 종류별 추가 버전(그 종류만 다시 분석). blur .1(0.7.59) = 옆모습 정도(yaw) 저장
+
+
 class Cancelled(Exception):
     pass
 
 
 def _key(info: ff.Info, mode: str) -> str:
     st = os.stat(info.path)
-    raw = f"{os.path.abspath(info.path)}|{st.st_size}|{int(st.st_mtime)}|{mode}|{VERSION}"
+    raw = f"{os.path.abspath(info.path)}|{st.st_size}|{int(st.st_mtime)}|{mode}|{VERSION}{MODE_VER.get(mode, '')}"
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
 
 
@@ -333,9 +336,25 @@ def _nms_rows(rows, thr=0.4):
     return [rows[i] for i in keep]
 
 
+def face_yaw(d) -> float:
+    """얼굴이 옆으로 돌아간 정도(v0.7.59). 0 = 정면, ±1 근처 = 옆모습. 부호 = 코가 향한 쪽(+ = 화면 오른쪽).
+    코가 두 귀의 가운데에서 얼마나 벗어났는지를 얼굴 상자 반폭으로 나눈 값(얼굴 기울기는 눈·입 방향으로 보정)."""
+    try:
+        k = np.asarray(d.kps, np.float32)
+        v = k[3] - (k[0] + k[1]) / 2                       # 눈 가운데 → 입 = 얼굴 '아래' 방향
+        nv = float(np.hypot(*v))
+        u = np.array([v[1], -v[0]], np.float32) / nv if nv > 1e-3 else np.array([1.0, 0.0], np.float32)
+        if u[0] < 0:
+            u = -u                                          # 화면 오른쪽이 +
+        half = max(1.0, float(d.box[2] - d.box[0]) / 2)
+        return float(np.clip(np.dot(k[2] - (k[4] + k[5]) / 2, u) / half, -1.5, 1.5))
+    except Exception:  # noqa: BLE001
+        return 0.0
+
+
 def blur_frame(rgb, small=True, body=True, small_min=SMALL_MIN, bottom_skip=0.0):
     """한 프레임: 얼굴(BlazeFace 타일) + 작은 얼굴(MTCNN) + 몸→머리(NanoDet).
-    반환 행: x0,y0,x1,y1,score,kind,hist(16)  — 상자는 '얼굴 상자' 기준(몸에서 추정한 머리도 같은 기준으로 환산).
+    반환 행: x0,y0,x1,y1,score,kind,hist(16),yaw  — 상자는 '얼굴 상자' 기준(몸에서 추정한 머리도 같은 기준으로 환산).
     bottom_skip>0: 화면 하단 그 비율의 '작은 얼굴' 검색(타일·MTCNN)을 생략해 속도↑. 전체화면 통과는 그대로라 큰 얼굴은 보존."""
     H, W = rgb.shape[:2]
     top = max(0.1, 1.0 - max(0.0, min(0.9, bottom_skip)))   # 작은얼굴 검색을 상단 top 비율까지만
@@ -346,11 +365,11 @@ def blur_frame(rgb, small=True, body=True, small_min=SMALL_MIN, bottom_skip=0.0)
             _, conf = models.mesh().run(rgb, *models.roi_from_det(d))
             if conf < 0.05:
                 continue
-        rows.append([*d.box, d.score, KIND_FACE])
+        rows.append([*d.box, d.score, KIND_FACE, face_yaw(d)])
     if small and small_min < 64:       # 작은 얼굴: [최소 크기] 아래는 안 찾음(분석 하한). 하단 제외면 상단만.
         sub = rgb[:ytop] if bottom_skip > 0 else rgb     # MTCNN = 분석 시간의 대부분 → 입력을 줄여 크게 절약
         for x0, y0, x1, y1, sc in models.small_detector().detect(sub, small_min, 64):
-            rows.append([x0, y0, x1, y1, sc * 0.9, KIND_SMALL])
+            rows.append([x0, y0, x1, y1, sc * 0.9, KIND_SMALL, np.nan])      # 작은 얼굴: 옆모습 판단 못 함
     rows = _nms_rows(rows)
     if body:
         faces = [(((r[0] + r[2]) / 2), ((r[1] + r[3]) / 2)) for r in rows]
@@ -362,14 +381,14 @@ def blur_frame(rgb, small=True, body=True, small_min=SMALL_MIN, bottom_skip=0.0)
             if any(x0 <= fx <= x1 and y0 - bh * 0.05 <= fy <= y0 + bh * 0.45 for fx, fy in faces):
                 continue
             cx, cy, fw, fh = models.head_from_person(x0, y0, x1, y1, cut_bottom=y1 >= H - 3)
-            rows.append([cx - fw / 2, cy - fh / 2, cx + fw / 2, cy + fh / 2, sc, KIND_BODY])
+            rows.append([cx - fw / 2, cy - fh / 2, cx + fw / 2, cy + fh / 2, sc, KIND_BODY, np.nan])
     hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
     out = []
     for r in rows:
         w, h = r[2] - r[0], r[3] - r[1]
         cx = (r[0] + r[2]) / 2
         hist = _hist(hsv, cx - w * 0.9, r[3] + h * 0.4, cx + w * 0.9, r[3] + h * 2.2)   # 얼굴 아래 = 옷
-        out.append(np.r_[np.array(r[:6], np.float32), hist])
+        out.append(np.r_[np.array(r[:6], np.float32), hist, np.float32(r[6])])   # 끝 = 옆모습 정도(yaw, 모르면 nan)
     return out
 
 
@@ -412,7 +431,7 @@ def analyze_blur(info: ff.Info, progress=None, cancel=None, hw=False, workers=No
         raise Cancelled()
     if i == 0:
         raise RuntimeError("프레임을 읽지 못했습니다")
-    return {"det": np.array(rows, np.float32).reshape(-1, 7 + HIST), "n": np.array(i),
+    return {"det": np.array(rows, np.float32).reshape(-1, 8 + HIST), "n": np.array(i), "wh": np.array([info.w, info.h]),
             "cam": np.array(cams, np.float32).reshape(-1, 3)}
 
 
@@ -827,6 +846,7 @@ def blur_track(z, params, two_pass=True) -> BlurTrack:
     mins = float(params.get("min_size", 16))
     hold = int(params.get("hold", 15))
     link_max = int(params.get("link", 90))
+    prof = float(params.get("profile", 50))
     if len(det):
         body = det[:, 6] == KIND_BODY
         # 몸 검출은 점수 척도가 달라 기준을 낮춤(검출기 자체 기준 0.4)
@@ -872,20 +892,88 @@ def blur_track(z, params, two_pass=True) -> BlurTrack:
             if q - p - 1 > hold and (p, q) not in bridged:
                 okm[p + 1:q] = False
         nb = sum(1 for f in fs if t["obs"][f][5] == KIND_BODY)
+        # 튀는 동작(떨림 보정 전, 카메라 움직임 뺀 좌표). 화면 가장자리에 걸린 프레임은 제외(들어오고 나갈 때 상자가 커지는 건 정상)
+        jumps = _jumps([(f, t["obs"][f][:4]) for f in fs], skip=_edge_frames(z, S, T, fs, t["obs"]))
         sg = max(sig * 3, 3.0) if nb > len(fs) / 2 else sig     # 몸 위주 트랙은 더 부드럽게
         arr = _smooth_series(arr, okm, sg)
+        if prof > 0:
+            arr = _profile_expand(arr, a2, fs, t["obs"], prof)
         Sk = S[a2:a2 + L, None].astype(np.float32)
         arr[:, :2] = arr[:, :2] * Sk + T[a2:a2 + L].astype(np.float32)      # 기준 좌표 → 프레임 좌표
         arr[:, 2:] = arr[:, 2:] * Sk
         out_id += 1
         # 의심 트랙(검수용 표시, 자동 삭제 안 함): 관측이 아주 짧거나 평균 점수가 낮음
         msc = float(np.mean([t["obs"][f][4] for f in fs]))
-        sus = len(fs) < 8 or msc < (0.5 if nb > len(fs) / 2 else 0.6)
-        tracks[out_id] = {"f0": a2, "box": arr, "obs": val, "ok": okm, "sus": bool(sus), "score": msc}
+        why = [w for w, c in (("짧음", len(fs) < 8), ("점수 낮음", msc < (0.5 if nb > len(fs) / 2 else 0.6)),
+                              ("튐", jumps >= 1)) if c]
+        tracks[out_id] = {"f0": a2, "box": arr, "obs": val, "ok": okm, "sus": bool(why), "why": why, "score": msc}
         for k in range(L):
             if okm[k]:
                 frames[a2 + k].append((out_id, *arr[k], bool(val[k])))
     return BlurTrack(frames, n, out_id, tracks)
+
+
+def _edge_frames(z, S, T, fs, obs) -> set:
+    """상자가 화면 가장자리(2%)에 닿은 프레임. 화면 크기(wh)가 없는 옛 분석이면 빈 집합."""
+    wh = z.get("wh") if isinstance(z, dict) else None
+    if wh is None:
+        return set()
+    W, H = float(wh[0]), float(wh[1])
+    m = 0.02 * max(W, H)
+    out = set()
+    for f in fs:
+        cx, cy, w, h = obs[f][:4]
+        cx, cy, w, h = cx * S[f] + T[f, 0], cy * S[f] + T[f, 1], w * S[f], h * S[f]
+        if cx - w / 2 <= m or cy - h / 2 <= m or cx + w / 2 >= W - m or cy + h / 2 >= H - m:
+            out.add(f)
+    return out
+
+
+def _jumps(seq, move=0.5, grow=1.5, max_gap=2, skip=()) -> int:
+    """튀는 동작 수(v0.7.59): 이어진 관측(간격 ≤ max_gap 프레임) 사이에 가운데가 자기 크기의 move 배 넘게(프레임당) 뛰거나
+    크기가 grow 배 넘게 바뀐 횟수. seq = [(frame, (cx, cy, w, h))] — 카메라 움직임을 뺀 좌표."""
+    n = 0
+    for (f0, a), (f1, b) in zip(seq[:-1], seq[1:]):
+        dt = f1 - f0
+        if dt < 1 or dt > max_gap or f0 in skip or f1 in skip:
+            continue
+        size = max(1e-3, (min(a[2], a[3]) + min(b[2], b[3])) / 2)
+        d = float(np.hypot(b[0] - a[0], b[1] - a[1])) / size / dt
+        r = max(a[2], b[2]) / max(1e-3, min(a[2], b[2]))
+        if d > move or r > grow:
+            n += 1
+    return n
+
+
+PROFILE_FROM, PROFILE_FULL = 0.30, 0.80     # 옆모습 정도(|yaw|) 이 값부터 넓히기 시작 ~ 이 값에서 최대
+
+
+def _profile_expand(arr, a2, fs, obs, prof):
+    """옆모습이면 타원을 머리 전체로(v0.7.59): 뒤통수 쪽으로 넓히고(코 쪽 끝은 그대로) 위로 조금 키움. 정면은 그대로.
+    prof = '옆모습 확장' 0~100(완전 옆모습일 때 가로 +prof%, 세로 +prof/4%). yaw 는 얼굴 검출(큰 얼굴)에만 있음 → 빈 곳은 앞뒤에서 채움."""
+    L = len(arr)
+    ys = np.full(L, np.nan, np.float32)
+    for f in fs:
+        o = obs[f]
+        if len(o) > 6 + HIST and o[5] == KIND_FACE:
+            ys[f - a2] = o[6 + HIST]
+    idx = np.where(~np.isnan(ys))[0]
+    if len(idx) == 0:
+        return arr
+    ys = np.interp(np.arange(L), idx, ys[idx]).astype(np.float32)
+    k = 9                                                    # 약 0.3초 평균(프레임마다 출렁이지 않게)
+    if L >= 3:
+        pad = np.pad(ys, (k // 2, k // 2), mode="edge")
+        ys = np.convolve(pad, np.ones(k, np.float32) / k, mode="valid")[:L]
+    a = np.clip((np.abs(ys) - PROFILE_FROM) / (PROFILE_FULL - PROFILE_FROM), 0, 1) * (prof / 100.0)
+    out = arr.copy()
+    w, h = arr[:, 2], arr[:, 3]
+    # 타원은 이 상자에 '여유'(기본 160%)를 곱해 만들어짐 → 가운데를 0.8×늘린 만큼 옮기면 코 쪽·턱 쪽 끝은 제자리
+    out[:, 2] = w * (1 + a)
+    out[:, 0] = arr[:, 0] - np.sign(ys) * w * 0.8 * a        # 코 반대쪽(뒤통수)으로만 늘어남
+    out[:, 3] = h * (1 + 0.25 * a)
+    out[:, 1] = arr[:, 1] - h * 0.8 * 0.25 * a               # 위(정수리)로만 늘어남
+    return out
 
 
 def face_to_head(cx, cy, w, h, margin=160):

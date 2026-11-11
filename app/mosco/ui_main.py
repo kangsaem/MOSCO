@@ -20,7 +20,7 @@ from .state import AppState
 from .ui_monitor import EllipseLanes, Monitor, TimeBar, TimeRuler
 from .ui_panel import ControlPanel
 from .ui_side import VIDEO_EXT, RenderItem, RenderPanel, RenderSettings, SourceList, stat_line
-from .ui_widgets import BTN_MAIN, QSS, arrow_icon, btn
+from .ui_widgets import BTN, BTN_MAIN, QSS, arrow_icon, btn
 
 
 def confirm_save(parent, text="변경 내용을 저장할까요?") -> str:
@@ -128,7 +128,7 @@ def entries(ells, p=None, mode=None):
         if it.minus:
             lab = "−" + (lab if lab and lab != "+" else "")
         out.append({"key": it.key, "label": lab, "ell": tuple(float(v) for v in ell), "manual": it.manual,
-                    "keyed": it.keyed, "minus": it.minus, "quad": quad, "mode": mode})
+                    "keyed": it.keyed, "minus": it.minus, "quad": quad, "mode": mode, "sus": it.sus})
     return out
 
 
@@ -338,9 +338,14 @@ class MainWindow(QMainWindow):
                            ("▶▶", "1초 앞 (Shift+→)", lambda: self.step(self._sec())),
                            ("▶I", "끝 (End)", lambda: self.seek(10 ** 9))):
             if t is None:
-                tr.addWidget(self.b_play)
+                self.b_play.setMinimumWidth(64)          # v0.7.59 창이 좁으면 버튼이 겹치지 않고 줄어듦
+                self.b_play.setMaximumWidth(BTN_MAIN[0])
+                tr.addWidget(self.b_play, 2)
                 continue
-            tr.addWidget(btn(t, tip, on_click=fn))
+            sb = btn(t, tip, on_click=fn)
+            sb.setMinimumWidth(40)
+            sb.setMaximumWidth(BTN[0])
+            tr.addWidget(sb, 2)
         self.b_play.clicked.connect(self.toggle_play)
         self.tc = QLabel("00:00:00;00")
         self.tc.setStyleSheet("background:#000;color:#e8e8e8;font:300 14px Consolas,monospace;padding:4px 10px;"
@@ -365,10 +370,11 @@ class MainWindow(QMainWindow):
         mid.addWidget(self.status)
         midw = QWidget()
         midw.setLayout(mid)
-        midw.setMinimumWidth(360)
+        # v0.7.59 최소 폭 = 재생 줄이 겹치지 않는 폭(예전 360 고정 → 창을 줄이면 버튼이 겹쳐 엉망)
+        midw.setMinimumWidth(max(360, tr.minimumSize().width() + 8))
 
         right = QWidget()
-        right.setMinimumWidth(260)
+        right.setMinimumWidth(340)             # v0.7.59 [▼][⚙][AE][렌더] 줄이 눌리지 않는 폭(예전 260 → 줄이면 버튼 크기가 달라짐)
         rv = QVBoxLayout(right)
         rv.setContentsMargins(0, 0, 0, 0)
         rv.setSpacing(3)

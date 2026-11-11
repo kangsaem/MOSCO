@@ -446,7 +446,7 @@ class AppState(QObject):
         mode = mode or s.mode
         p = s.params_for(mode)
         rs = self.settings.render
-        keys = ("stabilize",) if mode == "beauty" else ("stabilize", "sensitivity", "min_size", "hold") \
+        keys = ("stabilize",) if mode == "beauty" else ("stabilize", "sensitivity", "min_size", "hold", "link", "profile") \
             if mode == "blur" else ("stabilize", "sensitivity", "min_size", "hold", "link", "margin", "max_count")
         return json.dumps([p.get(x) for x in keys]) + str(rs.get("two_pass", True))
 

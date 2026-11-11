@@ -15,6 +15,7 @@ BEAUTY_DEFAULT = {
 BLUR_DEFAULT = {
     "kind": "blur", "strength": 70, "margin": 160, "feather": 10, "stabilize": 50,
     "sensitivity": 75, "min_size": 12, "hold": 15, "link": 90, "body": True,
+    "profile": 50,      # v0.7.59 옆모습 확장: 옆으로 돌아간 얼굴은 타원을 뒤통수 쪽으로 넓힘(0 = 끔)
 }
 # 간판 블러(v0.7.8): 얼굴 블러와 같은 구성 + 최대 개수. 여유 = 글자 높이 기준 %, 최소 크기 = 글자 높이 px
 SIGN_DEFAULT = {
@@ -32,7 +33,8 @@ BEAUTY_ELLIPSE = [
     ("stabilize", "떨림 보정", 0, 100, ""),
 ]
 BLUR_SLIDERS = [("strength", "강도", 0, 100, "")]
-BLUR_ELLIPSE = [("margin", "여유", 100, 250, "%"), ("feather", "페더", 0, 30, "%"), ("stabilize", "떨림 보정", 0, 100, "")]
+BLUR_ELLIPSE = [("margin", "여유", 100, 250, "%"), ("profile", "옆모습 확장", 0, 100, ""), ("feather", "페더", 0, 30, "%"),
+                ("stabilize", "떨림 보정", 0, 100, "")]
 BLUR_DETECT = [("sensitivity", "민감도", 0, 100, ""), ("min_size", "최소 크기", 8, 100, "px"), ("hold", "놓침 유지", 0, 60, "f"),
                ("link", "다시 잇기", 0, 300, "f")]
 SIGN_SLIDERS = [("strength", "강도", 0, 100, "")]
