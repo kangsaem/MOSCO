@@ -4,6 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 
+import cv2  # noqa: E402
 import numpy as np  # noqa: E402
 
 from mosco import analyze, edits  # noqa: E402
@@ -267,7 +268,28 @@ def eye_area():
     sf = fx.beauty(fr, [it], dict(plain, soft=100), 0).out.astype(np.float32)
     n0, n1 = float(f0[330:350, 280:320, 1].std()), float(sf[330:350, 280:320, 1].std())
     assert n1 < n0 * 0.8 and abs(float(sf[330:350, 280:320].mean() - f0[330:350, 280:320].mean())) < 80, (n0, n1)
-    print("skin extra · eye hole · soft · toneup OK")
+    # v0.7.65 번들거림 줄이기(밝은 점만 누름) · 톤(+분홍/−노랑, 밝기 유지) · 주름 메우기(골 깊이까지만 → 뒤집힘 없음)
+    sp = img.copy()
+    cv2.circle(sp, (300, 340), 7, (0.95, 0.80, 0.72), -1)             # 번들거리는 점
+    sp = cv2.GaussianBlur(sp, (0, 0), 2)
+    cv2.line(sp, (250, 330), (270, 356), (0.66, 0.50, 0.41), 2)       # 얕은 주름 골
+    sp = cv2.GaussianBlur(sp, (0, 0), 0.8)
+    fs = (np.clip(sp, 0, 1) * 65535).astype(np.uint16)
+    lum = lambda o: 0.2126 * o[..., 0].astype(np.float32) + 0.7152 * o[..., 1] + 0.0722 * o[..., 2]
+    sh = fx.beauty(fs, [it], dict(plain, shine=100), 0).out
+    assert lum(sh)[340, 300] < lum(fs)[340, 300] * 0.97 and abs(lum(sh)[360, 330] / lum(fs)[360, 330] - 1) < 0.01, \
+        (lum(sh)[340, 300] / lum(fs)[340, 300], lum(sh)[360, 330] / lum(fs)[360, 330])
+    def cbcr(o):
+        f = o[330:350, 320:340].astype(np.float32) / 65535
+        yy = 0.2126 * f[..., 0] + 0.7152 * f[..., 1] + 0.0722 * f[..., 2]
+        return float(((f[..., 2] - yy) / 1.8556).mean()), float(yy.mean())
+    c0, cp, cn = cbcr(fs), cbcr(fx.beauty(fs, [it], dict(plain, tint=100), 0).out), cbcr(fx.beauty(fs, [it], dict(plain, tint=-100), 0).out)
+    assert 0.012 < cp[0] - c0[0] < 0.021 and -0.021 < cn[0] - c0[0] < -0.012 and abs(cp[1] - c0[1]) < 0.003, (c0, cp, cn)
+    wr = fx.beauty(fs, [it], dict(plain, wrinkle=100), 0).out
+    gap0 = lum(fs)[343, 260] / lum(fs)[343, 275]                       # 골 / 옆 피부
+    gap1 = lum(wr)[343, 260] / lum(wr)[343, 275]
+    assert gap0 < 0.95 and gap0 < gap1 <= 1.005, (gap0, gap1)         # 메워지되 주변보다 밝아지지 않음
+    print("skin extra · eye hole · soft · toneup · shine · tint · wrinkle OK")
 
 
 def names_and_presets():

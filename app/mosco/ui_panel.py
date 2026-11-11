@@ -163,6 +163,13 @@ class ControlPanel(QWidget):
         wc.setLayout(cr_)
         self.sec_beauty.add(wc)
         self._rows(self.sec_beauty, "beauty", P.BEAUTY_SLIDERS)
+        for k, tip in (("soft", "소프트: 피부만 아주 약하게 흐림"), ("toneup", "톤업: 피부 밝기를 올림(밝은 곳은 덜)"),
+                       ("shine", "번들거림 줄이기: 피부의 밝게 번들거리는 부분을 누름"),
+                       ("tint", "톤: 피부색을 옮김 — 왼쪽(−) 노랑 · 오른쪽(+) 분홍"),
+                       ("eye_hole", "눈 제외 크기: 100 = 기본, 0 = 눈 구멍 없음"),
+                       ("wrinkle", "주름 메우기: 어두운 골을 주변 밝기까지 메움")):
+            if ("beauty", k) in self.rows:
+                self.rows[("beauty", k)].setToolTip(tip)
         self.sec_bell = Section("타원")
         self._rows(self.sec_bell, "beauty", P.BEAUTY_ELLIPSE)
         # 블러

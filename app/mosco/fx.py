@@ -319,10 +319,12 @@ def beauty(frame16, items, p, frame_no=0, want_keys=False) -> BeautyResult:
         wf = it.ov.get("wrinkle", p.get("wrinkle", 0)) / 100     # 주름 메우기(어두운 골만)
         soft = float(p.get("soft", 0)) / 100                     # 소프트: 피부만 아주 약하게 흐림(v0.7.64)
         tone = float(p.get("toneup", 0)) / 100                   # 톤업: 피부 밝기 올림(밝은 곳은 덜)
-        if st <= 0 and wf <= 0 and p["unify"] <= 0 and soft <= 0 and tone <= 0:
+        shine = float(p.get("shine", 0)) / 100                   # 번들거림 줄이기: 피부의 작고 밝은 점을 누름(v0.7.65)
+        hue = float(p.get("tint", 0)) / 100                      # 톤: + 분홍 / − 노랑 (피부색 자체를 옮김)
+        if st <= 0 and wf <= 0 and p["unify"] <= 0 and soft <= 0 and tone <= 0 and shine <= 0 and hue == 0:
             continue
         res_img = img
-        if st > 0 or wf > 0 or soft > 0 or tone > 0:
+        if st > 0 or wf > 0 or soft > 0 or tone > 0 or shine > 0:
             target = img
             # ① 매끈: 양방향 필터(엣지 보존 → 구조 안 뭉개짐) + 질감 되살리기
             if st > 0:
@@ -340,8 +342,13 @@ def beauty(frame16, items, p, frame_no=0, want_keys=False) -> BeautyResult:
                 g = cv2.cvtColor((np.clip(target, 0, 1) * 255).astype(np.uint8), cv2.COLOR_RGB2GRAY)
                 gf = g.astype(np.float32) / 255
                 gd = gf - low_pass(gf, sig)
-                dark = np.clip(-gd * 8, 0, 1)[..., None]        # v0.7.36 골 검출 ↑(더 많은 주름 포착)
-                target = target + (-np.minimum(detail, 0)) * dark * wf * 1.4   # v0.7.36 메우기량 ×1.4
+                # v0.7.65 얕은 골도 잡고(깊이 0.004 부터, 0.024 에서 최대 — 예전엔 0.125 라 얕은 주름은 20%만 메워짐),
+                # 메우는 양은 골 깊이까지만(≤100% → 주변보다 밝아져 뒤집혀 보이는 일 없음),
+                # 아주 깊고 어두운 것(머리카락·속눈썹·콧구멍 가장자리: 깊이 0.10 이상)은 서서히 제외.
+                depth = -gd
+                dark = np.clip((depth - 0.004) / 0.020, 0, 1) * np.clip(1.0 - (depth - 0.10) / 0.08, 0, 1)
+                fill = np.minimum(1.0, wf * 1.2 * dark)[..., None]
+                target = target + (-np.minimum(detail, 0)) * fill
             # ③ 소프트: 약한 가우시안을 섞음(최대 60%) — 윤곽을 지키는 '매끈'과 달리 전체를 살짝 뽀얗게
             if soft > 0:
                 target = target + (cv2.GaussianBlur(target, (0, 0), max(0.8, face_w / 130)) - target) * (soft * 0.6)
@@ -352,16 +359,26 @@ def beauty(frame16, items, p, frame_no=0, want_keys=False) -> BeautyResult:
                 if added is not None:
                     gain = 1.0 + (gain - 1.0) * (1 - added)      # 추가 피부색(섀도 등)은 톤업 제외
                 target = target * gain[..., None]
+            # ⑤ 번들거림 줄이기: 주변(넓게 흐린 밝기)보다 밝은 만큼을 덜어냄. 색은 유지(밝기 배율)
+            if shine > 0:
+                sy = np.clip(0.2126 * target[..., 0] + 0.7152 * target[..., 1] + 0.0722 * target[..., 2], 1e-4, 1)
+                over = np.maximum(sy - low_pass(sy, max(3.0, face_w / 10)), 0)
+                target = target * ((sy - over * (shine * 0.6)) / sy)[..., None]   # 100 에서도 60%까지만(얼굴 입체감 유지)
             if p["grain"] > 0:
                 rng = np.random.default_rng(frame_no * 131 + x0)
                 target = target + rng.normal(0, p["grain"] / 100 * 0.03, img.shape[:2]).astype(np.float32)[..., None]
             res_img = img + (target - img) * region[..., None]
-        if p["unify"] > 0:
+        if p["unify"] > 0 or hue != 0:
             y, cb, cr = _ycc(res_img)
-            u = region * (p["unify"] / 100 * 0.6)
-            if added is not None:
-                u = u * (1 - added)                          # 추가 피부색(섀도 등)은 색 통일 제외 → 화장 색 유지
-            res_img = _rgb(y, cb + (ref[0] - cb) * u, cr + (ref[1] - cr) * u)
+            keep = region if added is None else region * (1 - added)   # 추가 피부색(섀도 등)은 색 보정 제외 → 화장 색 유지
+            if p["unify"] > 0:
+                u = keep * (p["unify"] / 100 * 0.6)
+                cb, cr = cb + (ref[0] - cb) * u, cr + (ref[1] - cr) * u
+            if hue != 0:
+                # 톤: +100 = Cb +0.020 · Cr +0.008(노란 기 ↓ 분홍 ↑), −100 = 반대. 어두운 곳은 덜(채도가 낮아 색이 튀지 않게)
+                tw = keep * np.clip(y / 0.25, 0, 1) * hue
+                cb, cr = cb + 0.020 * tw, cr + 0.008 * tw
+            res_img = _rgb(y, cb, cr)
         if o is None:
             o = frame16.copy()
         o[y0:y1, x0:x1] = np.clip(res_img * 65535 + 0.5, 0, 65535).astype(np.uint16)
