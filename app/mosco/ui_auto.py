@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QDialog, Q
 from . import autodetect as ad
 from . import ff, jobs
 from .ui_widgets import PROG, PROG_TXT, QSS, DragMove, ProgBar, Toggle, add_shadow, btn, set_on, tone
+from .project import out_stem
 
 # 버튼 색 이름 — 모양은 ui_widgets.QSS(DTME buttons.qss) 한 곳
 RED, ORANGE, GREY = "red", "orange", "light"
@@ -310,7 +311,7 @@ class AutoDialog(DragMove, QDialog):
         nrow.addWidget(nlb)
         self.name_edit = QLineEdit(self.name)
         self.name_edit.setFixedWidth(160)
-        self.name_edit.setPlaceholderText("MOSCO")
+        self.name_edit.setPlaceholderText("앞에 붙일 이름")
         self.name_edit.setStyleSheet("background:#1a1a1a;border:1px solid #555;border-radius:3px;padding:0 8px;color:#eee")
         self.name_edit.textChanged.connect(self._on_name)
         nrow.addWidget(self.name_edit)
@@ -532,8 +533,9 @@ class AutoDialog(DragMove, QDialog):
         if p:
             mode, params = ad.to_params(p["mode"], self.strength, p["measured"])
             self.detail.setText(self._detail_text(p, mode, params))
-            base = f"{self.name}_{p['name']}" if self.name else p["name"]
-            self.fname.setText(base + "_MOSCO.mov")
+            from .project import out_stem
+            nm = out_stem(p["name"])
+            self.fname.setText((f"{self.name}_{nm}" if self.name else nm) + ".mov")
 
     def _detail_text(self, clip, mode, params):
         title = ad.LABEL.get(mode, mode)
@@ -900,7 +902,7 @@ class AutoDialog(DragMove, QDialog):
             if info is None:
                 continue
             pairs = [(self.state.track(s, m), m) for m in (s.blur_kinds() or [s.mode])]  # 동시 블러면 두 종류
-            path = str(Path(s.path).with_name(f"{s.name}_MOSCO_AE.jsx"))   # 소스 원본 폴더 옆
+            path = str(Path(s.path).with_name(f"{out_stem(s.name)}_AE.jsx"))   # 소스 원본 폴더 옆
             jobsq.append((copy.deepcopy(s), info, pairs, str(path)))
         if not jobsq:
             self._status("AE 보낼 클립이 없습니다", None)
@@ -1137,7 +1139,7 @@ class SampleDialog(DragMove, QDialog):
         root.addWidget(div)
         self.name_edit = QLineEdit(self.opts["name"])
         self.name_edit.setFixedWidth(180)
-        self.name_edit.setPlaceholderText("MOSCO")
+        self.name_edit.setPlaceholderText("앞에 붙일 이름")
         self.name_edit.setStyleSheet("background:#1a1a1a;border:1px solid #555;border-radius:3px;padding:0 8px;color:#eee")
         self.name_edit.setFixedHeight(28)
         self.name_edit.textChanged.connect(self._preview)

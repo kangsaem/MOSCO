@@ -3,10 +3,22 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from . import paths
+
+# 출력 이름에서 빼는 꼬리표(v0.7.61): 소스 이름의 "(클린)" 등. 괄호 종류·앞뒤 공백·대소문자 무시.
+STRIP_TAGS = ("클린", "clean")
+_TAG_RE = re.compile(r"[\s_\-]*[\(\[（]\s*(?:" + "|".join(STRIP_TAGS) + r")\s*[\)\]）]", re.IGNORECASE)
+
+
+def out_stem(name: str) -> str:
+    """출력 파일 이름의 몸통: 소스 이름에서 "(클린)" 같은 꼬리표를 뺌. 다 빠져 비면 원래 이름."""
+    s = _TAG_RE.sub("", name).strip(" _-")
+    return s or name
+
 
 BEAUTY_DEFAULT = {
     "strength": 50, "wrinkle": 50, "texture": 35, "grain": 15, "skin_range": 40, "unify": 20,   # v0.7.57 피부 범위 50→40
@@ -158,7 +170,35 @@ def list_presets() -> list[str]:
 
 
 def load_preset(name) -> dict:
-    return json.loads((paths.preset_dir() / f"{name}.json").read_text(encoding="utf-8"))
+    """프리셋 읽기. 깨진 파일(비었거나 다른 인코딩)이면: 기본 프리셋은 새로 만들어 돌려주고, 그 밖은 이유를 알림(v0.7.61)."""
+    f = paths.preset_dir() / f"{name}.json"
+    try:
+        raw = f.read_bytes()
+        try:
+            txt = raw.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            txt = raw.decode("cp949")
+        d = json.loads(txt)
+        if not isinstance(d, dict):
+            raise ValueError("형식이 다릅니다")
+        return d
+    except Exception as e:  # noqa: BLE001
+        made = _builtin_preset(name)
+        if made is not None:
+            save_preset(name, made["mode"], made["params"])
+            return made
+        raise ValueError(f"프리셋 파일을 읽을 수 없습니다: {f}\n({e})\n프리셋을 우클릭해 삭제한 뒤 다시 저장하세요.") from e
+
+
+def _builtin_preset(name):
+    b = dict(BEAUTY_DEFAULT)
+    table = {"인터뷰 기본": ("beauty", b), "인터뷰 약하게": ("beauty", {**b, "strength": 30, "texture": 50}),
+             "인터뷰 강하게": ("beauty", {**b, "strength": 75, "texture": 25}),
+             "시장 블러": ("blur", dict(BLUR_DEFAULT)), "시장 모자이크": ("blur", {**BLUR_DEFAULT, "kind": "mosaic"})}
+    if name not in table:
+        return None
+    mode, params = table[name]
+    return {"mode": mode, "params": params}
 
 
 def save_preset(name, mode, params):

@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 
 from . import __version__, analyze, edits, ff, fx, models, paths
-from .project import Source
+from .project import Source, out_stem
 
 
 def auto_workers() -> int:
@@ -58,9 +58,11 @@ def unique(path: Path) -> Path:
 
 def out_names(src: Source, rs: dict, out_dir: str):
     base = (rs.get("name") or "").strip()
-    stem = f"{base}_{src.name}" if base else src.name
+    name = out_stem(src.name)                       # "(클린)" 등 꼬리표 제거
+    stem = f"{base}_{name}" if base else name
     d = Path(out_dir)
-    return {"main": unique(d / f"{stem}_MOSCO.mov"),
+    # v0.7.61 "_MOSCO" 꼬리 없음. 같은 이름 파일(원본 포함)이 있으면 unique 가 _2, _3 … 을 붙여 덮어쓰지 않음
+    return {"main": unique(d / f"{stem}.mov"),
             "overlay": unique(d / f"{stem}_BLUR4444.mov"),
             "review": unique(d / f"{stem}_CHECK.mp4")}
 

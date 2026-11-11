@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDialog,
 
 from . import ff
 from .ui_widgets import BTN_MAIN, PROG, PROG_TXT, DragMove, btn, tone
+from .project import out_stem
 
 VIDEO_EXT = {".mov", ".mp4", ".mxf", ".mts", ".m2ts", ".avi", ".mkv"}
 MODE_TXT = {"beauty": "뷰티", "blur": "블러", "sign": "간판"}
@@ -238,7 +239,7 @@ class RenderDelegate(QStyledItemDelegate):
         f.setBold(True)
         p.setFont(f)
         p.drawText(r.adjusted(6, 0, -50, 0), Qt.AlignVCenter | Qt.AlignLeft,
-                   p.fontMetrics().elidedText(it.src.name, Qt.ElideMiddle, r.width() - 60))
+                   p.fontMetrics().elidedText(out_stem(it.src.name), Qt.ElideMiddle, r.width() - 60))
         p.restore()
 
 
@@ -361,7 +362,7 @@ class RenderSettings(DragMove, QDialog):
         r.addWidget(btn("찾기…", on_click=self._browse))
         f.addRow("저장폴더", r)
         self.name = QLineEdit(rs.get("name", ""))
-        self.name.setPlaceholderText("원본이름_MOSCO")
+        self.name.setPlaceholderText("(비우면 원본 이름 그대로)")
         f.addRow("명칭", self.name)
         r = QHBoxLayout()
         self.main = QCheckBox("ProRes")

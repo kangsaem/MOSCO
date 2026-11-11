@@ -98,7 +98,9 @@ def unique(path: Path) -> Path:
 def filename(src, opts, idx):
     import datetime
     base = (opts.get("name") or "").strip()
-    stem = f"{base}_{src.name}" if base else src.name
+    from .project import out_stem
+    name = out_stem(src.name)
+    stem = f"{base}_{name}" if base else name
     tags = []
     if opts.get("date"):
         tags.append(datetime.datetime.now().strftime("%y%m%d_%H%M"))

@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (QApplication, QDialog, QFileDialog, QHBoxLayout, 
                                QScrollArea, QSplitter, QToolBar, QVBoxLayout, QWidget)
 
 from . import __version__, analyze, decoder, edits, ff, fx, jobs, paths
-from .project import Project
+from .project import Project, out_stem
 from .render import render as do_render
 from .state import AppState
 from .ui_monitor import EllipseLanes, Monitor, TimeBar, TimeRuler
@@ -1129,7 +1129,7 @@ class MainWindow(QMainWindow):
             pairs = [(self.state.track(s, m), m) for m in (s.blur_kinds() or [s.mode])]
             if all(tr is None for tr, _ in pairs) and not edits.get(s).get("groups"):
                 continue                                 # 분석·수정 둘 다 없음 → 건너뜀
-            out = path if (path and len(srcs) == 1) else str(Path(s.path).with_name(f"{s.name}_MOSCO_AE.jsx"))
+            out = path if (path and len(srcs) == 1) else str(Path(s.path).with_name(f"{out_stem(s.name)}_AE.jsx"))
             jobsq.append((copy.deepcopy(s), info, pairs, out))
         if not jobsq:
             self.flash("먼저 분석하세요 — 트랙이 없습니다")

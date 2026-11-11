@@ -80,7 +80,7 @@ def to_params(mode, strength="mid", measured=None):
     if mode == "beauty":
         p = dict(BEAUTY_DEFAULT)
         p["strength"] = [35, 55, 75][s]       # 매끈
-        p["wrinkle"] = [30, 50, 70][s]        # 주름 메우기
+        p["wrinkle"] = [30, 50, 55][s]        # 주름 메우기(v0.7.61 강 70→55: 70 에서는 주름 골이 밝게 뒤집혀 보이는 경우가 있음)
         p["texture"] = [55, 40, 28][s]        # 질감 보존
         return "beauty", p
     if mode == "sign":                        # 간판: 강도만(약·중·강), 나머지는 기본값

@@ -201,7 +201,44 @@ def main():
     minus_check()
     sign_check()
     skin_range_migration()
+    names_and_presets()
     print("EDITS OK")
+
+
+def names_and_presets():
+    """v0.7.61 출력 이름: "(클린)" 제거 · "_MOSCO" 없음 · 원본 덮어쓰지 않음 / 깨진 기본 프리셋 자동 복구."""
+    import tempfile
+    from mosco import paths, render
+    from mosco import project as P
+    for a, b in (("A_0122(클린)", "A_0122"), ("A_0122 (클린)", "A_0122"), ("A_0122_(Clean)", "A_0122"),
+                 ("A[클린]_v2", "A_v2"), ("(클린)", "(클린)"), ("클린룸 촬영", "클린룸 촬영"), ("B_0001", "B_0001")):
+        assert P.out_stem(a) == b, (a, P.out_stem(a))
+    d = Path(tempfile.mkdtemp())
+    src = d / "C_01(클린).mov"
+    src.write_bytes(b"x")
+    n = render.out_names(Source(str(src), "beauty"), {}, str(d))
+    assert n["main"].name == "C_01.mov" and n["overlay"].name == "C_01_BLUR4444.mov", n
+    plain = d / "D_02.mov"
+    plain.write_bytes(b"x")
+    assert render.out_names(Source(str(plain), "beauty"), {}, str(d))["main"].name == "D_02_2.mov", "원본을 덮어씀"
+    assert render.out_names(Source(str(plain), "beauty"), {"name": "최종"}, str(d))["main"].name == "최종_D_02.mov"
+    old_pd = paths.preset_dir
+    try:
+        paths.preset_dir = lambda: d
+        (d / "인터뷰 기본.json").write_bytes(b"")                       # 빈 파일(깨짐)
+        assert P.load_preset("인터뷰 기본")["params"]["strength"] == 50
+        assert P.load_preset("인터뷰 기본")["mode"] == "beauty"            # 다시 써 둠
+        (d / "bom.json").write_bytes(b"\xef\xbb\xbf" + '{"mode": "blur", "params": {}}'.encode())
+        assert P.load_preset("bom")["mode"] == "blur"
+        (d / "내것.json").write_bytes(b"{")
+        try:
+            P.load_preset("내것")
+            raise AssertionError("깨진 프리셋인데 오류 없음")
+        except ValueError as e:
+            assert "읽을 수 없습니다" in str(e)
+    finally:
+        paths.preset_dir = old_pd
+    print("names · presets OK")
 
 
 def skin_range_migration():

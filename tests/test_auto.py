@@ -108,7 +108,7 @@ def main():
 
     # AUTO [AE]: 측정·분석 후 각 클립 .jsx 저장(창 유지) — v0.7.15
     import glob
-    for f in glob.glob(str(Path(vid).with_name("*_MOSCO_AE.jsx"))):
+    for f in glob.glob(str(Path(vid).with_name("*_AE.jsx"))):
         os.remove(f)
     dlg_ae = AutoDialog(w, w.state)
     assert dlg_ae.b_ae.text() == "AE"
@@ -116,7 +116,7 @@ def main():
     dlg_ae._go("ae")                                    # AE = 모든 소스, 원본 폴더 옆에 저장
     assert pump(app, 600, lambda: dlg_ae._phase is None and "완료" in dlg_ae.status.text()), \
         f"AE 보내기가 끝나지 않음: {dlg_ae.status.text()}"
-    jsx = Path(vid).with_name(Path(vid).stem + "_MOSCO_AE.jsx")    # 소스 원본 옆
+    jsx = Path(vid).with_name(Path(vid).stem + "_AE.jsx")    # 소스 원본 옆
     assert jsx.exists(), f"소스 옆 .jsx 없음: {jsx}"
     txt = jsx.read_text(encoding="ascii")
     assert "ADBE Mask Shape" in txt and "Run Script File" in txt, txt[:200]
@@ -177,7 +177,8 @@ def main():
     assert log.get("clips") == ["synth_copy"], log
     assert log["keep"] == (False, False), log           # 기본 = 기존 보정 무시 · 키프레임 자동
     assert log["sample"] >= 6 and log["open_after_sample"], log
-    outs = [f for f in os.listdir(work) if f.startswith("synth_copy") and f.endswith("_MOSCO.mov")]
+    outs = [f for f in os.listdir(work) if f.startswith("synth_copy_") and f.endswith(".mov")
+            and "BLUR4444" not in f]      # v0.7.61 "_MOSCO" 없음 → 원본과 같은 폴더면 _2 (원본을 덮어쓰지 않음)
     assert outs, "보정+렌더 출력 없음"
     assert log.get("exit"), "보정+렌더가 끝나면 종료해야 함"
     print("start->auto->sample->render->exit OK", outs)
