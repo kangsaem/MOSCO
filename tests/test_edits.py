@@ -204,7 +204,51 @@ def main():
     skin_range_migration()
     names_and_presets()
     eye_area()
+    user_folder()
     print("EDITS OK")
+
+
+def user_folder():
+    """v0.7.72 프리셋·설정 공용 폴더(내 문서\\MOSCO): 처음에 프로그램 폴더 것을 복사 · 덮어쓰지 않음 · 못 만들면 예전 방식."""
+    import os
+    import tempfile
+    from mosco import paths
+    keep_dir, keep_app, keep_env = paths._USER_DIR, paths.app_dir, os.environ.get("MOSCO_USER_DIR")
+    try:
+        old = Path(tempfile.mkdtemp())                 # 가짜 프로그램 폴더(예전 버전)
+        (old / "presets").mkdir()
+        (old / "presets" / "내 프리셋.json").write_text('{"mode": "beauty", "params": {"strength": 61}}', encoding="utf-8")
+        (old / "settings.json").write_text('{"default_mode": "blur"}', encoding="utf-8")
+        paths.app_dir = lambda: old
+        shared = Path(tempfile.mkdtemp()) / "문서" / "MOSCO"
+        os.environ["MOSCO_USER_DIR"] = str(shared)
+        paths._USER_DIR = None
+        assert paths.user_dir() == shared and paths.preset_dir() == shared / "presets"
+        assert (shared / "presets" / "내 프리셋.json").exists() and paths.settings_path().read_text(encoding="utf-8") == '{"default_mode": "blur"}'
+        # 두 번째(다른 버전 폴더에서 실행): 공용 폴더에 이미 있으면 덮어쓰지 않음
+        (shared / "presets" / "내 프리셋.json").write_text('{"mode": "beauty", "params": {"strength": 99}}', encoding="utf-8")
+        old2 = Path(tempfile.mkdtemp())
+        (old2 / "presets").mkdir()
+        (old2 / "presets" / "다른 것.json").write_text("{}", encoding="utf-8")
+        paths.app_dir = lambda: old2
+        paths._USER_DIR = None
+        paths.user_dir()
+        assert '"strength": 99' in (shared / "presets" / "내 프리셋.json").read_text(encoding="utf-8")
+        assert not (shared / "presets" / "다른 것.json").exists()
+        # 공용 폴더를 만들 수 없으면 프로그램 폴더(예전 방식)
+        blocker = Path(tempfile.mkdtemp()) / "file"
+        blocker.write_text("x", encoding="utf-8")
+        os.environ["MOSCO_USER_DIR"] = str(blocker / "MOSCO")
+        paths._USER_DIR = None
+        assert paths.user_dir() == old2
+        print("user folder OK")
+    finally:
+        paths.app_dir = keep_app
+        paths._USER_DIR = keep_dir
+        if keep_env is None:
+            os.environ.pop("MOSCO_USER_DIR", None)
+        else:
+            os.environ["MOSCO_USER_DIR"] = keep_env
 
 
 def eye_area():

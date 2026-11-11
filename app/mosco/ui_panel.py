@@ -676,12 +676,20 @@ class PresetGridPopup(DragMove, QDialog):          # 빈 바탕을 끌어 옮김
             root.addLayout(wrap)
 
         br = QHBoxLayout()
+        br.addWidget(btn("폴더", "프리셋이 저장된 폴더 열기(내 문서\\MOSCO\\presets) — 백업하거나 다른 PC 로 옮길 때", w=56,
+                         on_click=self._open_folder))
         br.addStretch(1)
         br.addWidget(btn("취소", "", w=64, on_click=self.reject))
         self.b_apply = btn("적용", "현재 클립에 적용", w=84, red=True, on_click=self._apply)
         br.addWidget(self.b_apply)
         root.addLayout(br)
         self._show_current()
+
+    def _open_folder(self):
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+        from . import paths
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(paths.preset_dir())))
 
     def _on_mode(self, v):
         self.mode = v
