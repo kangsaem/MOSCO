@@ -676,7 +676,8 @@ class AppState(QObject):
         return d["intervals"][0][0] if d and d["intervals"] else frame
 
     def delete_auto_key(self, key, frame):
-        """오토 키 ◆ 삭제 = 앞 키와 뒤 키 사이를 직선으로 폄(그 사이 검출값의 흔들림 제거). → "" 또는 못 지운 이유."""
+        """오토 키 ◆ 삭제 = 앞 키와 뒤 키 사이를 직선으로 폄(그 사이 검출값의 흔들림 제거).
+        구간 처음·끝 키 = 옆 키 값으로 고정(구간 길이는 그대로). → "" 또는 못 지운 이유."""
         s = self.source()
         d = self._span(s, key) if s is not None else None
         if d is None:
@@ -687,14 +688,19 @@ class AppState(QObject):
         if frame not in ks:
             return "키를 찾지 못했습니다"
         i = ks.index(frame)
-        if i == 0 or i == len(ks) - 1:
-            return "구간 처음·끝 키는 지울 수 없습니다 (구간 끝을 끌어 길이를 줄이세요)"
+        if len(ks) < 2:
+            return "키가 하나뿐이라 지울 수 없습니다"
         self.push_undo()
         s, g = self._group_for(key, frame)
         if g is None or g.get("manual"):
             self.undo_stack.pop()
             return "키를 찾지 못했습니다"
-        edits.add_flat(g, ks[i - 1], ks[i + 1])
+        if i == 0:                               # 구간 첫 키 = 다음 키 값으로 구간 시작부터 고정(v0.7.75)
+            edits.add_hold(g, iv[0], ks[1] - 1, ks[1])
+        elif i == len(ks) - 1:                   # 구간 끝 키 = 앞 키 값으로 구간 끝까지 고정
+            edits.add_hold(g, ks[-2] + 1, iv[1], ks[-2])
+        else:
+            edits.add_flat(g, ks[i - 1], ks[i + 1])
         self.sel = ("g", g["gid"])
         self._edited()
         return ""

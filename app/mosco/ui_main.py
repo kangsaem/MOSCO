@@ -613,7 +613,7 @@ class MainWindow(QMainWindow):
                     self.state.delete_key(kf[2]) or self.flash("이 프레임에 키가 없습니다")
                 else:
                     why = self.state.delete_auto_key(kf[0], kf[2])
-                    self.flash(why or "오토 키 삭제 — 앞뒤 키 사이를 직선으로 폈습니다 (Ctrl+Z 되돌리기)")
+                    self.flash(why or "오토 키 삭제 — 옆 키 값으로 이었습니다 (구간 처음·끝 = 옆 키 값 고정 · Ctrl+Z 되돌리기)")
                 return
             self.state.delete_ellipse(self.state.sel, self.f)
 

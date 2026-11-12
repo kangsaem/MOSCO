@@ -152,7 +152,20 @@ def flat_check():
     lane = next(x for x in st.ellipse_spans(s2) if x["label"] == str(a.tid))
     mid = [k for k in lane["keys"] if 50 <= k <= 60]
     assert mid, f"튀는 곳에 오토 키가 없음: {lane['keys']}"
-    assert st.delete_auto_key(lane["key"], lane["keys"][0]) != "", "첫 키는 못 지워야 함"
+    # v0.7.75 구간 처음·끝 키 삭제 = 옆 키 값으로 고정(구간 길이 그대로)
+    k0, k1, kz, ky = lane["keys"][0], lane["keys"][1], lane["keys"][-1], lane["keys"][-2]
+    ref1 = next(it for it in st.resolver(s2).items(k1) if it.key == lane["key"]).ell[:4]
+    refy = next(it for it in st.resolver(s2).items(ky) if it.key == lane["key"]).ell[:4]
+    assert st.delete_auto_key(lane["key"], k0) == "" and st.delete_auto_key(st.sel, kz) == ""
+    s2 = st.source()
+    lane2 = next(x for x in st.ellipse_spans(s2) if x["key"] == st.sel)
+    assert lane2["intervals"] == lane["intervals"], "끝 키를 지워도 구간 길이는 그대로여야 함"
+    e0 = next(it for it in st.resolver(s2).items(k0) if it.key == st.sel).ell[:4]
+    ez = next(it for it in st.resolver(s2).items(kz) if it.key == st.sel).ell[:4]
+    assert np.allclose(e0, ref1, atol=0.5) and np.allclose(ez, refy, atol=0.5), "끝 키가 옆 키 값으로 고정되지 않음"
+    assert st.undo() and st.undo()
+    s2 = st.source()
+    lane = next(x for x in st.ellipse_spans(s2) if x["label"] == str(a.tid))
     n0 = len(lane["keys"])
     for _ in range(8):                                         # 튀는 구간의 키를 다 지울 때까지
         lane = next(x for x in st.ellipse_spans(s2) if x["key"] == st.sel or x["label"] == str(a.tid))

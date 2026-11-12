@@ -201,15 +201,33 @@ class Resolver:
         """펴기 구간(g["flat"] = [[a, b], …], v0.7.73 오토 키 삭제) 안이면 a·b 의 자동값을 직선 보간한 값, 아니면 None."""
         for a, b in g.get("flat", ()):
             if a < i < b:
-                va, vb = self._auto_vec(tid, a), self._auto_vec(tid, b)
+                va, vb = self._end_vec(g, tid, a), self._end_vec(g, tid, b)
                 if va is None or vb is None or len(va) != len(vb):
                     return None
                 u = (i - a) / (b - a)
                 return va * (1 - u) + vb * u
         return None
 
-    def _base_vec(self, g, tid, i):
+    def _hold_vec(self, g, tid, i):
+        """고정 구간(g["hold"] = [[a, b, src], …], v0.7.75 구간 처음·끝 오토 키 삭제): a~b 는 src 프레임의 자동값 그대로."""
+        for a, b, src in g.get("hold", ()):
+            if a <= i <= b:
+                return self._auto_vec(tid, src)
+        return None
+
+    def _end_vec(self, g, tid, i):
+        v = self._hold_vec(g, tid, i) if g.get("hold") else None
+        return v if v is not None else self._auto_vec(tid, i)
+
+    def _edit_vec(self, g, tid, i):
+        """오토 키를 지워 바뀐 값(펴기 → 고정 순). 해당 없으면 None."""
         v = self._flat_vec(g, tid, i) if g.get("flat") else None
+        if v is None and g.get("hold"):
+            v = self._hold_vec(g, tid, i)
+        return v
+
+    def _base_vec(self, g, tid, i):
+        v = self._edit_vec(g, tid, i)
         return v if v is not None else self._auto_vec(tid, i)
 
     def _offset(self, ks, offs, i):
@@ -242,8 +260,8 @@ class Resolver:
                 if g.get("off_all") or _off(g, i):
                     seen.add(gid)
                     continue
-                if g.get("flat"):               # 오토 키를 지운 구간 = 앞뒤 키 사이 직선
-                    fv = self._flat_vec(g, tid, i)
+                if g.get("flat") or g.get("hold"):   # 오토 키를 지운 구간 = 앞뒤 키 사이 직선 / 끝은 옆 키 값 고정
+                    fv = self._edit_vec(g, tid, i)
                     if fv is not None:
                         if self.mode == "sign":
                             from . import sign
@@ -360,6 +378,12 @@ def add_flat(g, a, b):
             out.append([x, y])
     out.append([a, b])
     g["flat"] = sorted(out)
+
+
+def add_hold(g, a, b, src):
+    """a~b 를 src 프레임 값으로 고정. 겹치는 예전 고정은 바꿔 씀."""
+    a, b, src = int(a), int(b), int(src)
+    g["hold"] = sorted([h for h in g.get("hold", []) if h[1] < a or h[0] > b] + [[a, b, src]])
 
 
 def off_range(g, a, b):
