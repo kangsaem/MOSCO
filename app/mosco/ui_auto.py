@@ -7,7 +7,7 @@ from __future__ import annotations
 import copy
 import time
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, QPoint, QRect, QSize, Qt, Signal
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel,
                                QLineEdit, QPushButton, QScrollArea, QStyle, QVBoxLayout, QWidget)
 
@@ -148,6 +148,8 @@ class ClipRow(QFrame):
         self._press = e.position()
         self._dragging = False
         self._on_chk = e.position().x() < 30         # 체크영역 클릭 여부
+        self.press_gpt = e.globalPosition().toPoint()   # v0.7.76 본문에서 끌기 = 영역 선택(사각형)의 시작점
+        self.press_mods = e.modifiers()
         self.drag_press.emit(self.idx)
 
     def mouseMoveEvent(self, e):
@@ -251,6 +253,16 @@ class AutoDialog(DragMove, QDialog):
         bl.addStretch(1)
         sc.setWidget(body)
         mid.addWidget(sc, 1)
+        # v0.7.76 영역 선택: 목록의 빈 곳이나 줄 본문에서 끌면 사각형이 보이고 걸친 줄이 선택됨(체크칸에서 끌기 = 체크 칠하기 그대로)
+        from PySide6.QtWidgets import QRubberBand
+        self._sc, self._body = sc, body
+        self._band = QRubberBand(QRubberBand.Rectangle, body)
+        self._band.setStyleSheet("QRubberBand{border:1px solid #4a8fe0;background:rgba(74,143,224,45)}")
+        self._band_org = None          # 시작점(목록 안 좌표). None = 영역 선택 아님
+        self._band_base = set()
+        self._band_on = False
+        self._anchor = self.clips[0]["idx"] if self.clips else None    # Shift 범위 선택의 기준 줄
+        body.installEventFilter(self)
         # 오른쪽 격자+값
         right = QVBoxLayout()
         right.setSpacing(10)
@@ -395,11 +407,61 @@ class AutoDialog(DragMove, QDialog):
         return [c for c in self.clips if c["inc"]]
 
     def _on_row(self, idx, mods):
-        if mods & Qt.ControlModifier:
+        order = [c["idx"] for c in self.clips]
+        if mods & Qt.ShiftModifier and self._anchor in order and idx in order:   # v0.7.76 Shift = 기준 줄부터 여기까지
+            a, b = sorted((order.index(self._anchor), order.index(idx)))
+            rng = set(order[a:b + 1])
+            self.selected = (self.selected | rng) if mods & Qt.ControlModifier else rng
+        elif mods & Qt.ControlModifier:
             self.selected ^= {idx}
+            self._anchor = idx
         else:
             self.selected = {idx}
+            self._anchor = idx
         self._refresh()
+
+    # ------------------------------------------------------------ 영역 선택(사각형)
+    def eventFilter(self, o, e):
+        if o is getattr(self, "_body", None):
+            t = e.type()
+            if t == QEvent.MouseButtonPress and e.button() == Qt.LeftButton:
+                self._band_start(e.globalPosition().toPoint(), e.modifiers())
+                return True                              # 창 끌어 옮기기로 넘어가지 않게
+            if t == QEvent.MouseMove and self._band_org is not None:
+                self._band_move(e.globalPosition().toPoint())
+                return True
+            if t == QEvent.MouseButtonRelease and self._band_org is not None:
+                self._band_end()
+                return True
+        return super().eventFilter(o, e)
+
+    def _band_start(self, gpt, mods):
+        self._band_org = self._body.mapFromGlobal(gpt)
+        self._band_base = set(self.selected) if mods & (Qt.ControlModifier | Qt.ShiftModifier) else set()
+        self._band_on = False
+
+    def _band_move(self, gpt):
+        if self._band_org is None:
+            return
+        pos = self._body.mapFromGlobal(gpt)
+        if not self._band_on and (pos - self._band_org).manhattanLength() < 5:
+            return
+        self._band_on = True
+        rect = QRect(self._band_org, pos).normalized().intersected(self._body.rect())
+        self._band.setGeometry(rect if rect.isValid() else QRect(self._band_org, QSize(1, 1)))
+        self._band.show()
+        self._band.raise_()
+        self._sc.ensureVisible(pos.x(), max(0, min(self._body.height(), pos.y())), 0, 24)   # 가장자리 = 따라 스크롤
+        hit = {r.idx for r in self.rows if r.geometry().intersects(rect)}
+        new = self._band_base | hit
+        if new != self.selected:
+            self.selected = new
+            self._refresh()
+
+    def _band_end(self):
+        self._band.hide()
+        self._band_org = None
+        self._band_on = False
 
     def _on_check(self, idx, v):
         for c in self.clips:
@@ -434,9 +496,15 @@ class AutoDialog(DragMove, QDialog):
     def _ds_press(self, idx):
         self._ds_press_idx = idx
         self._ds_target = None
+        r = next((x for x in self.rows if x.idx == idx), None)
+        if r is not None and not r._on_chk:               # 본문에서 누름 → 끌면 영역 선택(v0.7.76)
+            self._band_start(r.press_gpt, r.press_mods)
 
     def _ds_move(self, gpt):
         if getattr(self, "_ds_press_idx", None) is None:
+            return
+        if self._band_org is not None:
+            self._band_move(gpt)
             return
         if self._ds_target is None:                       # 첫 이동에 방향 결정(누른 행의 반대 상태)
             self._ds_target = not self._inc_of(self._ds_press_idx)
@@ -446,6 +514,8 @@ class AutoDialog(DragMove, QDialog):
             self._set_inc(ri, self._ds_target)
 
     def _ds_end(self):
+        if self._band_org is not None:
+            self._band_end()
         if getattr(self, "_ds_target", None) is not None:
             self._refresh()
         self._ds_target = None

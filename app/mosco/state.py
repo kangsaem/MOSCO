@@ -650,20 +650,33 @@ class AppState(QObject):
 
     def delete_ellipse(self, key, frame):
         """타원 삭제: 추가(수동) 타원은 그룹째 제거, 자동 타원은 전 구간 숨김(off_all)."""
+        return self.delete_ellipses([key], frame)
+
+    def delete_ellipses(self, keys, frame):
+        """여러 타원을 한 번에 삭제(실행취소 한 번, v0.7.76). → 지운 개수."""
         s = self.source()
-        if s is None or key is None:
-            return
+        keys = [k for k in dict.fromkeys(keys) if k is not None]
+        if s is None or not keys:
+            return 0
+        frames = [self._frame_with(s, k, frame) for k in keys]          # 재생선이 구간 밖이어도 삭제(v0.7.73)
         self.push_undo()
-        s, g = self._group_for(key, self._frame_with(s, key, frame))   # 재생선이 구간 밖이어도 삭제(v0.7.73)
-        if g is None:
+        n = 0
+        for k, f in zip(keys, frames):
+            s, g = self._group_for(k, f)
+            if g is None:
+                continue
+            if g.get("manual"):
+                edits.remove_group(s, g["gid"])
+            else:
+                g["off_all"] = True
+            n += 1
+            self._res.clear()                    # 다음 타원을 찾을 때 방금 바뀐 편집이 반영되게
+        if not n:
             self.undo_stack.pop()
-            return
-        if g.get("manual"):
-            edits.remove_group(s, g["gid"])
-        else:
-            g["off_all"] = True
+            return 0
         self.sel = None
         self._edited()
+        return n
 
     def _span(self, s, key):
         return next((d for d in self.ellipse_spans(s) if d["key"] == key and d.get("mode", s.mode) == s.mode), None)
@@ -805,6 +818,7 @@ class AppState(QObject):
                             lbl = "−" + (lbl if lbl not in ("+", "·") else "")
                         tinfo = res.track.tracks.get(it.tid) if (it.tid is not None and hasattr(res.track, "tracks")) else None
                         seen[sk] = {"label": lbl, "frames": [], "geo": [], "minus": it.minus, "mode": mode,
+                                    "tid": it.tid, "ord": len(order),
                                     "sus": bool(tinfo and tinfo.get("sus")) and not it.manual and not it.minus,
                                     "note": (tinfo or {}).get("note", ""),
                                     "quad": bool(getattr(it, "pts", None) is not None
@@ -812,6 +826,12 @@ class AppState(QObject):
                         order.append(sk)
                     seen[sk]["frames"].append(i)
                     seen[sk]["geo"].append(_lane_geo(it, p, fx))   # 오토 키 계산용 기하
+        # v0.7.76 레인 순서 고정: 종류 → 트랙 번호 → 추가한 순서. 예전엔 '처음 나타난 순서'라, 레이어를 고르거나
+        # 손대서 그룹이 되면(자동이 없는 프레임에서는 맨 뒤에 나옴) 위아래가 뒤바뀌었음.
+        m_ord = {m: i for i, (_r, m) in enumerate(resolvers)}
+        order.sort(key=lambda sk: (m_ord[sk[0]], 0 if seen[sk]["tid"] is not None else 1,
+                                   seen[sk]["tid"] if seen[sk]["tid"] is not None else (sk[1][1] if sk[1][0] == "g" else 0),
+                                   seen[sk]["ord"]))
         out = []
         for sk in order:
             mode, k = sk

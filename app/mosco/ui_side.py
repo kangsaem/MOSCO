@@ -110,6 +110,7 @@ class SourceList(QListWidget):
         self.state = state
         self.setItemDelegate(SourceDelegate(state))
         self.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.setSelectionRectVisible(True)     # v0.7.76 끌면 선택 사각형이 보임(걸친 줄이 선택됨)
         self.setSpacing(0)
         self.setMouseTracking(True)
         self.itemSelectionChanged.connect(self._sel)
@@ -339,6 +340,7 @@ class RenderPanel(QWidget):
         self.list.setItemDelegate(RenderDelegate(self))
         self.list.setSpacing(0)
         self.list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.list.setSelectionRectVisible(True)   # v0.7.76 끌면 선택 사각형이 보임
         self.list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.list.customContextMenuRequested.connect(self._menu)
         self.list.itemDoubleClicked.connect(self._open)

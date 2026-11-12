@@ -602,6 +602,8 @@ class EllipseLanes(QWidget):
         self._preview = None     # (key, f_in, f_out) 드래그 중 미리보기
         self._scrub = False      # 재생선 드래그 중
         self.sel_kf = None       # 클릭해 고른 키 (lane_key, mode, frame, "user"|"auto") — Del 대상 · 테두리 표시
+        self.multi = set()       # v0.7.76 Ctrl·Shift 로 더 고른 레이어 {(mode, key)} — 대표(self.sel) 말고 추가분
+        self._sel_mode = None    # 대표 레이어의 종류(얼굴·간판) — 여러 개 선택은 같은 종류끼리만
         self._fit()
 
     def event(self, e):
@@ -647,8 +649,45 @@ class EllipseLanes(QWidget):
                       and kf[2] in x.get("ukeys" if kf[3] == "user" else "keys", ())
                       and (x["key"] == kf[0] or x["key"] == sel)), None)
             self.sel_kf = (d["key"], kf[1], kf[2], kf[3]) if d is not None and d["key"] == sel else None
+        have = {(x.get("mode"), x["key"]) for x in self.spans}
+        self.multi = {m for m in self.multi if m in have and m[1] != sel} if sel is not None else set()
         self._preview = None
         self._fit()
+        self.update()
+
+    def multi_keys(self):
+        """Ctrl·Shift 로 더 고른 레이어의 key 목록(대표 제외)."""
+        return [k for _m, k in self.multi]
+
+    def _pick(self, idx, mods):
+        """레이어 몸통 클릭: 그냥 = 하나만 · Ctrl = 더하기/빼기 · Shift = 대표부터 여기까지(같은 종류끼리)."""
+        d = self.spans[idx]
+        mode, key = d.get("mode"), d["key"]
+        cur_i = next((i for i, x in enumerate(self.spans) if x["key"] == self.sel
+                      and (self._sel_mode is None or x.get("mode") == self._sel_mode)), None)
+        many = bool(mods & (Qt.ControlModifier | Qt.ShiftModifier)) and cur_i is not None \
+            and self.spans[cur_i].get("mode") == mode
+        self.sel_kf = None
+        if not many:
+            self.multi = set()
+            self.sel, self._sel_mode = key, mode
+            self.select.emit(key, mode)
+        elif mods & Qt.ShiftModifier:
+            a, b = sorted((cur_i, idx))
+            add = {(x.get("mode"), x["key"]) for x in self.spans[a:b + 1] if x.get("mode") == mode}
+            self.multi = (self.multi | add) if mods & Qt.ControlModifier else add
+            self.multi.discard((mode, self.sel))
+        elif idx == cur_i:                               # Ctrl + 대표 클릭 = 대표를 빼고 다른 하나를 대표로
+            if self.multi:
+                m = sorted(self.multi, key=lambda t: next(i for i, x in enumerate(self.spans)
+                                                          if (x.get("mode"), x["key"]) == t))[0]
+                self.multi.discard(m)
+                keep = set(self.multi)
+                self.sel = m[1]
+                self.select.emit(m[1], m[0])
+                self.multi = keep
+        else:
+            self.multi ^= {(mode, key)}
         self.update()
 
     def set_cur(self, i):
@@ -690,7 +729,8 @@ class EllipseLanes(QWidget):
         if hidx is not None and isinstance(hwhere, tuple):
             d = self.spans[hidx]
             self.sel_kf = None
-            self.sel = d["key"]
+            self.multi = set()
+            self.sel, self._sel_mode = d["key"], d.get("mode")
             self.select.emit(d["key"], d.get("mode"))
             self._drag = (hidx, hwhere)
             self.update()
@@ -702,7 +742,8 @@ class EllipseLanes(QWidget):
         kf = self._key_hit(e.position())                 # 키프레임 ◆ 클릭 → 선택 + 그 프레임으로(활성화)
         if kf is not None:
             lane_key, mode, frame, _kind = kf
-            self.sel = lane_key
+            self.multi = set()
+            self.sel, self._sel_mode = lane_key, mode
             self.select.emit(lane_key, mode)
             self.seek.emit(frame)
             self.sel_kf = kf                             # 고른 키: 테두리 표시 · Del = 이 키 삭제
@@ -715,10 +756,7 @@ class EllipseLanes(QWidget):
         if isinstance(where, tuple):                     # 구간 끝 끌기
             self._drag = (idx, where)
         else:
-            self.sel_kf = None                           # 레이어 몸통 클릭 = 레이어 선택(Del = 레이어 삭제)
-            self.sel = d["key"]
-            self.select.emit(d["key"], d.get("mode"))
-            self.update()
+            self._pick(idx, e.modifiers())               # 레이어 몸통 클릭 = 레이어 선택(Del = 레이어 삭제)
 
     def mouseMoveEvent(self, e):
         if self._scrub:                                  # 재생선 드래그 → 앞뒤 이동
@@ -785,7 +823,7 @@ class EllipseLanes(QWidget):
         p.setFont(f)
         for idx, d in enumerate(self.spans):
             y0, y1 = self._lane_rect(idx)
-            sel = d["key"] == self.sel
+            sel = d["key"] == self.sel or (d.get("mode"), d["key"]) in self.multi
             p.fillRect(QRectF(0, y0 - 1, self.width(), self.LANE_H - 1), QColor("#242424" if idx % 2 else "#202020"))
             pv = self._preview if (self._preview and self._preview[0] == d["key"]) else None
             bar = _lane_color(d, sel)       # 종류별 색: 얼굴=노랑·간판=청록·추가=파랑·제외=초록

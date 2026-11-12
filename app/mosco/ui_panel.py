@@ -585,21 +585,22 @@ class ControlPanel(QWidget):
             return
         set_on(self.b_preset, True)                       # 창이 떠 있는 동안 켜짐(파랑)
         dlg = PresetGridPopup(self, s.mode, s)
+        dlg.on_apply = self._apply_preset                 # v0.7.76 [적용] = 창을 닫지 않고 바로 적용
         dlg.move(self.b_preset.mapToGlobal(self.b_preset.rect().bottomLeft()) + QPoint(0, 4))
-        ok = dlg.exec() == QDialog.Accepted
+        dlg.exec()                                        # ✕ 로만 닫힘
         self.b_preset.setChecked(False)
         set_on(self.b_preset, False)
-        if ok and dlg.result is not None:
-            mode, params = dlg.result
-            sel = [self.state.cur] + list(getattr(self, "extra_selected", lambda: [])())
-            cur = self.state.cur
-            for idx in dict.fromkeys(sel):
-                self.state.cur = idx
-                self.state.set_params(mode, params)
-            self.state.cur = cur
-            self.state.current_changed.emit()
-            self.state.message.emit(f"프리셋 적용: {dlg.label}")
-            self.b_preset.setText(f"프리셋: {dlg.label}")
+
+    def _apply_preset(self, mode, params, label):
+        sel = [self.state.cur] + list(getattr(self, "extra_selected", lambda: [])())
+        cur = self.state.cur
+        for idx in dict.fromkeys(sel):
+            self.state.cur = idx
+            self.state.set_params(mode, params)
+        self.state.cur = cur
+        self.state.current_changed.emit()
+        self.state.message.emit(f"프리셋 적용: {label}")
+        self.b_preset.setText(f"프리셋: {label}")
 
     # ------------------------------------------------------------ 상태 읽기
     def view_mode(self):
@@ -607,29 +608,48 @@ class ControlPanel(QWidget):
 
 
 class PresetGridPopup(DragMove, QDialog):          # 빈 바탕을 끌어 옮김(DTME 팝업과 같음)
-    """프리셋 격자. 작업(뷰티/블러) × 강도(약/중/강)를 골라 즉시 적용 + 저장된 프리셋 바로 적용.
+    """프리셋 격자. 작업(뷰티/블러) × 강도(약/중/강/강+) 또는 저장된 프리셋을 고르고 [적용].
 
-    장면 자동판정(시장/정면 …)은 부정확해서 쓰지 않는다. 현재/선택 클립에 바로 적용.
+    v0.7.76(사용자 요청): 열면 아무것도 고르지 않은 상태 · 고르기만 해서는 적용도 닫힘도 없음 ·
+    [적용] = 창을 닫지 않고 현재(선택) 클립에 적용 · 닫기는 오른쪽 위 ✕ 뿐(Esc·바깥 클릭으로 안 닫힘).
+    현재 클립의 설정은 글자 줄로만 알려 줌. 장면 자동판정(시장/정면 …)은 부정확해서 쓰지 않는다.
     """
 
     def __init__(self, parent, mode, src=None):
         super().__init__(parent)
-        self.result = None
-        self.label = ""
+        self.on_apply = None           # (mode, params, label) → 적용
         self.mode = mode if mode in ("beauty", "blur", "sign") else "beauty"
-        self.src = src                 # 현재 클립 — 열 때 그 설정(약·중·강 / 저장된 프리셋)을 표시(v0.7.60)
-        self.strength = "mid"
+        self.src = src                 # 현재 클립 — '현재 클립: …' 글자 표시용
+        self.pick = None               # 고른 것: ("level", 강도) | ("named", 이름) | None
         self.setWindowFlag(Qt.FramelessWindowHint)
         self.setModal(True)
         self.setStyleSheet("PresetGridPopup{background:#262626;border:1px solid #555;border-radius:6px}"
-                           "QLabel{color:#ccc;font-size:12px}")
+                           "QLabel{color:#ccc;font-size:12px}"
+                           "QPushButton#x{color:#bbb;background:transparent;border:none;font-size:13px;padding:0}"
+                           "QPushButton#x:hover{color:#fff;background:#c0392b;border-radius:3px}")
         self.setFixedWidth(360)
         root = QVBoxLayout(self)
-        root.setContentsMargins(16, 14, 16, 14)
+        root.setContentsMargins(16, 12, 12, 14)
         root.setSpacing(10)
+        hr = QHBoxLayout()
+        hr.setContentsMargins(0, 0, 0, 0)
         head = QLabel("프리셋")
         head.setStyleSheet("color:#fff;font-size:13px;font-weight:bold")
-        root.addWidget(head)
+        hr.addWidget(head)
+        hr.addStretch(1)
+        self.b_x = QPushButton("✕")
+        self.b_x.setObjectName("x")
+        self.b_x.setFixedSize(20, 20)
+        self.b_x.setToolTip("닫기")
+        self.b_x.setCursor(Qt.PointingHandCursor)
+        self.b_x.setFocusPolicy(Qt.NoFocus)
+        self.b_x.clicked.connect(self._close)
+        hr.addWidget(self.b_x)
+        root.addLayout(hr)
+        inner = QVBoxLayout()
+        inner.setContentsMargins(0, 0, 4, 0)
+        inner.setSpacing(10)
+        root.addLayout(inner)
 
         wr = QHBoxLayout()
         wr.setSpacing(8)
@@ -640,7 +660,7 @@ class PresetGridPopup(DragMove, QDialog):          # 빈 바탕을 끌어 옮김
         self.wseg.set(self.mode)
         self.wseg.changed.connect(self._on_mode)
         wr.addWidget(self.wseg, 1)
-        root.addLayout(wr)
+        inner.addLayout(wr)
 
         sr = QHBoxLayout()
         sr.setSpacing(8)
@@ -650,40 +670,72 @@ class PresetGridPopup(DragMove, QDialog):          # 빈 바탕을 끌어 옮김
         self.sseg = Seg([("weak", "약"), ("mid", "중"), ("strong", "강"), ("strongplus", "강+")])
         self.sseg.changed.connect(self._on_strength)
         sr.addWidget(self.sseg, 1)
-        root.addLayout(sr)
+        inner.addLayout(sr)
         self.cur_lb = QLabel("")
         self.cur_lb.setStyleSheet("color:#8f8f8f;font-size:11px;margin-left:52px")
-        root.addWidget(self.cur_lb)
+        inner.addWidget(self.cur_lb)
         self.named = {}
 
-        # 저장된 프리셋(바로 적용)
-        names = P.list_presets()
-        if names:
-            div = QFrame()
-            div.setFrameShape(QFrame.HLine)
-            div.setStyleSheet("color:#3a3a3a")
-            root.addWidget(div)
-            root.addWidget(QLabel("저장된 프리셋"))
-            wrap = QGridLayout()
-            wrap.setHorizontalSpacing(6)
-            wrap.setVerticalSpacing(6)
-            for i, n in enumerate(names):
-                b = btn(n, f"'{n}' 적용", w=104, on_click=lambda _=False, n=n: self._use_named(n))
-                b.setContextMenuPolicy(Qt.CustomContextMenu)
-                b.customContextMenuRequested.connect(lambda pos, n=n, b=b: self._named_menu(n, b.mapToGlobal(pos)))
-                wrap.addWidget(b, i // 3, i % 3)
-                self.named[n] = b
-            root.addLayout(wrap)
+        # 저장된 프리셋(고른 뒤 [적용]). 이름 바꿈·삭제 뒤에는 이 칸만 다시 만듦(창은 그대로)
+        self.named_box = QWidget()
+        self.named_lay = QVBoxLayout(self.named_box)
+        self.named_lay.setContentsMargins(0, 0, 0, 0)
+        self.named_lay.setSpacing(10)
+        inner.addWidget(self.named_box)
+        self._build_named()
 
         br = QHBoxLayout()
         br.addWidget(btn("폴더", "프리셋이 저장된 폴더 열기(내 문서\\MOSCO\\presets) — 백업하거나 다른 PC 로 옮길 때", w=56,
                          on_click=self._open_folder))
-        br.addStretch(1)
-        br.addWidget(btn("취소", "", w=64, on_click=self.reject))
-        self.b_apply = btn("적용", "현재 클립에 적용", w=84, red=True, on_click=self._apply)
+        self.done_lb = QLabel("")
+        self.done_lb.setStyleSheet("color:#7fd18b;font-size:11px;margin-left:6px")
+        br.addWidget(self.done_lb, 1)
+        self.b_apply = btn("적용", "고른 강도·프리셋을 현재(선택) 클립에 적용 — 창은 그대로", w=84, red=True, on_click=self._apply)
         br.addWidget(self.b_apply)
-        root.addLayout(br)
+        inner.addLayout(br)
         self._show_current()
+        self._set_pick(None)
+
+    def _build_named(self):
+        while self.named_lay.count():
+            it = self.named_lay.takeAt(0)
+            if it.widget() is not None:
+                it.widget().deleteLater()
+            elif it.layout() is not None:
+                while it.layout().count():
+                    w = it.layout().takeAt(0).widget()
+                    if w is not None:
+                        w.deleteLater()
+        self.named = {}
+        names = P.list_presets()
+        self.named_box.setVisible(bool(names))
+        if not names:
+            return
+        div = QFrame()
+        div.setFrameShape(QFrame.HLine)
+        div.setStyleSheet("color:#3a3a3a")
+        self.named_lay.addWidget(div)
+        self.named_lay.addWidget(QLabel("저장된 프리셋"))
+        wrap = QGridLayout()
+        wrap.setHorizontalSpacing(6)
+        wrap.setVerticalSpacing(6)
+        for i, n in enumerate(names):
+            b = btn(n, f"'{n}' 고르기 — [적용] 을 눌러야 적용됩니다", w=104, on_click=lambda _=False, n=n: self._use_named(n))
+            b.setContextMenuPolicy(Qt.CustomContextMenu)
+            b.customContextMenuRequested.connect(lambda pos, n=n, b=b: self._named_menu(n, b.mapToGlobal(pos)))
+            wrap.addWidget(b, i // 3, i % 3)
+            self.named[n] = b
+        self.named_lay.addLayout(wrap)
+
+    def _close(self):
+        QDialog.reject(self)
+
+    def reject(self):                  # Esc 로는 닫히지 않음(닫기 = ✕ 만)
+        pass
+
+    def closeEvent(self, e):           # Alt+F4 등 창 닫기는 허용
+        e.accept()
+        QDialog.reject(self)
 
     def _open_folder(self):
         from PySide6.QtCore import QUrl
@@ -691,65 +743,87 @@ class PresetGridPopup(DragMove, QDialog):          # 빈 바탕을 끌어 옮김
         from . import paths
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(paths.preset_dir())))
 
-    def _on_mode(self, v):
-        self.mode = v
-        self._show_current()
-
-    def _on_strength(self, v):
-        self.strength = v
-        self.b_apply.setEnabled(True)
-
-    def _show_current(self):
-        """현재 클립의 설정을 표시: 약·중·강 중 같은 것 선택(직접 조정했으면 선택 없음) · 같은 저장 프리셋 강조."""
-        cur = self.src.params_for(self.mode) if self.src is not None else None
-        lv = ad.level_of(self.mode, cur) if cur else "mid"
+    def _set_pick(self, pick):
+        """고른 것 표시: 강도 칸 또는 저장된 프리셋 하나만 켜짐. None = 아무것도 안 고름."""
+        self.pick = pick
+        lv = pick[1] if pick and pick[0] == "level" else None
         self.sseg.group.setExclusive(False)
         for k, b in self.sseg.btns.items():
             b.setChecked(k == lv)
         self.sseg.group.setExclusive(True)
-        self.strength = lv
-        self.b_apply.setEnabled(lv is not None)
-        same = []
         for n, b in self.named.items():
-            hit = False
-            if cur:
-                try:
-                    d = P.load_preset(n)
-                    pr = d.get("params", {})
-                    hit = d.get("mode", "beauty") == self.mode and bool(pr) and all(cur.get(k) == v for k, v in pr.items())
-                except Exception:  # noqa: BLE001
-                    hit = False
-            set_on(b, hit)
-            if hit:
-                same.append(n)
+            set_on(b, bool(pick and pick[0] == "named" and pick[1] == n))
+        self.b_apply.setEnabled(pick is not None)
+
+    def _on_mode(self, v):
+        self.mode = v
+        self._show_current()
+        if self.pick and self.pick[0] == "named":      # 저장된 프리셋은 자기 작업 종류가 있음 → 고른 것 해제
+            self._set_pick(None)
+
+    def _on_strength(self, v):
+        self.done_lb.setText("")
+        self._set_pick(("level", v))
+
+    def _show_current(self):
+        """현재 클립의 설정을 글자로만 알려 줌(칸은 켜지 않음): 약·중·강 / 같은 저장 프리셋 / 직접 조정."""
+        cur = self.src.params_for(self.mode) if self.src is not None else None
         if not cur:
             self.cur_lb.setText("")
-        elif lv is not None:
+            return
+        lv = ad.level_of(self.mode, cur)
+        same = []
+        for n in P.list_presets():
+            try:
+                d = P.load_preset(n)
+                pr = d.get("params", {})
+                if d.get("mode", "beauty") == self.mode and pr and all(cur.get(k) == v for k, v in pr.items()):
+                    same.append(n)
+            except Exception:  # noqa: BLE001
+                pass
+        if lv is not None:
             self.cur_lb.setText(f"현재 클립: {ad.LABEL[lv]}" + (f" · 프리셋 '{same[0]}'" if same else ""))
         else:
             self.cur_lb.setText("현재 클립: " + (f"프리셋 '{same[0]}'" if same else "직접 조정한 값(약·중·강과 다름)"))
 
     def _apply(self):
-        if self.strength is None:
+        if self.pick is None:
             return
-        self.result = ad.to_params(self.mode, self.strength)
-        self.label = f"{ad.LABEL.get(self.mode, self.mode)} · {ad.LABEL.get(self.strength, self.strength)}"
-        self.accept()
+        if self.pick[0] == "level":
+            mode, params = ad.to_params(self.mode, self.pick[1])
+            label = f"{ad.LABEL.get(self.mode, self.mode)} · {ad.LABEL.get(self.pick[1], self.pick[1])}"
+        else:
+            try:
+                d = P.load_preset(self.pick[1])
+            except Exception as e:  # noqa: BLE001
+                QMessageBox.warning(self, "프리셋", str(e))
+                return
+            mode, params, label = d.get("mode", "beauty"), d.get("params", {}), self.pick[1]
+        if self.on_apply is not None:
+            self.on_apply(mode, params, label)
+        self.done_lb.setText(f"적용됨: {label}")
+        self._show_current()
 
     def _named_menu(self, name, gpos):
         panel = self.parent()
         if hasattr(panel, "preset_menu") and panel.preset_menu(name, gpos):
-            self.reject()                 # 목록이 바뀜(이름 바꿈·삭제) → 다시 열면 새 목록
+            self._build_named()           # 목록이 바뀜(이름 바꿈·삭제) → 이 칸만 다시(창은 안 닫음)
+            self._set_pick(self.pick if self.pick and (self.pick[0] != "named" or self.pick[1] in self.named) else None)
+            self._show_current()
+            self.adjustSize()
 
     def _use_named(self, name):
+        self.done_lb.setText("")
         try:
             d = P.load_preset(name)
-        except Exception as e:  # noqa: BLE001
-            QMessageBox.warning(self, "프리셋", str(e))
-            return
-        self.result = (d.get("mode", "beauty"), d.get("params", {}))
-        self.label = name
-        self.accept()
+            m = d.get("mode", "beauty")
+            if m in ("beauty", "blur", "sign") and m != self.mode:    # 그 프리셋의 작업 종류로 표시를 맞춤
+                self.mode = m
+                self.wseg.set(m)
+                self._show_current()
+        except Exception:  # noqa: BLE001
+            pass
+        self._set_pick(("named", name))
 
 
 _ = BTN

@@ -59,6 +59,45 @@ def main():
     dlg.grab().save(str(work / "auto_strongplus.png"))
     dlg.set_strength("mid"); dlg._on_strength("mid")
     assert len(dlg.clips) == 2 and dlg.width() == 998
+    # v0.7.76 Shift 범위 선택 · 영역 선택(사각형): 줄 본문에서 끌기 / 빈 곳에서 끌기 · 체크칸 끌기 = 체크 칠하기 그대로
+    from PySide6.QtCore import QEvent, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+    dlg.show()
+    pump(app, 0.3)
+    i0, i1 = dlg.clips[0]["idx"], dlg.clips[1]["idx"]
+    dlg._on_row(i0, Qt.NoModifier)
+    dlg._on_row(i1, Qt.ShiftModifier)
+    assert dlg.selected == {i0, i1}, dlg.selected
+    dlg._on_row(i1, Qt.NoModifier)
+    assert dlg.selected == {i1}
+
+    def ev(wd, t, x, y, btn=Qt.LeftButton):
+        pos = QPointF(x, y)
+        app.sendEvent(wd, QMouseEvent(t, pos, wd.mapToGlobal(pos), btn if t != QEvent.MouseMove else Qt.NoButton,
+                                      Qt.LeftButton if t != QEvent.MouseButtonRelease else Qt.NoButton, Qt.NoModifier))
+    r0, r1 = dlg.rows[0], dlg.rows[1]
+    inc0 = [c["inc"] for c in dlg.clips]
+    ev(r0, QEvent.MouseButtonPress, 120, r0.height() / 2)             # 줄 본문에서 아래 줄까지 끌기
+    ev(r0, QEvent.MouseMove, 160, r0.height() / 2 + (r1.y() - r0.y()))
+    assert dlg._band.isVisible(), "선택 사각형이 안 보임"
+    dlg.grab().save(str(work / "auto_band.png"))
+    ev(r0, QEvent.MouseButtonRelease, 160, r0.height() / 2 + (r1.y() - r0.y()))
+    assert dlg.selected == {i0, i1} and not dlg._band.isVisible(), dlg.selected
+    assert [c["inc"] for c in dlg.clips] == inc0, "본문 끌기가 체크를 바꾸면 안 됨"
+    body = dlg._body
+    ev(body, QEvent.MouseButtonPress, body.width() - 8, r1.geometry().bottom() + 12)   # 빈 곳에서 시작해 위로
+    ev(body, QEvent.MouseMove, 60, r1.geometry().center().y())
+    assert dlg._band.isVisible() and dlg.selected == {i1}, dlg.selected
+    ev(body, QEvent.MouseButtonRelease, 60, r1.geometry().center().y())
+    ev(r0, QEvent.MouseButtonPress, 10, r0.height() / 2)              # 체크칸에서 끌기 = 체크 칠하기(예전 그대로)
+    ev(r0, QEvent.MouseMove, 12, r0.height() / 2 + (r1.y() - r0.y()))
+    ev(r0, QEvent.MouseButtonRelease, 12, r0.height() / 2 + (r1.y() - r0.y()))
+    assert [c["inc"] for c in dlg.clips] == [not inc0[0]] * 2 and not dlg._band.isVisible(), [c["inc"] for c in dlg.clips]
+    for c, v in zip(dlg.clips, inc0):
+        c["inc"] = v
+    dlg.selected = {i0}
+    dlg._refresh()
+    dlg.hide()
     # v0.7.3: 창을 열 때는 아무 작업도 안 함(버튼을 눌러야 측정)
     pump(app, 1)
     assert not dlg._jobs and all(c["prog"] is None and c["measured"] is None for c in dlg.clips), "열자마자 측정함"

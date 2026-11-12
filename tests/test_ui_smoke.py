@@ -110,6 +110,60 @@ def sign_ui(app, w, st, vids, out):
         print("auto key select+delete OK")
     else:
         print("auto key: 키 3개 이상인 레인 없음 — 건너뜀", [len(x["keys"]) for x in ln.spans])
+    # v0.7.76 레이어 여러 개 선택(Ctrl·Shift) → Del 한 번에 삭제 · 고르거나 손대도 레인 순서 그대로 · 스크롤바 여백
+    from PySide6.QtGui import QMouseEvent as _ME
+    def lane_click(i, mods=Qt.NoModifier):
+        dd = ln.spans[i]
+        a_, b_ = dd["intervals"][0]
+        cand = [f for f in range(a_ + 2, b_ - 1) if all(abs(f - k) > max(4, ln.n // 60) for k in list(dd["keys"]) + list(dd.get("ukeys", ())))
+                and abs(ln._x(f + 0.5) - ln._x(ln.cur + 0.5)) > 10]
+        pos = QPointF(ln._x(cand[len(cand) // 2] + 0.5), ln.PAD + i * ln.LANE_H + ln.LANE_H / 2)
+        for t in (QEvent.MouseButtonPress, QEvent.MouseButtonRelease):
+            app.sendEvent(ln, _ME(t, pos, ln.mapToGlobal(pos), Qt.LeftButton,
+                                  Qt.LeftButton if t == QEvent.MouseButtonPress else Qt.NoButton, mods))
+        pump(app, 0.2)
+    same = [i for i, x in enumerate(ln.spans) if x.get("mode") == ln.spans[0].get("mode")]
+    if len(same) >= 3:
+        labels0 = [x["label"] for x in ln.spans]
+        lane_click(same[0])
+        assert ln.sel == ln.spans[same[0]]["key"] and not ln.multi
+        lane_click(same[2], Qt.ShiftModifier)
+        assert len(ln.multi) == 2, ln.multi                     # 대표 + 2 = 3줄
+        lane_click(same[1], Qt.ControlModifier)
+        assert len(ln.multi) == 1, ln.multi                     # 가운데 빼기
+        lane_click(same[1], Qt.ControlModifier)
+        assert len(ln.multi) == 2
+        assert [x["label"] for x in ln.spans] == labels0, "고르기만 했는데 레인 순서가 바뀜"
+        n_before = len(ln.spans)
+        w._del()
+        pump(app, 0.8)
+        assert len(ln.spans) == n_before - 3, f"여러 레이어 삭제 {n_before} → {len(ln.spans)}"
+        st.undo()
+        pump(app, 0.5)
+        assert len(ln.spans) == n_before and [x["label"] for x in ln.spans] == labels0, "실행취소 한 번에 다 돌아와야 함"
+        # 손대서 그룹이 되어도(구간을 줄여도) 위아래 순서는 그대로
+        d1 = ln.spans[same[1]]
+        a_, b_ = d1["intervals"][0]
+        w.on_segments(d1["key"], [(a_ + (b_ - a_) // 2, b_)]) if hasattr(w, "on_segments") else st.set_spans(d1["key"], [(a_ + (b_ - a_) // 2, b_)])
+        pump(app, 0.5)
+        assert [x["label"] for x in ln.spans] == labels0, f"구간을 줄였더니 순서가 바뀜 {[x['label'] for x in ln.spans]}"
+        st.undo()
+        pump(app, 0.5)
+        print("lane multi select · order OK")
+    sb = w.lanes_box.verticalScrollBar()
+    assert w.bar.width() == ln.width() or sb.isVisible(), (w.bar.width(), ln.width())
+    old_max = w.lanes_box.maximumHeight()
+    w.lanes_box.setMaximumHeight(ln.PAD * 2 + ln.LANE_H)         # 스크롤바가 생기게 억지로 낮춤
+    w.lanes_box.setMinimumHeight(ln.PAD * 2 + ln.LANE_H)
+    pump(app, 0.5)
+    if sb.isVisible():
+        assert abs(w.bar.width() - ln.width()) <= 1 and abs(w.ruler.width() - ln.width()) <= 1, \
+            f"스크롤바가 있을 때 레인·소스 바 폭이 다름 {ln.width()} {w.bar.width()} {w.ruler.width()}"
+        print("scrollbar pad OK", ln.width(), w.bar.width())
+    w.lanes_box.setMaximumHeight(old_max)
+    w.lanes_box.setMinimumHeight(ln.PAD * 2 + 2 * ln.LANE_H)
+    pump(app, 0.5)
+    assert w.bar.width() == ln.width() or sb.isVisible(), "스크롤바가 없어졌는데 여백이 남음"
     n_l = len(ln.spans)
     short = next((i for i, x in enumerate(ln.spans) if x["intervals"][-1][1] < w._n() - 3 or x["intervals"][0][0] > 2), None)
     if short is not None:
@@ -188,21 +242,46 @@ def extras(app, w, st, vids, out):
     assert st.project.sources[n0].params()[key] == 33
     w._clear_autosave()
     assert w.autosave_pending() is None
-    # v0.7.60 프리셋 창: 현재 클립 설정(약·중·강)을 선택된 상태로 보여 줌, 직접 조정했으면 선택 없음
+    # v0.7.76 프리셋 창: 열면 아무것도 안 고른 상태(현재 클립 설정은 글자로만) · 고르기만 해서는 적용·닫힘 없음 ·
+    # [적용] = 닫지 않고 적용 · 닫기 = ✕ 만(Esc 무시)
     from mosco import autodetect as ad
     from mosco.ui_panel import PresetGridPopup
     st.select(0)
     st.set_params("beauty", ad.to_params("beauty", "strong")[1])
     dlg = PresetGridPopup(w.panel, "beauty", st.source())
-    assert dlg.sseg.value() == "strong" and dlg.b_apply.isEnabled(), dlg.sseg.value()
-    st.set_param("strength", 61)
-    dlg = PresetGridPopup(w.panel, "beauty", st.source())
-    assert dlg.sseg.value() is None and not dlg.b_apply.isEnabled()
-    # v0.7.63 버튼 클릭 신호(checked=False)가 인자를 덮던 버그: 저장된 프리셋 버튼 · 팝업 버튼
-    dlg = PresetGridPopup(w.panel, "beauty", st.source())
+    assert dlg.sseg.value() is None and not dlg.b_apply.isEnabled(), dlg.sseg.value()
+    assert "강" in dlg.cur_lb.text(), dlg.cur_lb.text()
+    got = []
+    dlg.on_apply = lambda m, p, lb: (got.append(lb), w.panel._apply_preset(m, p, lb))
+    dlg.show()
+    pump(app, 0.2)
+    dlg.sseg.btns["weak"].click()
+    assert dlg.pick == ("level", "weak") and dlg.b_apply.isEnabled() and not got and dlg.isVisible()
+    assert ad.level_of("beauty", st.source().params_for("beauty")) == "strong", "고르기만 했는데 적용됨"
+    dlg.b_apply.click()
+    pump(app, 0.3)
+    assert got and dlg.isVisible(), "[적용] 뒤에도 창은 열려 있어야 함"
+    assert ad.level_of("beauty", st.source().params_for("beauty")) == "weak"
+    # 저장된 프리셋 버튼(v0.7.63 클릭 신호가 인자를 덮던 버그 확인 포함): 고르기만 → [적용] 에서 적용
     nm = next(iter(dlg.named))
     dlg.named[nm].click()
-    assert dlg.label == nm and dlg.result is not None, dlg.label
+    assert dlg.pick == ("named", nm) and dlg.sseg.value() is None and len(got) == 1 and dlg.isVisible()
+    dlg.b_apply.click()
+    pump(app, 0.3)
+    assert got[-1] == nm and dlg.isVisible()
+    from PySide6.QtCore import Qt as _Qt
+    from PySide6.QtTest import QTest
+    QTest.keyClick(dlg, _Qt.Key_Escape)
+    pump(app, 0.2)
+    assert dlg.isVisible(), "Esc 로 닫히면 안 됨"
+    dlg.b_x.click()
+    pump(app, 0.2)
+    assert not dlg.isVisible(), "✕ 로 닫혀야 함"
+    st.set_params("beauty", ad.to_params("beauty", "strong")[1])     # 뒤 검사를 위해 뷰티로 되돌림
+    st.set_param("strength", 61)
+    pump(app, 0.3)
+    # v0.7.76 목록 영역 선택(사각형) · 레이어 여러 개 선택
+    assert w.sources.isSelectionRectVisible() and w.rpanel.list.isSelectionRectVisible()
     from PySide6.QtCore import QTimer
     from PySide6.QtWidgets import QDialog, QPushButton
     from mosco.ui_widgets import info_popup

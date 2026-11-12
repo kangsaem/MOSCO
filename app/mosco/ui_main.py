@@ -322,8 +322,15 @@ class MainWindow(QMainWindow):
         _botl.setContentsMargins(0, 0, 0, 0)
         _botl.setSpacing(4)
         _botl.addWidget(self.lanes_box, 1)      # 레이어(타원·사각형)를 소스 바 위로
-        _botl.addWidget(self.bar)               # 소스 바(재생 위치)
-        _botl.addWidget(self.ruler)
+        # v0.7.76 레인이 많아 세로 스크롤바가 생기면 레인 폭만 그만큼 줄어, 아래 소스 바·눈금과 프레임 위치가 어긋났음
+        # → 스크롤바가 보이는 동안 소스 바·눈금 오른쪽에 같은 폭을 비워 x 를 맞춤
+        self._tl_pad = QVBoxLayout()
+        self._tl_pad.setContentsMargins(0, 0, 0, 0)
+        self._tl_pad.setSpacing(4)
+        self._tl_pad.addWidget(self.bar)        # 소스 바(재생 위치)
+        self._tl_pad.addWidget(self.ruler)
+        _botl.addLayout(self._tl_pad)
+        self.lanes_box.verticalScrollBar().installEventFilter(self)
         self.vsplit = QSplitter(Qt.Vertical)
         self.vsplit.setChildrenCollapsible(False)
         self.vsplit.addWidget(self.mon)
@@ -615,7 +622,11 @@ class MainWindow(QMainWindow):
                     why = self.state.delete_auto_key(kf[0], kf[2])
                     self.flash(why or "오토 키 삭제 — 옆 키 값으로 이었습니다 (구간 처음·끝 = 옆 키 값 고정 · Ctrl+Z 되돌리기)")
                 return
-            self.state.delete_ellipse(self.state.sel, self.f)
+            more = self.lanes.multi_keys()               # Ctrl·Shift 로 더 고른 레이어까지 한 번에(v0.7.76)
+            self.lanes.multi = set()
+            n = self.state.delete_ellipses([self.state.sel] + more, self.f)
+            if n > 1:
+                self.flash(f"레이어 {n}개 삭제 (Ctrl+Z 되돌리기)")
 
     def _delete_keyframe(self):
         """Shift+Del: 현재 프레임의 키 삭제(타원 삭제와 분리)."""
@@ -1524,6 +1535,12 @@ class MainWindow(QMainWindow):
         for it in self.rpanel.items:
             if it.job is not None:
                 it.job.cancel.set()
+
+    def eventFilter(self, o, e):
+        if o is self.lanes_box.verticalScrollBar() and e.type() in (e.Type.Show, e.Type.Hide):
+            w = o.sizeHint().width() if e.type() == e.Type.Show else 0
+            self._tl_pad.setContentsMargins(0, 0, w, 0)
+        return super().eventFilter(o, e)
 
     def showEvent(self, e):
         super().showEvent(e)
