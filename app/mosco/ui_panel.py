@@ -503,7 +503,9 @@ class ControlPanel(QWidget):
         self._sync_preset(s)
 
     def _sync_preset(self, s):
-        pass
+        dlg = getattr(self, "_preset_dlg", None)          # v0.7.77 툴박스 프리셋 창이 떠 있으면 현재 클립 따라가기
+        if dlg is not None and dlg.isVisible():
+            dlg.set_clip(s)
 
     # ------------------------------------------------------------ 값 버튼
     def reset(self):
@@ -579,17 +581,26 @@ class ControlPanel(QWidget):
             self.refresh_presets()
 
     def _open_grid(self):
+        dlg = getattr(self, "_preset_dlg", None)
+        if dlg is not None and dlg.isVisible():           # v0.7.77 [프리셋] 다시 누르면 닫힘(토글)
+            dlg.close()
+            return
         s = self.state.source()
         if not s:
             self.state.message.emit("클립을 먼저 불러오세요")
             return
         set_on(self.b_preset, True)                       # 창이 떠 있는 동안 켜짐(파랑)
-        dlg = PresetGridPopup(self, s.mode, s)
-        dlg.on_apply = self._apply_preset                 # v0.7.76 [적용] = 창을 닫지 않고 바로 적용
+        dlg = PresetGridPopup(self, s.mode, s)            # v0.7.77 툴박스: 띄워둔 채 다른 조작 가능(비모달·항상 위)
+        dlg.on_apply = self._apply_preset                 # [적용] = 창을 닫지 않고 현재(선택) 클립에 적용
+        dlg.on_close = self._grid_closed
         dlg.move(self.b_preset.mapToGlobal(self.b_preset.rect().bottomLeft()) + QPoint(0, 4))
-        dlg.exec()                                        # ✕ 로만 닫힘
+        self._preset_dlg = dlg
+        dlg.show()
+
+    def _grid_closed(self):
         self.b_preset.setChecked(False)
         set_on(self.b_preset, False)
+        self._preset_dlg = None
 
     def _apply_preset(self, mode, params, label):
         sel = [self.state.cur] + list(getattr(self, "extra_selected", lambda: [])())
@@ -621,8 +632,10 @@ class PresetGridPopup(DragMove, QDialog):          # 빈 바탕을 끌어 옮김
         self.mode = mode if mode in ("beauty", "blur", "sign") else "beauty"
         self.src = src                 # 현재 클립 — '현재 클립: …' 글자 표시용
         self.pick = None               # 고른 것: ("level", 강도) | ("named", 이름) | None
-        self.setWindowFlag(Qt.FramelessWindowHint)
-        self.setModal(True)
+        # v0.7.77 툴박스: 띄워둔 채 다른 조작 가능(비모달) · 항상 위 · 작업표시줄에 안 뜸
+        self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        self.setModal(False)
+        self.on_close = None
         self.setStyleSheet("PresetGridPopup{background:#262626;border:1px solid #555;border-radius:6px}"
                            "QLabel{color:#ccc;font-size:12px}"
                            "QPushButton#x{color:#bbb;background:transparent;border:none;font-size:13px;padding:0}"
@@ -728,14 +741,24 @@ class PresetGridPopup(DragMove, QDialog):          # 빈 바탕을 끌어 옮김
         self.named_lay.addLayout(wrap)
 
     def _close(self):
-        QDialog.reject(self)
+        self.close()
 
     def reject(self):                  # Esc 로는 닫히지 않음(닫기 = ✕ 만)
         pass
 
-    def closeEvent(self, e):           # Alt+F4 등 창 닫기는 허용
+    def closeEvent(self, e):           # ✕·Alt+F4 등 닫기 → 버튼 상태 되돌림
+        if self.on_close is not None:
+            self.on_close()
         e.accept()
-        QDialog.reject(self)
+
+    def set_clip(self, src):           # v0.7.77 현재(선택) 클립이 바뀌면 작업 종류·표시 갱신
+        self.src = src
+        if src is not None:
+            m = src.mode if src.mode in ("beauty", "blur", "sign") else "beauty"
+            if m != self.mode:
+                self.mode = m
+                self.wseg.set(m)
+        self._show_current()
 
     def _open_folder(self):
         from PySide6.QtCore import QUrl

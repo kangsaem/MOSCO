@@ -277,6 +277,28 @@ def extras(app, w, st, vids, out):
     dlg.b_x.click()
     pump(app, 0.2)
     assert not dlg.isVisible(), "✕ 로 닫혀야 함"
+    # v0.7.77 툴박스: 비모달로 띄워 둔 채 다른 조작 · 현재 클립 따라가기 · [프리셋] 토글
+    w.panel.b_preset.click()                        # 열기(토글)
+    pump(app, 0.3)
+    tb = w.panel._preset_dlg
+    assert tb is not None and tb.isVisible() and not tb.isModal(), "툴박스가 비모달로 안 뜸"
+    assert w.panel.b_preset.property("on"), "열려 있는 동안 버튼이 켜져야 함"
+    st.select(0)
+    st.set_params("beauty", ad.to_params("beauty", "strong")[1])
+    pump(app, 0.3)
+    assert "강" in tb.cur_lb.text(), tb.cur_lb.text()
+    if len(st.project.sources) > 1:                 # 다른 클립 선택 → 창이 따라감
+        st.select(1)
+        st.set_params("beauty", ad.to_params("beauty", "weak")[1])
+        pump(app, 0.3)
+        assert "약" in tb.cur_lb.text(), f"현재 클립 안 따라감: {tb.cur_lb.text()}"
+    tb.sseg.btns["mid"].click()
+    tb.b_apply.click()                              # 띄운 채 적용 → 현재 클립에 적용, 창은 유지
+    pump(app, 0.3)
+    assert tb.isVisible() and ad.level_of("beauty", st.source().params_for("beauty")) == "mid"
+    w.panel.b_preset.click()                        # 다시 눌러 닫기(토글)
+    pump(app, 0.3)
+    assert w.panel._preset_dlg is None and not w.panel.b_preset.property("on"), "토글로 안 닫힘"
     st.set_params("beauty", ad.to_params("beauty", "strong")[1])     # 뒤 검사를 위해 뷰티로 되돌림
     st.set_param("strength", 61)
     pump(app, 0.3)
