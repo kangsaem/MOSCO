@@ -20,6 +20,12 @@ from mosco.ui_auto import AutoDialog, SampleDialog  # noqa: E402
 from mosco.ui_main import MainWindow  # noqa: E402
 
 
+def _seg_btns(dlg):
+    from PySide6.QtWidgets import QPushButton
+    return {b.text(): b for b in dlg.seg_strength.findChildren(QPushButton)
+            if b.text() in ("약", "중", "강", "강+")}
+
+
 def pump(app, sec, until=None):
     t = time.time()
     while time.time() - t < sec:
@@ -59,6 +65,23 @@ def main():
     dlg.grab().save(str(work / "auto_strongplus.png"))
     dlg.set_strength("mid"); dlg._on_strength("mid")
     assert len(dlg.clips) == 2 and dlg.width() == 998
+    # v0.7.77 강도도 클립마다 따로(작업처럼): 선택 클립에만 적용 · 섞이면 강도 버튼 아무것도 안 켜짐
+    from PySide6.QtCore import Qt
+    i0, i1 = dlg.clips[0]["idx"], dlg.clips[1]["idx"]
+    dlg._on_row(i0, Qt.NoModifier)                 # 0번만 선택
+    dlg._on_strength("strong")
+    assert dlg.clips[0]["strength"] == "strong" and dlg.clips[1]["strength"] == "mid", \
+        [c["strength"] for c in dlg.clips]
+    assert dlg.seg_strength and [t for t, b in _seg_btns(dlg).items() if b.isChecked()] == ["강"]
+    dlg._on_row(i1, Qt.NoModifier)                 # 1번만 선택 → 그 클립 강도(중)로 버튼 표시
+    assert [t for t, b in _seg_btns(dlg).items() if b.isChecked()] == ["중"]
+    dlg._on_row(i0, Qt.ControlModifier)            # 0·1 동시 선택(강·중) → 섞임 = 아무것도 안 켜짐
+    assert [t for t, b in _seg_btns(dlg).items() if b.isChecked()] == []
+    dlg._on_strength("weak")                        # 둘 다 선택 상태에서 누르면 둘 다 바뀜
+    assert dlg.clips[0]["strength"] == dlg.clips[1]["strength"] == "weak"
+    plan = dlg._assignments()
+    assert all(pr[list(pr)[0]] for _idx, _m, _b, pr in plan)   # 계획이 각 클립 강도로 만들어짐
+    dlg.clips[0]["strength"] = "mid"; dlg.selected = {i0}; dlg._refresh()
     # v0.7.76 Shift 범위 선택 · 영역 선택(사각형): 줄 본문에서 끌기 / 빈 곳에서 끌기 · 체크칸 끌기 = 체크 칠하기 그대로
     from PySide6.QtCore import QEvent, QPointF, Qt
     from PySide6.QtGui import QMouseEvent

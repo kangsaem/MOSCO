@@ -72,6 +72,11 @@ def _seg(opts, cur, on_change, lw=76, label=""):
     def setter(key):
         if key in btns:
             btns[key].setChecked(True)
+        else:                              # key=None 등 → 모두 해제(여러 클립이 서로 다른 값 = 섞임)
+            grp.setExclusive(False)
+            for b in btns.values():
+                b.setChecked(False)
+            grp.setExclusive(True)
     setter(cur)
     return w, setter
 
@@ -200,7 +205,8 @@ class AutoDialog(DragMove, QDialog):
                 continue
             self.clips.append({"idx": i, "name": s.name, "inc": True, "mode": s.mode if s.mode != "sign" else "sign",
                                "both": bool(getattr(s, "both", False)), "measured": None, "prog": None,
-                               "c": s.custom, "outp": ff.prores_kind(rs.get("prores", "422 HQ"))})
+                               "c": s.custom, "outp": ff.prores_kind(rs.get("prores", "422 HQ")),
+                               "strength": self.strength})      # v0.7.77 강도도 클립마다(작업처럼). 초기 = 저장된 기본값
         # 창 높이: 클립 수에 맞춰 늘리되 최대 LIST_MAX 줄(넘으면 목록만 스크롤). 폭은 고정.
         rows = min(len(self.clips), LIST_MAX)
         list_h = rows * CLIP_ROW + 12                    # 목록 몸통(ClipRow 30 + 간격 4 ≈ CLIP_ROW)
@@ -550,7 +556,9 @@ class AutoDialog(DragMove, QDialog):
         self._refresh()
 
     def _on_strength(self, k):
-        self.strength = k
+        for c in self._targets():                 # v0.7.77 선택한 클립에만(작업 버튼과 같은 방식)
+            c["strength"] = k
+        self.strength = k                          # 다음에 추가·기본값으로 기억
         self._refresh()
 
     def _resolved_work(self, c):
@@ -613,9 +621,10 @@ class AutoDialog(DragMove, QDialog):
         self.w_beauty.setChecked(bool(p) and p["mode"] == "beauty")
         self.w_face.setChecked("blur" in pk)
         self.w_sign.setChecked("sign" in pk)
-        self.set_strength(self.strength)
+        sel_str = {c["strength"] for c in self._targets()}
+        self.set_strength(next(iter(sel_str)) if len(sel_str) == 1 else None)   # 섞이면 아무것도 안 켜짐
         if p:
-            mode, params = ad.to_params(p["mode"], self.strength, p["measured"])
+            mode, params = ad.to_params(p["mode"], p["strength"], p["measured"])
             self.detail.setText(self._detail_text(p, mode, params))
             from .project import join_name
             self.fname.setText(join_name(self.name, out_stem(p["name"]), self.name_pos) + ".mov")
@@ -778,12 +787,12 @@ class AutoDialog(DragMove, QDialog):
                 continue
             ks = self._kinds(c)
             if not ks:                         # 뷰티
-                mode, params = ad.to_params("beauty", self.strength, c["measured"])
+                mode, params = ad.to_params("beauty", c["strength"], c["measured"])
                 out.append((c["idx"], mode, False, {mode: params}))
             else:
                 pbk = {}
                 for k in ks:
-                    mk, params = ad.to_params(k, self.strength, c["measured"])
+                    mk, params = ad.to_params(k, c["strength"], c["measured"])
                     pbk[mk] = params
                 out.append((c["idx"], c["mode"], c.get("both", False), pbk))
         return out
@@ -1127,7 +1136,7 @@ class AutoDialog(DragMove, QDialog):
         for c in inc:
             s = copy.deepcopy(self.state.project.sources[c["idx"]])
             if not (self.keep_existing and c["c"]):
-                mode, params = ad.to_params(c["mode"], self.strength, c["measured"])
+                mode, params = ad.to_params(c["mode"], c["strength"], c["measured"])
                 s.mode = mode
                 s.params_for(mode).update(params)
             srcs.append(s)
