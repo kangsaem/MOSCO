@@ -182,7 +182,7 @@ class Resolver:
         offs = []
         tid = self.g_tid.get(gid)
         for k, v in zip(ks, vals):
-            au = self._auto_vec(tid, k) if tid is not None else None
+            au = self._base_vec(g, tid, k) if tid is not None else None
             offs.append(None if (au is None or len(au) != len(v)) else v - au)
         r = (ks, vals, offs, tid)
         self._prep[gid] = r
@@ -196,6 +196,21 @@ class Resolver:
                     return np.asarray(pts, np.float32).reshape(-1)
                 return np.array(ell[:4], np.float32)
         return None
+
+    def _flat_vec(self, g, tid, i):
+        """펴기 구간(g["flat"] = [[a, b], …], v0.7.73 오토 키 삭제) 안이면 a·b 의 자동값을 직선 보간한 값, 아니면 None."""
+        for a, b in g.get("flat", ()):
+            if a < i < b:
+                va, vb = self._auto_vec(tid, a), self._auto_vec(tid, b)
+                if va is None or vb is None or len(va) != len(vb):
+                    return None
+                u = (i - a) / (b - a)
+                return va * (1 - u) + vb * u
+        return None
+
+    def _base_vec(self, g, tid, i):
+        v = self._flat_vec(g, tid, i) if g.get("flat") else None
+        return v if v is not None else self._auto_vec(tid, i)
 
     def _offset(self, ks, offs, i):
         good = [(k, o) for k, o in zip(ks, offs) if o is not None]
@@ -227,6 +242,15 @@ class Resolver:
                 if g.get("off_all") or _off(g, i):
                     seen.add(gid)
                     continue
+                if g.get("flat"):               # 오토 키를 지운 구간 = 앞뒤 키 사이 직선
+                    fv = self._flat_vec(g, tid, i)
+                    if fv is not None:
+                        if self.mode == "sign":
+                            from . import sign
+                            pts = fv.reshape(4, 2)
+                            ell = sign.quad_ell(pts)
+                        else:
+                            ell = (*fv, ell[4])
                 ks, vals, offs, _ = self._g(g)
                 o = self._offset(ks, offs, i)
                 if o is not None:
@@ -323,6 +347,19 @@ def set_key(g, frame, ell):
 
 def del_key(g, frame):
     g.get("keys", {}).pop(str(int(frame)), None)
+
+
+def add_flat(g, a, b):
+    """a~b 사이를 직선으로 펴기. 겹치는 구간은 하나로 합침(끝점만 닿는 것은 따로 — 그 끝점이 키로 남음)."""
+    a, b = int(a), int(b)
+    out = []
+    for x, y in g.get("flat", []):
+        if x < b and a < y:
+            a, b = min(a, x), max(b, y)
+        else:
+            out.append([x, y])
+    out.append([a, b])
+    g["flat"] = sorted(out)
 
 
 def off_range(g, a, b):

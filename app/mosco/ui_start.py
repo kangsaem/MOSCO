@@ -1,6 +1,6 @@
 """시작 창: [AUTO] / [편집]. AUTO = 파일·폴더 고르기 → AUTO 창만 → 보정+편집 = 본 편집 화면 / 보정+렌더 = 끝나면 종료.
 v0.7.73: 윈도우 제목 표시줄 없앰 → 위쪽 정사각형 그림(assets/start.png, 400×400) + 그 위 왼쪽 위 'MOSCO 버전',
-오른쪽 위 ✕(= 종료), 1px #555 테두리, 빈 곳을 끌어 옮김. 그림이 없으면 회색 자리."""
+오른쪽 위 ✕(= 종료), 빈 곳을 끌어 옮김. v0.7.74: 1px 테두리 없앰(사용자 요청). 그림이 없으면 회색 자리."""
 from __future__ import annotations
 
 from PySide6.QtCore import QPoint, Qt
@@ -11,7 +11,7 @@ from . import __version__, paths
 from .ui_widgets import QSS, DragMove, btn
 
 IMG = 400                                      # 그림 한 변(논리 px). 그림 파일은 800×800(고배율 화면용)
-W, H = IMG + 2, IMG + 162                      # 테두리 1px 포함 → 402×562
+W, H = IMG, IMG + 160                          # v0.7.74 테두리 1px 없앰 → 400×560
 
 
 class StartWindow(DragMove, QWidget):
@@ -23,14 +23,14 @@ class StartWindow(DragMove, QWidget):
         self.setFixedSize(W, H)
         self.setObjectName("start")
         self.setAttribute(Qt.WA_StyledBackground, True)
-        self.setStyleSheet(QSS + "QWidget#start{background:#262626;border:1px solid #555}"
+        self.setStyleSheet(QSS + "QWidget#start{background:#262626;border:none}"
                            "QLabel#title{color:#ffffff;font-size:30px;font-weight:bold;letter-spacing:3px;background:transparent}"
                            "QLabel#ver{color:#e6e6e6;font-size:13px;padding-left:2px;background:transparent}"
                            "QPushButton#close{color:#ffffff;background:rgba(0,0,0,90);border:none;border-radius:13px;"
                            "font-size:14px;padding:0}"
                            "QPushButton#close:hover{background:#c0392b}")
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(1, 1, 1, 1)
+        lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
 
         # 위: 정사각형 그림 + 제목·버전(왼쪽 위) + ✕(오른쪽 위)

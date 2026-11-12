@@ -107,7 +107,78 @@ def sign_check():
     print("sign edits OK")
 
 
+def flat_check():
+    """v0.7.73 오토 키 삭제 = 앞뒤 키 사이 직선 · 재생선이 구간 밖이어도 레이어 삭제(상태 계층까지)."""
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    z = fake_det()
+    d = z["det"]
+    for f in range(50, 61):                                    # A 가 50~60 에서 위로 튐(삼각형, 최대 60px)
+        m = (d[:, 0] == f) & (d[:, 1] < 700)
+        d[m, 2] -= 60 * (1 - abs(f - 55) / 5); d[m, 4] -= 60 * (1 - abs(f - 55) / 5)
+    s = Source("x.mov", "blur")
+    s.blur["stabilize"] = 0
+    tr = analyze.blur_track(z, s.blur)
+    r = edits.Resolver(s, tr)
+    a = min(r.items(55), key=lambda it: it.ell[0])
+    y45 = next(it for it in r.items(45) if it.tid == a.tid).ell[1]
+    assert a.ell[1] < y45 - 30, "튀는 가짜 자료가 안 만들어짐"
+    g = edits.ensure_group(s, a, 55)
+    edits.add_flat(g, 48, 62)
+    edits.add_flat(g, 62, 70)                                  # 끝점만 닿음 → 따로
+    assert g["flat"] == [[48, 62], [62, 70]]
+    edits.add_flat(g, 60, 66)                                  # 겹침 → 하나로
+    assert g["flat"] == [[48, 70]], g["flat"]
+    r = edits.Resolver(s, tr)
+    b = next(it for it in r.items(55) if it.gid == g["gid"])
+    assert abs(b.ell[1] - y45) < 3, f"펴기 안 됨: {b.ell[1]} vs {y45}"
+    x54, x56 = (next(it for it in r.items(f) if it.gid == g["gid"]).ell[0] for f in (54, 56))
+    assert x54 < b.ell[0] < x56, "펴도 가로 이동은 따라가야 함"
+    edits.set_key(g, 55, (b.ell[0], b.ell[1] + 20, b.ell[2], b.ell[3]))      # 편 구간 위에 수동 키
+    r = edits.Resolver(s, tr)
+    c = next(it for it in r.items(55) if it.gid == g["gid"])
+    assert abs(c.ell[1] - (b.ell[1] + 20)) < 0.5, "편 구간의 수동 키 값이 어긋남"
+    # 상태 계층: 레인 키 목록에서 가운데 키 삭제 · 구간 밖에서 레이어 삭제
+    from PySide6.QtWidgets import QApplication
+    from mosco.state import AppState
+    app = QApplication.instance() or QApplication([])
+    st = AppState()
+    s2 = Source("y.mov", "blur")
+    s2.blur["stabilize"] = 0
+    st.project.sources.append(s2)
+    st.cur = 0
+    st.track = lambda src, mode=None: tr
+    st.blur_resolvers = lambda src: [(st.resolver(src), "blur")]
+    lane = next(x for x in st.ellipse_spans(s2) if x["label"] == str(a.tid))
+    mid = [k for k in lane["keys"] if 50 <= k <= 60]
+    assert mid, f"튀는 곳에 오토 키가 없음: {lane['keys']}"
+    assert st.delete_auto_key(lane["key"], lane["keys"][0]) != "", "첫 키는 못 지워야 함"
+    n0 = len(lane["keys"])
+    for _ in range(8):                                         # 튀는 구간의 키를 다 지울 때까지
+        lane = next(x for x in st.ellipse_spans(s2) if x["key"] == st.sel or x["label"] == str(a.tid))
+        mid = [k for k in lane["keys"] if 50 <= k <= 60]
+        if not mid:
+            break
+        assert st.delete_auto_key(lane["key"], mid[0]) == ""
+    assert not mid and len(lane["keys"]) < n0, "오토 키가 안 지워짐"
+    y = next(it for it in st.resolver(s2).items(55) if it.key == st.sel).ell[1]
+    assert abs(y - y45) < 6, f"키를 지웠는데 안 펴짐 {y} {y45}"
+    assert st.undo()
+    s2 = st.source()                                           # 실행취소 = 프로젝트를 통째로 되돌림(새 객체)
+    # B(40~69 사이 빈 구간이 이어진 사람) 말고, 재생선이 없는 곳에서 삭제: 수동 타원 + 자동 타원
+    s2.edits.clear(); st._res.clear()
+    tr2 = analyze.blur_track({"det": d[(d[:, 0] < 30) | (d[:, 1] < 700)], "n": z["n"]}, s2.blur)   # B 는 0~29 에만
+    st.track = lambda src, mode=None: tr2
+    lane_b = next(x for x in st.ellipse_spans(s2) if x["intervals"][-1][1] < 60)
+    assert st._item(s2, lane_b["key"], 100) is None
+    st.delete_ellipse(lane_b["key"], 100)                      # 재생선 = 100(그 타원 없음)
+    assert all(x["intervals"][-1][1] >= 60 for x in st.ellipse_spans(s2)), "구간 밖에서 레이어 삭제 안 됨"
+    assert st.undo() and any(x["intervals"][-1][1] < 60 for x in st.ellipse_spans(st.source()))
+    print("flat / delete anywhere OK")
+
+
 def main():
+    flat_check()
     z = fake_det()
     s = Source("x.mov", "blur")
     tr = analyze.blur_track(z, s.blur)

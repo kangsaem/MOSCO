@@ -85,6 +85,50 @@ def sign_ui(app, w, st, vids, out):
     assert any(abs(x["intervals"][0][0] - tgt) <= 1 for x in ln.spans), f"시작 지점이 안 바뀜 {a0} → 목표 {tgt}, 지금 {starts0}"
     st.undo()
     pump(app, 0.5)
+    # v0.7.73 오토 키 클릭 → 테두리 + Del = 그 키만 삭제 · 레이어 몸통 클릭 → 재생선이 구간 밖이어도 Del = 레이어 삭제
+    def _mid_key(x):                             # 구간 처음·끝이 아니고 수동 키와 안 겹치는 오토 키
+        ks = x["keys"]
+        return next((k for k in ks[1:-1] if all(abs(k - u) > 8 for u in x.get("ukeys", ()))
+                     and all(a < k < b for a, b in x["intervals"] if a <= k <= b)), None)
+    lane_i = next((i for i, x in enumerate(ln.spans) if len(x["keys"]) >= 3 and _mid_key(x) is not None), None)
+    if lane_i is not None:
+        d = ln.spans[lane_i]
+        y = ln.PAD + lane_i * ln.LANE_H + ln.LANE_H / 2
+        kmid = _mid_key(d)
+        mouse(QEvent.MouseButtonPress, ln._x(kmid + 0.5))
+        mouse(QEvent.MouseButtonRelease, ln._x(kmid + 0.5))
+        pump(app, 0.5)
+        assert ln.sel_kf is not None and ln.sel_kf[2:] == (kmid, "auto"), f"오토 키가 안 골라짐 {ln.sel_kf}"
+        w.grab().save(str(out / "9b_key_selected.png"))
+        w._del()
+        pump(app, 0.8)
+        src_ = st.source()
+        assert any(g.get("flat") for g in src_.edits[src_.mode]["groups"]), "오토 키 삭제(펴기)가 기록되지 않음"
+        assert not any(g.get("off_all") for g in src_.edits[src_.mode]["groups"]), "키만 지워야 하는데 레이어가 지워짐"
+        st.undo()
+        pump(app, 0.5)
+        print("auto key select+delete OK")
+    else:
+        print("auto key: 키 3개 이상인 레인 없음 — 건너뜀", [len(x["keys"]) for x in ln.spans])
+    n_l = len(ln.spans)
+    short = next((i for i, x in enumerate(ln.spans) if x["intervals"][-1][1] < w._n() - 3 or x["intervals"][0][0] > 2), None)
+    if short is not None:
+        d = ln.spans[short]
+        outside = w._n() - 1 if d["intervals"][-1][1] < w._n() - 3 else 0
+        w.seek(outside)
+        pump(app, 0.5)
+        y = ln.PAD + short * ln.LANE_H + ln.LANE_H / 2
+        a_, b_ = d["intervals"][0]
+        mouse(QEvent.MouseButtonPress, (ln._x(a_) + ln._x(b_ + 1)) / 2 + 0.3)
+        mouse(QEvent.MouseButtonRelease, (ln._x(a_) + ln._x(b_ + 1)) / 2 + 0.3)
+        pump(app, 0.3)
+        if ln.sel_kf is None:                    # 가운데가 마침 키 위면 건너뜀
+            w._del()
+            pump(app, 0.8)
+            assert len(ln.spans) == n_l - 1, f"재생선이 구간 밖일 때 레이어 삭제 안 됨 {n_l} → {len(ln.spans)}"
+            st.undo()
+            pump(app, 0.5)
+            print("lane delete anywhere OK")
     # v0.7.14 AE 보내기: 실제 간판 트랙 → .jsx (사각형 마스크, 고친 꼭짓점 키 포함)
     jsx = out / "sign_AE.jsx"
     j = w.export_ae(str(jsx))

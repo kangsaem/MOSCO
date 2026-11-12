@@ -650,16 +650,54 @@ class AppState(QObject):
 
     def delete_ellipse(self, key, frame):
         """타원 삭제: 추가(수동) 타원은 그룹째 제거, 자동 타원은 전 구간 숨김(off_all)."""
-        s, g = self._group_for(key, frame)
-        if g is None:
+        s = self.source()
+        if s is None or key is None:
             return
         self.push_undo()
+        s, g = self._group_for(key, self._frame_with(s, key, frame))   # 재생선이 구간 밖이어도 삭제(v0.7.73)
+        if g is None:
+            self.undo_stack.pop()
+            return
         if g.get("manual"):
             edits.remove_group(s, g["gid"])
         else:
             g["off_all"] = True
         self.sel = None
         self._edited()
+
+    def _span(self, s, key):
+        return next((d for d in self.ellipse_spans(s) if d["key"] == key and d.get("mode", s.mode) == s.mode), None)
+
+    def _frame_with(self, s, key, frame):
+        """key 타원이 실제로 있는 프레임: 지금 프레임에 있으면 그대로, 없으면 그 레인의 첫 구간 시작."""
+        if self._item(s, key, frame) is not None:
+            return frame
+        d = self._span(s, key)
+        return d["intervals"][0][0] if d and d["intervals"] else frame
+
+    def delete_auto_key(self, key, frame):
+        """오토 키 ◆ 삭제 = 앞 키와 뒤 키 사이를 직선으로 폄(그 사이 검출값의 흔들림 제거). → "" 또는 못 지운 이유."""
+        s = self.source()
+        d = self._span(s, key) if s is not None else None
+        if d is None:
+            return "키를 찾지 못했습니다"
+        frame = int(frame)
+        iv = next(((a, b) for a, b in d["intervals"] if a <= frame <= b), None)
+        ks = sorted(k for k in d["keys"] if iv and iv[0] <= k <= iv[1])
+        if frame not in ks:
+            return "키를 찾지 못했습니다"
+        i = ks.index(frame)
+        if i == 0 or i == len(ks) - 1:
+            return "구간 처음·끝 키는 지울 수 없습니다 (구간 끝을 끌어 길이를 줄이세요)"
+        self.push_undo()
+        s, g = self._group_for(key, frame)
+        if g is None or g.get("manual"):
+            self.undo_stack.pop()
+            return "키를 찾지 못했습니다"
+        edits.add_flat(g, ks[i - 1], ks[i + 1])
+        self.sel = ("g", g["gid"])
+        self._edited()
+        return ""
 
     def delete_key(self, frame):
         s, g = self._group_for(self.sel, frame, create=False)

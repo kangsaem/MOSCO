@@ -433,3 +433,39 @@ class Section(QWidget):
         self.open = v
         self.body.setVisible(v)
         self.head.setText(f"{'▾' if v else '▸'}  {self.title}")
+
+
+# ------------------------------------------------------------ 창 헤더(제목 줄) 색 — v0.7.73
+TITLE_BG = "#232323"       # 프로그램 바탕과 같은 진회색
+TITLE_FG = "#e6e6e6"
+
+
+def _colorref(hexs):
+    h = hexs.lstrip("#")
+    return int(h[4:6] + h[2:4] + h[0:2], 16)      # COLORREF = 0x00BBGGRR
+
+
+def tint_title(w):
+    """윈도우 기본 헤더는 그대로 두고 색만 진회색으로(최소화·최대화·닫기·가장자리 붙이기 유지).
+    윈도우 11: 헤더·테두리·글자 색 지정. 윈도우 10: 색 지정은 안 되고 '어두운 헤더'만. 그 밖 OS·실패 = 아무 일 없음."""
+    import sys
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+        hwnd = wintypes.HWND(int(w.winId()))
+        dwm = ctypes.windll.dwmapi.DwmSetWindowAttribute
+        dwm.argtypes = [wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
+        dwm.restype = ctypes.c_long
+
+        def put(attr, val):
+            v = ctypes.c_int(val)
+            return dwm(hwnd, attr, ctypes.byref(v), ctypes.sizeof(v)) == 0
+        put(20, 1) or put(19, 1)                    # 어두운 헤더(20 = 정식, 19 = 윈도우 10 초기판)
+        put(35, _colorref(TITLE_BG))                # 헤더 색(윈도우 11)
+        put(34, _colorref(TITLE_BG))                # 창 테두리 1px 색(윈도우 11) — 밝은 테두리 없앰
+        put(36, _colorref(TITLE_FG))                # 제목 글자 색(윈도우 11)
+        return True
+    except Exception:  # noqa: BLE001
+        return False

@@ -450,8 +450,7 @@ class MainWindow(QMainWindow):
         self.lanes.select.connect(self.on_select)
         self.lanes.segments_changed.connect(self._on_segments)
         self.lanes.seek.connect(self.seek)               # 레인 재생선 드래그 → 프레임 이동
-        self.lanes.del_key.connect(                      # 레인 키프레임 클릭 후 Del → 그 키 삭제
-            lambda: self.state.delete_key(self.f) or self.flash("이 프레임에 키가 없습니다"))
+        self.lanes.del_key.connect(self._del)            # 레인: 고른 키 → 그 키, 아니면 고른 레이어 삭제
         self.ruler.seek.connect(self.seek)
         self.panel.tool.connect(self.on_tool)
         self.mon.add_at.connect(self.on_add)
@@ -607,6 +606,15 @@ class MainWindow(QMainWindow):
         elif self.sources.hasFocus():
             self.remove_sources()
         elif self.state.sel is not None:
+            kf = self.lanes.sel_kf                       # 레인에서 클릭해 고른 키 → 그 키만 삭제(v0.7.73)
+            if kf is not None and kf[0] == self.state.sel:
+                self.lanes.sel_kf = None
+                if kf[3] == "user":
+                    self.state.delete_key(kf[2]) or self.flash("이 프레임에 키가 없습니다")
+                else:
+                    why = self.state.delete_auto_key(kf[0], kf[2])
+                    self.flash(why or "오토 키 삭제 — 앞뒤 키 사이를 직선으로 폈습니다 (Ctrl+Z 되돌리기)")
+                return
             self.state.delete_ellipse(self.state.sel, self.f)
 
     def _delete_keyframe(self):
@@ -1516,6 +1524,11 @@ class MainWindow(QMainWindow):
         for it in self.rpanel.items:
             if it.job is not None:
                 it.job.cancel.set()
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        from .ui_widgets import tint_title
+        tint_title(self)                       # v0.7.73 헤더·창 테두리 = 프로그램과 같은 진회색
 
     def closeEvent(self, e):
         if self._confirm_discard():
