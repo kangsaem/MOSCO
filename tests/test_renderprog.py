@@ -47,8 +47,24 @@ def main():
     wait(0.3)
     rp = w.rpanel
     assert len(rp.items) == 2 and rp.b_render.frac is None and rp.b_render.text() == "렌더"
+    # v0.7.80 [렌더] 누르면 반드시 저장폴더를 물음 — 테스트는 대화창 대신 out 반환
+    asked = [0]
+    def ask():
+        asked[0] += 1
+        return str(out)
+    w._ask_out_dir = ask
+    # v0.7.80 토글: 렌더 중(= _run_items 있음)이면 같은 버튼이 취소
+    canceled = [0]
+    real_cancel = w.cancel_renders
+    w.cancel_renders = lambda: canceled.__setitem__(0, canceled[0] + 1)
+    w._run_items = ["dummy"]
+    w.render_all()
+    assert canceled[0] == 1 and asked[0] == 0, "렌더 중 [렌더] = 취소여야(폴더 안 물음)"
+    w._run_items = []
+    w.cancel_renders = real_cancel
     seen = []
     w.render_all()
+    assert asked[0] == 1, "렌더 시작할 때 저장폴더를 안 물음"
     assert rp.b_render.frac is not None, "렌더를 눌렀는데 버튼이 막대로 안 바뀜"
 
     def watch():

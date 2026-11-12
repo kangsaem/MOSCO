@@ -1103,10 +1103,18 @@ class MainWindow(QMainWindow):
             self.on_params()
 
     def _out_dir(self):
+        """기억해 둔 폴더가 있으면 그대로(➜ 로 목록에 보낼 때 등 '묻지 않는' 경로용)."""
         rs = self.state.settings.render
         if rs.get("out_dir") and Path(rs["out_dir"]).is_dir():
             return rs["out_dir"]
-        d = QFileDialog.getExistingDirectory(self, "저장폴더", self.state.settings.d.get("last_folder", ""))
+        return self._ask_out_dir()
+
+    def _ask_out_dir(self):
+        """저장폴더를 반드시 물어봄(지난 폴더를 초기 위치로). 취소 = None."""
+        rs = self.state.settings.render
+        start = rs.get("out_dir") if rs.get("out_dir") and Path(rs["out_dir"]).is_dir() \
+            else self.state.settings.d.get("last_folder", "")
+        d = QFileDialog.getExistingDirectory(self, "저장폴더 선택", start)
         if not d:
             return None
         rs["out_dir"] = d
@@ -1129,18 +1137,34 @@ class MainWindow(QMainWindow):
         self.flash(f"렌더 목록에 {len(rows)}개 추가 — [렌더]로 실행")
 
     def render_all(self):
-        """[렌더] : 렌더 목록을 모두 렌더 — 완료·진행 중이 아닌 항목 전부(대기·취소·오류). 소스 선택과 무관."""
+        """[렌더] : 렌더 중이면 전체 취소, 아니면 저장폴더를 물어 목록 전체를 렌더(v0.7.80)."""
+        if getattr(self, "_run_items", None):          # 렌더 중 = 같은 버튼이 취소(2-A)
+            self.cancel_renders()
+            return
         if not self.rpanel.items:
-            self.flash("렌더 목록이 비어 있습니다 — ➜ 로 먼저 보내세요")
+            self.flash("렌더 목록이 비어 있습니다 — ▼ 로 먼저 보내세요")
             return
         todo = [it for it in self.rpanel.items if it.state in ("대기", "취소", "오류")]
         if not todo:
             self.flash("이미 모두 렌더됨 — 다시 하려면 우클릭 '다시 렌더'")
             return
+        out = self._ask_out_dir()                      # v0.7.80 [렌더] 누를 때마다 반드시 저장폴더 물어봄(1-A)
+        if not out:
+            return
         for it in todo:
-            it.state, it.p, it.err = "대기", 0.0, ""
+            it.state, it.p, it.err, it.out_dir = "대기", 0.0, "", out
         for it in todo:
             self._start_render(it)
+
+    def cancel_renders(self):
+        """진행 중·대기 중 렌더를 모두 멈춤(완료분은 그대로). 버튼 취소·closeEvent 공용."""
+        run = getattr(self, "_run_items", None)
+        if not run:
+            return
+        for it in list(run):
+            if it.job is not None and it.state in ("진행", "대기"):
+                it.job.cancel.set()
+        self.flash("렌더 취소 중…")
 
     # ------------------------------------------------------------ AE 보내기(v0.7.14)
     def export_ae(self, path=None):
@@ -1290,7 +1314,7 @@ class MainWindow(QMainWindow):
         left = self._render_left(frac)
         b = self.rpanel.b_render
         b.set_progress(frac, text, bad)
-        b.setToolTip(f"남은 시간 {left}" if left else "렌더 중")
+        b.setToolTip((f"남은 시간 {left} · " if left else "렌더 중 · ") + "누르면 취소")
         self._rtext = f"{text} · 남은 {left}" if left else text
         self._title()
         taskbar.set_progress(self, frac, bad)
