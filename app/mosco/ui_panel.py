@@ -220,7 +220,7 @@ class ControlPanel(QWidget):
         self.b_add.toggled2.connect(lambda v: self._tool("add", v))
         self.b_del.toggled2.connect(lambda v: self._tool("del", v))
         self.b_merge.toggled2.connect(lambda v: self._tool("merge", v))
-        self.b_delkey = btn("키 삭제", "현재 프레임의 키 삭제 (Shift+Del)", w=58, on_click=self.del_key.emit)
+        self.b_delkey = btn("키 삭제", "고른 키 삭제 — 오토 키(흰 ◆) = 펴기, 수동 키(노랑) = 그 키. 고른 키 없으면 현재 프레임 (Shift+Del)", w=58, on_click=self.del_key.emit)
         self.b_off = QToolButton()
         self.b_off.setText("끄기 ▾")
         self.b_off.setFixedSize(56, 26)

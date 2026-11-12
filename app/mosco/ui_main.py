@@ -453,7 +453,7 @@ class MainWindow(QMainWindow):
         self.panel.pick_skin.connect(self.mon.set_picking)
         self.mon.picked.connect(self.on_pick)
         self.bar.seek.connect(self.seek)
-        self.bar.del_key.connect(lambda k: self.state.delete_key(k))
+        self.bar.del_key.connect(lambda k: self._del_key_button())   # 시간바도 고른 오토 키 처리(v0.7.81)
         self.lanes.select.connect(self.on_select)
         self.lanes.segments_changed.connect(self._on_segments)
         self.lanes.seek.connect(self.seek)               # 레인 재생선 드래그 → 프레임 이동
@@ -466,7 +466,7 @@ class MainWindow(QMainWindow):
         self.mon.selected.connect(self.on_select)
         self.mon.edited.connect(self.on_edited)
         self.mon.merge_with.connect(self.on_merge)
-        self.panel.del_key.connect(lambda: self.state.delete_key(self.f) or self.flash("이 프레임에 키가 없습니다"))
+        self.panel.del_key.connect(self._del_key_button)             # [키 삭제] 버튼: 오토·수동 키 다 처리(v0.7.81)
         self.panel.off.connect(lambda how: self.state.off(how, self.f, self._n()))
         self.panel.minus.connect(lambda v: self.state.set_minus(v, self.f))
         self.panel.ov_pressed.connect(self.state.push_undo)
@@ -607,20 +607,13 @@ class MainWindow(QMainWindow):
         self.show_result()
 
     def _del(self):
-        """Del: 목록 포커스면 목록 항목 삭제, 아니면 선택한 '타원'을 삭제."""
+        """Del: 목록 포커스면 목록 항목 삭제, 아니면 고른 키(오토·수동)·없으면 선택한 '타원'을 삭제."""
         if self.rpanel.list.hasFocus():
             self.rpanel.remove_rows(sorted(self.rpanel.list.row(i) for i in self.rpanel.list.selectedItems()))
         elif self.sources.hasFocus():
             self.remove_sources()
         elif self.state.sel is not None:
-            kf = self.lanes.sel_kf                       # 레인에서 클릭해 고른 키 → 그 키만 삭제(v0.7.73)
-            if kf is not None and kf[0] == self.state.sel:
-                self.lanes.sel_kf = None
-                if kf[3] == "user":
-                    self.state.delete_key(kf[2]) or self.flash("이 프레임에 키가 없습니다")
-                else:
-                    why = self.state.delete_auto_key(kf[0], kf[2])
-                    self.flash(why or "오토 키 삭제 — 옆 키 값으로 이었습니다 (구간 처음·끝 = 옆 키 값 고정 · Ctrl+Z 되돌리기)")
+            if self._del_selected_key():                 # 레인에서 클릭해 고른 키(오토·수동) → 그 키만(v0.7.73)
                 return
             more = self.lanes.multi_keys()               # Ctrl·Shift 로 더 고른 레이어까지 한 번에(v0.7.76)
             self.lanes.multi = set()
@@ -628,10 +621,30 @@ class MainWindow(QMainWindow):
             if n > 1:
                 self.flash(f"레이어 {n}개 삭제 (Ctrl+Z 되돌리기)")
 
-    def _delete_keyframe(self):
-        """Shift+Del: 현재 프레임의 키 삭제(타원 삭제와 분리)."""
-        if self.state.sel is not None and not self.state.delete_key(self.f):
+    def _del_selected_key(self) -> bool:
+        """고른 키를 삭제. 오토 키(흰 ◆) = 펴기, 수동 키(노랑) = 그 키. → 고른 키가 있어 처리했으면 True.
+        [키 삭제] 버튼·시간바·레인 Del 공용(v0.7.81: 예전엔 버튼이 delete_key 만 불러 오토 키는 안 빠졌음)."""
+        kf = self.lanes.sel_kf
+        if kf is None or kf[0] != self.state.sel:
+            return False
+        self.lanes.sel_kf = None
+        if kf[3] == "user":
+            self.state.delete_key(kf[2]) or self.flash("이 프레임에 키가 없습니다")
+        else:
+            why = self.state.delete_auto_key(kf[0], kf[2])
+            self.flash(why or "오토 키 삭제 — 옆 키 값으로 이었습니다 (구간 처음·끝 = 옆 키 값 고정 · Ctrl+Z 되돌리기)")
+        return True
+
+    def _del_key_button(self):
+        """[키 삭제] 버튼·시간바: 고른 키(오토·수동)가 있으면 그 키, 없으면 현재 프레임 수동 키."""
+        if self.state.sel is not None and self._del_selected_key():
+            return
+        if self.state.sel is None or not self.state.delete_key(self.f):
             self.flash("이 프레임에 키가 없습니다")
+
+    def _delete_keyframe(self):
+        """Shift+Del: 고른 키(오토·수동)·없으면 현재 프레임 키 삭제(타원 삭제와 분리)."""
+        self._del_key_button()
 
     def _sec(self):
         info = self._info()

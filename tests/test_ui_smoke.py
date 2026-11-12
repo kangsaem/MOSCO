@@ -107,7 +107,26 @@ def sign_ui(app, w, st, vids, out):
         assert not any(g.get("off_all") for g in src_.edits[src_.mode]["groups"]), "키만 지워야 하는데 레이어가 지워짐"
         st.undo()
         pump(app, 0.5)
-        print("auto key select+delete OK")
+        # v0.7.81 패널 [키 삭제] 버튼도 고른 오토 키를 지워야 함(예전엔 delete_key 만 불러 안 빠졌음)
+        d_ = ln.spans[lane_i]
+        k2 = _mid_key(d_)
+        if k2 is not None:
+            w.seek(0)                            # 재생선을 키에서 떨어뜨림(안 그러면 클릭이 스크럽으로 잡힘)
+            pump(app, 0.3)
+            mouse(QEvent.MouseButtonPress, ln._x(k2 + 0.5))
+            mouse(QEvent.MouseButtonRelease, ln._x(k2 + 0.5))
+            pump(app, 0.4)
+            assert ln.sel_kf is not None and ln.sel_kf[3] == "auto", f"오토 키 재선택 실패 {ln.sel_kf}"
+            w.panel.del_key.emit()                   # = [키 삭제] 버튼
+            pump(app, 0.8)
+            src2 = st.source()
+            assert any(g.get("flat") or g.get("hold") for g in src2.edits[src2.mode]["groups"]), \
+                "[키 삭제] 버튼이 오토 키를 안 지움"
+            assert not any(g.get("off_all") for g in src2.edits[src2.mode]["groups"]), "[키 삭제]가 레이어를 지움"
+            assert ln.sel_kf is None, "삭제 후 키 선택이 안 풀림"
+            st.undo()
+            pump(app, 0.5)
+        print("auto key select+delete OK (Del + [키 삭제] 버튼)")
     else:
         print("auto key: 키 3개 이상인 레인 없음 — 건너뜀", [len(x["keys"]) for x in ln.spans])
     # v0.7.76 레이어 여러 개 선택(Ctrl·Shift) → Del 한 번에 삭제 · 고르거나 손대도 레인 순서 그대로 · 스크롤바 여백
