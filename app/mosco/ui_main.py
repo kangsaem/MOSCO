@@ -676,9 +676,13 @@ class MainWindow(QMainWindow):
         s = self.state.source()
         self.result = None
         self.frame_cache = None
-        if s is None:
+        if s is None:                               # v0.7.79 새 프로젝트 등으로 소스 0개 → 타임라인(레이어·바·눈금)도 비움
+            self.state.sel = None
             self.mon.clear()
             self.bar.set_data(0)
+            self.lanes.set_data([], 0, 0, None)
+            self.ruler.set_data(0, 30.0)
+            self._sel_refresh()
             self.update_status()
             return
         self.mon.clear(loading=True)

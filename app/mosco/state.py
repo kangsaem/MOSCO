@@ -145,10 +145,17 @@ class AppState(QObject):
 
     def set_project(self, p: Project):
         decoder.keep_only([s.path for s in p.sources])
+        keep = {s.path for s in p.sources}
         self.project = p
         self.cur = 0 if p.sources else -1
         self.undo_stack.clear()
         self.redo_stack.clear()
+        self.sel = None
+        self._tracks.clear()                       # v0.7.79 이전 프로젝트의 트랙·해석·스팬 캐시 비움
+        self._res.clear()
+        self._spans_cache = (None,)
+        for k in [k for k in self.an if k[0] not in keep]:   # 안 쓰는 분석 결과 정리
+            self.an.pop(k, None)
         self.dirty = False
         for s in p.sources:
             self._probe(s.path)

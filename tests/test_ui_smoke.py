@@ -384,6 +384,27 @@ def extras(app, w, st, vids, out):
     assert w._render_analysis_p(it2) is None
     if keep is not None:
         st.an[(s0.path, "beauty")] = keep
+    # v0.7.79 종료 않고 새 프로젝트 → 타임라인(레이어·바·눈금)·캐시 싹 비움 (extras 맨 끝: 프로젝트 비워도 됨)
+    from mosco.project import Project
+    if w.panel._preset_dlg is not None:
+        w.panel._preset_dlg.close()
+    st.select(0)
+    w.lanes.set_data([{"key": ("t", 1), "mode": "blur", "label": "1", "intervals": [(0, 9)],
+                       "keys": [0, 9], "ukeys": [], "n": 10, "minus": False, "quad": False,
+                       "manual": False, "sus": False, "note": ""}], 10, 0, ("t", 1))
+    w.bar.set_data(10)
+    st._tracks[("x", "blur")] = object()
+    st._res["x"] = object()
+    pump(app, 0.2)
+    assert w.lanes.spans, "확인 전제 설정 실패"
+    st.dirty = False                                    # 저장 확인 창 없이(테스트)
+    w.new_project()
+    pump(app, 0.5)
+    assert w.state.source() is None and not w.lanes.spans and w.lanes.n == 0, \
+        f"새 프로젝트인데 레이어가 남음: {len(w.lanes.spans)}"
+    assert w.bar.n == 0 and w.ruler.n == 0 and w.state.sel is None, "소스 바·눈금·선택이 안 비워짐"
+    assert not w.state._tracks and not w.state._res, "트랙·해석 캐시가 안 비워짐"
+    print("new project clears timeline OK")
     print("redo · relink · autosave · preset · skin extra · multi · gap OK")
 
 
