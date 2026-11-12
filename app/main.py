@@ -29,6 +29,11 @@ def main():
     # 프로세스는 기본(보통)으로 둔다 — 낮추지 않음.
     app = QApplication(sys.argv)
     app.setApplicationName("MOSCO")
+    from PySide6.QtGui import QIcon
+    from mosco import paths
+    ico = paths.asset("mosco.ico")
+    if ico.exists():
+        app.setWindowIcon(QIcon(str(ico)))     # v0.7.73 창·작업 표시줄 아이콘(exe 파일 아이콘은 빌드 --icon)
     dark(app)
     w = MainWindow()
     from mosco import models

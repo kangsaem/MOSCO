@@ -26,7 +26,7 @@ jobs:
 
       - name: Build exe (PyInstaller, onedir)
         run: |
-          pyinstaller --noconfirm --windowed --name MOSCO --paths app `
+          pyinstaller --noconfirm --windowed --name MOSCO --icon assets/mosco.ico --paths app `
             --collect-submodules mosco --collect-all onnxruntime --collect-all av `
             --exclude-module PySide6.QtWebEngineCore --exclude-module PySide6.QtWebEngineWidgets `
             --exclude-module PySide6.QtQuick --exclude-module PySide6.QtQml --exclude-module PySide6.Qt3DCore `
@@ -111,6 +111,7 @@ jobs:
           Copy-Item (Join-Path $bin.DirectoryName "*.dll") dist/MOSCO/bin/
           New-Item -ItemType Directory -Force dist/MOSCO/models | Out-Null
           Copy-Item models/* dist/MOSCO/models/
+          Copy-Item assets dist/MOSCO/ -Recurse -Force
           Copy-Item README.md dist/MOSCO/사용법.md
           & dist/MOSCO/bin/ffmpeg.exe -hide_banner -version | Select-Object -First 1
 

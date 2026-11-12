@@ -19,6 +19,11 @@ def model_dir() -> Path:
     return app_dir() / "models"
 
 
+def asset(name: str) -> Path:
+    """그림 파일(assets/…). 빌드 = 프로그램 폴더 assets, 개발 = 저장소 assets."""
+    return app_dir() / "assets" / name
+
+
 def _mk(name) -> Path:
     d = app_dir() / name
     d.mkdir(exist_ok=True)
