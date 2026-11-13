@@ -176,6 +176,27 @@ def flat_check():
     assert not mid and len(lane["keys"]) < n0, "오토 키가 안 지워짐"
     y = next(it for it in st.resolver(s2).items(55) if it.key == st.sel).ell[1]
     assert abs(y - y45) < 6, f"키를 지웠는데 안 펴짐 {y} {y45}"
+    # v0.7.83 고정(bake): 가운데 키를 지워도 '다른 키'는 위치·값이 그대로여야 함
+    for _ in range(14):
+        assert st.undo()                                      # 깨끗한 상태로
+        if not any(x.get("akeys") for x in st.source().edits.get("blur", {}).get("groups", [])):
+            break
+    s2 = st.source()
+    lane = next(x for x in st.ellipse_spans(s2) if x["label"] == str(a.tid))
+    kk = lane["keys"]
+    assert len(kk) >= 4
+    tgt = kk[len(kk) // 2]
+    others = [k for k in kk if k != tgt]
+    vbefore = {k: tuple(round(v, 2) for v in next(it for it in st.resolver(s2).items(k) if it.key == lane["key"]).ell[:4])
+               for k in others}
+    assert st.delete_auto_key(lane["key"], tgt) == "", "가운데 키 삭제 실패"
+    s2 = st.source()
+    lane3 = next(x for x in st.ellipse_spans(s2) if x["key"] == st.sel)
+    assert sorted(lane3["keys"]) == sorted(others), f"지운 키만 빠져야 하는데 키 집합이 바뀜 {lane3['keys']} vs {others}"
+    for k in others:
+        vnow = tuple(round(v, 2) for v in next(it for it in st.resolver(s2).items(k) if it.key == st.sel).ell[:4])
+        assert vnow == vbefore[k], f"다른 키 {k} 의 값이 바뀜 {vbefore[k]} → {vnow}"
+    assert st.delete_auto_key(st.sel, others[len(others) // 2]) == "", "연속 삭제 실패(항상 지워져야)"
     assert st.undo()
     s2 = st.source()                                           # 실행취소 = 프로젝트를 통째로 되돌림(새 객체)
     # B(40~69 사이 빈 구간이 이어진 사람) 말고, 재생선이 없는 곳에서 삭제: 수동 타원 + 자동 타원

@@ -715,7 +715,15 @@ class MainWindow(QMainWindow):
         s = self.state.source()
         if s is None:
             return
-        self.state.analyze_now(s)
+        a = self.state.analysis(s)
+        if a is not None and a.get("state") == "done":       # v0.7.83 이미 분석됨 → 확인 후 다시 분석
+            from PySide6.QtWidgets import QMessageBox
+            if QMessageBox.question(self, "다시 분석", "이미 분석된 클립입니다. 다시 분석하시겠습니까?",
+                                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+                return
+            self.state.reanalyze(s)
+        else:
+            self.state.analyze_now(s)
         self._refresh_analyze_btn()
         self.flash("분석을 시작합니다")
 
@@ -730,7 +738,7 @@ class MainWindow(QMainWindow):
             self.b_analyze.setEnabled(False)
         elif a["state"] == "done":
             self.b_analyze.setText("분석됨")
-            self.b_analyze.setEnabled(False)
+            self.b_analyze.setEnabled(True)                  # v0.7.83 다시 눌러 재분석(확인창)
         else:
             self.b_analyze.setText("분석")
             self.b_analyze.setEnabled(True)
@@ -803,6 +811,7 @@ class MainWindow(QMainWindow):
         self._bar()
         self._sel_refresh()
         self._overlay_from_track(self.f)
+        self._refresh_analyze_btn()            # v0.7.83 모드 전환(블러↔뷰티 등) 시 [분석] 버튼 상태 갱신
         self._param_t.start()
 
     # ------------------------------------------------------------ 이동

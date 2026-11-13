@@ -377,7 +377,22 @@ class AppState(QObject):
             self.an.pop(k)
         self._probe(path)
 
-    def ensure_analysis(self, s: Source, mode=None):
+    def reanalyze(self, s: Source):
+        """이미 분석된 클립을 처음부터 다시 분석(디스크 캐시도 무시). v0.7.83 [분석됨] 재클릭·확인 후."""
+        for m in (s.blur_kinds() or [s.mode]):
+            key = (s.path, m)
+            a = self.an.get(key)
+            if a and a.get("job") is not None:
+                a["job"].cancel.set()
+            self.an.pop(key, None)
+            self._tracks.pop(key, None)
+        self._res.clear()
+        self._spans_cache = (None,)
+        for m in (s.blur_kinds() or [s.mode]):
+            self.ensure_analysis(s, m, force=True)
+        return self.analysis(s) is not None
+
+    def ensure_analysis(self, s: Source, mode=None, force=False):
         mode = mode or s.mode
         info = self.infos.get(s.path)
         if info is None:
@@ -386,14 +401,14 @@ class AppState(QObject):
         level = analyze.level_for(mode, s.params_for(mode))
         bskip = self.bottom_skip if mode == "blur" else 0.0
         a = self.an.get(key)
-        if a and a["state"] in ("run", "done"):
+        if a and not force and a["state"] in ("run", "done"):
             # 하한이 충분하고 하단제외 설정도 같으면 그대로 사용. 다르면 취소 후 다시 분석.
             if a.get("level", 0) <= level and abs(a.get("bskip", 0.0) - bskip) < 1e-6:
                 return
             if a.get("job") is not None:
                 a["job"].cancel.set()
             self.an.pop(key, None)
-        z = analyze.load(info, mode, level, bskip)
+        z = None if force else analyze.load(info, mode, level, bskip)
         if z is not None:
             self.an[key] = {"z": z, "p": 1.0, "state": "done", "err": "", "level": _z_level(z, mode), "bskip": bskip}
             self.analysis_changed.emit(s.path)
@@ -714,32 +729,52 @@ class AppState(QObject):
         d = self._span(s, key)
         return d["intervals"][0][0] if d and d["intervals"] else frame
 
+    def _bake_akeys(self, s, g, key, d):
+        """오토 트랙의 현재 키들을 '고정 키프레임'(g["akeys"])으로 한 번 구움. 이미 있으면 그대로.
+        이후 삭제·편집은 이 키프레임만 건드리므로 다른 키가 안 움직임(v0.7.83)."""
+        if g.get("akeys"):
+            return
+        it = self._item(s, key, d["intervals"][0][0] if d["intervals"] else 0)
+        tid = key[1] if key[0] == "t" else (it.tid if it is not None else None)
+        r = self.resolver(s)
+        if tid is None:
+            tid = r.g_tid.get(g["gid"])
+        ak = {}
+        for k in d["keys"]:
+            v = r._auto_vec(tid, int(k)) if tid is not None else None
+            if v is not None:
+                ak[str(int(k))] = [float(x) for x in v]      # 그때의 검출값을 그대로 저장
+        g["akeys"] = ak
+        g.pop("flat", None)                                  # 예전 방식 제거(이중 적용 방지)
+        g.pop("hold", None)
+
     def delete_auto_key(self, key, frame):
-        """오토 키 ◆ 삭제 = 앞 키와 뒤 키 사이를 직선으로 폄(그 사이 검출값의 흔들림 제거).
-        구간 처음·끝 키 = 옆 키 값으로 고정(구간 길이는 그대로). → "" 또는 못 지운 이유."""
+        """오토 키 ◆ 삭제(v0.7.83 '키 고정'): 처음 지우면 현재 오토 키를 진짜 키프레임으로 구운 뒤,
+        그 키 하나만 제거. 다른 키는 그대로, 사이는 직선으로 이어짐. → "" 또는 못 지운 이유."""
         s = self.source()
         d = self._span(s, key) if s is not None else None
         if d is None:
             return "키를 찾지 못했습니다"
         frame = int(frame)
-        iv = next(((a, b) for a, b in d["intervals"] if a <= frame <= b), None)
-        ks = sorted(k for k in d["keys"] if iv and iv[0] <= k <= iv[1])
-        if frame not in ks:
+        if frame not in d["keys"]:
             return "키를 찾지 못했습니다"
-        i = ks.index(frame)
-        if len(ks) < 2:
+        if len(d["keys"]) < 2:
             return "키가 하나뿐이라 지울 수 없습니다"
         self.push_undo()
         s, g = self._group_for(key, frame)
         if g is None or g.get("manual"):
             self.undo_stack.pop()
             return "키를 찾지 못했습니다"
-        if i == 0:                               # 구간 첫 키 = 다음 키 값으로 구간 시작부터 고정(v0.7.75)
-            edits.add_hold(g, iv[0], ks[1] - 1, ks[1])
-        elif i == len(ks) - 1:                   # 구간 끝 키 = 앞 키 값으로 구간 끝까지 고정
-            edits.add_hold(g, ks[-2] + 1, iv[1], ks[-2])
-        else:
-            edits.add_flat(g, ks[i - 1], ks[i + 1])
+        self._bake_akeys(s, g, key, d)
+        ak = g.get("akeys") or {}
+        if str(frame) not in ak or len(ak) < 2:
+            self.undo_stack.pop()
+            self._res.clear()
+            self._spans_cache = (None,)
+            return "키가 하나뿐이라 지울 수 없습니다" if len(ak) < 2 else "키를 찾지 못했습니다"
+        del ak[str(frame)]
+        g["akeys"] = ak
+        self._res.clear()                        # 리졸버 캐시 비움(akeys 반영)
         self.sel = ("g", g["gid"])
         self._edited()
         return ""
@@ -875,6 +910,9 @@ class AppState(QObject):
             ukeys = sorted(int(x) for x in g.get("keys", {})) if g else []   # 사용자가 옮겨 찍은 수동 키
             if g is not None and g.get("manual"):       # 추가 타원 = 자동 없음, 사용자 키만
                 keys = []
+            elif g is not None and g.get("akeys"):      # v0.7.83 고정 키프레임 = 그대로(다른 키 안 움직임)
+                keys = [k for k in sorted(int(f) for f in g["akeys"])
+                        if any(a <= k <= b for a, b in intervals)]
             else:                                       # 오토 트랙(또는 트랙 오버라이드) = 자동 키 + 사용자 키
                 keys = _auto_keys(fr, d["geo"], intervals)
             out.append({"key": k, "mode": mode, "label": d["label"], "intervals": intervals, "keys": keys,

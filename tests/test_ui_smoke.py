@@ -103,7 +103,7 @@ def sign_ui(app, w, st, vids, out):
         w._del()
         pump(app, 0.8)
         src_ = st.source()
-        assert any(g.get("flat") for g in src_.edits[src_.mode]["groups"]), "오토 키 삭제(펴기)가 기록되지 않음"
+        assert any(g.get("akeys") for g in src_.edits[src_.mode]["groups"]), "오토 키 삭제(고정)가 기록되지 않음"
         assert not any(g.get("off_all") for g in src_.edits[src_.mode]["groups"]), "키만 지워야 하는데 레이어가 지워짐"
         st.undo()
         pump(app, 0.5)
@@ -120,7 +120,7 @@ def sign_ui(app, w, st, vids, out):
             w.panel.del_key.emit()                   # = [키 삭제] 버튼
             pump(app, 0.8)
             src2 = st.source()
-            assert any(g.get("flat") or g.get("hold") for g in src2.edits[src2.mode]["groups"]), \
+            assert any(g.get("akeys") for g in src2.edits[src2.mode]["groups"]), \
                 "[키 삭제] 버튼이 오토 키를 안 지움"
             assert not any(g.get("off_all") for g in src2.edits[src2.mode]["groups"]), "[키 삭제]가 레이어를 지움"
             assert ln.sel_kf is None, "삭제 후 키 선택이 안 풀림"

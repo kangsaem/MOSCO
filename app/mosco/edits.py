@@ -219,9 +219,26 @@ class Resolver:
         v = self._hold_vec(g, tid, i) if g.get("hold") else None
         return v if v is not None else self._auto_vec(tid, i)
 
+    def _akeys_vec(self, g, i):
+        """고정된 오토 키프레임(g["akeys"] = {프레임: 값}, v0.7.83): 키 사이 직선 보간, 끝은 끝값."""
+        ak = g.get("akeys")
+        if not ak:
+            return None
+        ks = sorted(int(f) for f in ak)
+        if not ks:
+            return None
+        vals = [np.asarray(ak[str(k)], np.float32) for k in ks]
+        if i <= ks[0]:
+            return vals[0]
+        if i >= ks[-1]:
+            return vals[-1]
+        return _interp_keys(ks, vals, i)
+
     def _edit_vec(self, g, tid, i):
-        """오토 키를 지워 바뀐 값(펴기 → 고정 순). 해당 없으면 None."""
-        v = self._flat_vec(g, tid, i) if g.get("flat") else None
+        """오토 키를 지워 바뀐 값(고정 키프레임 → 펴기 → 고정 순). 해당 없으면 None."""
+        v = self._akeys_vec(g, i) if g.get("akeys") else None   # v0.7.83 키 고정(bake) 우선
+        if v is None and g.get("flat"):                         # 예전 방식(저장된 프로젝트 호환)
+            v = self._flat_vec(g, tid, i)
         if v is None and g.get("hold"):
             v = self._hold_vec(g, tid, i)
         return v
@@ -260,7 +277,7 @@ class Resolver:
                 if g.get("off_all") or _off(g, i):
                     seen.add(gid)
                     continue
-                if g.get("flat") or g.get("hold"):   # 오토 키를 지운 구간 = 앞뒤 키 사이 직선 / 끝은 옆 키 값 고정
+                if g.get("akeys") or g.get("flat") or g.get("hold"):   # 고정 키프레임(bake) / 예전 펴기·고정
                     fv = self._edit_vec(g, tid, i)
                     if fv is not None:
                         if self.mode == "sign":
