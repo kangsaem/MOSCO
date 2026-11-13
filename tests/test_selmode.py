@@ -46,3 +46,9 @@ L.set_data(spans, 10, 0, None)
 L.resize(600, L.height())
 L.grab().save("/tmp/lanes_gap.png")
 print("lane gap OK")
+
+from mosco.ui_monitor import _lane_color, LAYER_COLORS
+sus_full = dict(span("blur", False), sus=True)
+assert _lane_color(sus_full, False).name() == LAYER_COLORS["face"][0].lower(), "레인에 주황이 남음"
+assert _lane_color(dict(sus_full, partial=True), False).name() == LAYER_COLORS["gray"][0].lower()
+print("lane no orange OK")

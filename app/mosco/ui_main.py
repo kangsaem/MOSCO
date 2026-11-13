@@ -17,7 +17,7 @@ from . import __version__, analyze, decoder, edits, ff, fx, jobs, paths
 from .project import Project, out_stem
 from .render import render as do_render
 from .state import AppState
-from .ui_monitor import EllipseLanes, Monitor, TimeBar, TimeRuler
+from .ui_monitor import EllipseLanes, Monitor, PlayheadOverlay, TimeBar, TimeRuler
 from .ui_panel import ControlPanel
 from .ui_side import VIDEO_EXT, RenderItem, RenderPanel, RenderSettings, SourceList, stat_line
 from .ui_widgets import BTN, BTN_MAIN, QSS, arrow_icon, btn
@@ -331,6 +331,12 @@ class MainWindow(QMainWindow):
         self._tl_pad.addWidget(self.ruler)
         _botl.addLayout(self._tl_pad)
         self.lanes_box.verticalScrollBar().installEventFilter(self)
+        # v0.7.90 빨간 재생선 = 레인·소스 바·눈금을 끊김 없이 한 줄(덮개). 틈·레인 아래 빈 곳에서도 잡아 끌기
+        self._bot = _bot
+        self.playhead = PlayheadOverlay(_bot, self.lanes, self.bar)
+        self._ph_drag = False
+        for o in (_bot, self.lanes_box.viewport(), self.lanes):
+            o.installEventFilter(self)
         self.vsplit = QSplitter(Qt.Vertical)
         self.vsplit.setChildrenCollapsible(False)
         self.vsplit.addWidget(self.mon)
@@ -583,8 +589,7 @@ class MainWindow(QMainWindow):
             sel = self.state.sel = None          # 실행취소 등으로 없어진 타원
         smode = s.mode if (sel is not None and s.mode in ("blur", "sign")) else None   # v0.7.89 종류+번호로 선택
         self.mon.set_selected(sel, smode)
-        r = self.state.resolver(s)
-        self.bar.set_keys(r.keys_of(sel))
+        self.bar.set_keys([])                    # v0.7.90 소스 바에는 키 표시 안 함(레인에서만 — 숨은 홀드까지 보여 어긋났음)
         self.lanes.sel, self.lanes._sel_mode = sel, smode
         self.lanes.update()
         self.panel.show_selection(self.state.ov_of(sel, self.f) if sel else None, s.params(),
@@ -781,6 +786,7 @@ class MainWindow(QMainWindow):
         self.lanes.set_data(spans, n, self.f, self.state.sel,
                             s.mode if (s is not None and s.mode in ("blur", "sign")) else None)
         self._autosize_lanes(self.lanes.rows())
+        self.playhead.update()
 
     def _autosize_lanes(self, count):
         """기본은 레이어가 다 보이게(최대 30레인), 넘으면 스크롤. 사용자가 스플리터를 직접 끌면 멈춤."""
@@ -832,6 +838,7 @@ class MainWindow(QMainWindow):
         self.bar.set_cur(i)
         self.lanes.set_cur(i)
         self.ruler.set_cur(i)
+        self.playhead.update()
         if self.state.sel is not None:
             self.panel.show_selection(self.state.ov_of(self.state.sel, i), self.state.source().params(),
                                       self.state.minus_of(self.state.sel, i))
@@ -1002,6 +1009,7 @@ class MainWindow(QMainWindow):
         self.bar.set_cur(i)
         self.lanes.set_cur(i)
         self.ruler.set_cur(i)
+        self.playhead.update()
         self.tc.setText(ff.frames_to_tc(ff.tc_to_frames(info.timecode, info.fps) + i, info.fps))
         self.mon.set_images([self._play_fx(info, i, fr)], self._vsize(info))
         self._overlay_from_track(i)
@@ -1589,9 +1597,33 @@ class MainWindow(QMainWindow):
                 it.job.cancel.set()
 
     def eventFilter(self, o, e):
-        if o is self.lanes_box.verticalScrollBar() and e.type() in (e.Type.Show, e.Type.Hide):
-            w = o.sizeHint().width() if e.type() == e.Type.Show else 0
+        T = e.type()
+        if o is self.lanes_box.verticalScrollBar() and T in (T.Show, T.Hide):
+            w = o.sizeHint().width() if T == T.Show else 0
             self._tl_pad.setContentsMargins(0, 0, w, 0)
+        ph = getattr(self, "playhead", None)
+        if ph is not None:
+            if T == T.Resize and o is self._bot:
+                ph.setGeometry(self._bot.rect())
+                ph.raise_()
+            if T in (T.Resize, T.Move) and o is self.lanes:
+                ph.update()
+            if o in (self._bot, self.lanes_box.viewport()) and T in (T.MouseButtonPress, T.MouseMove,
+                                                                     T.MouseButtonRelease):
+                # 레인·소스 바·눈금 '사이 틈'과 레인 아래 빈 곳: 재생선 ±6px 를 누르면 잡아 끌기
+                x = o.mapTo(self._bot, e.position().toPoint()).x()
+                if T == T.MouseButtonPress and e.button() == Qt.LeftButton:
+                    lx = ph.line_x()
+                    if lx is not None and abs(x - lx) <= 6:
+                        self._ph_drag = True
+                        self.seek(ph.frame_at(x))
+                        return True
+                elif T == T.MouseMove and self._ph_drag:
+                    self.seek(ph.frame_at(x))
+                    return True
+                elif T == T.MouseButtonRelease and self._ph_drag:
+                    self._ph_drag = False
+                    return True
         return super().eventFilter(o, e)
 
     def showEvent(self, e):

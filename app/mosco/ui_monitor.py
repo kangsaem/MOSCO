@@ -551,8 +551,6 @@ class TimeBar(QWidget):
             for k in self.keys:
                 kx = self._x(k)
                 p.drawPolygon([QPointF(kx, 11), QPointF(kx + 5, 16), QPointF(kx, 21), QPointF(kx - 5, 16)])
-            x = self._x(self.cur)
-            p.fillRect(QRectF(x - 1, 8, 2, 24), QColor("#e5484d"))
 
 
 # 레이어(타원·사각형) 종류별 색 — 오버레이·레인 공통. (sel = 선택 시 밝게)
@@ -583,7 +581,7 @@ def layer_kind(d) -> str:
 
 
 def _lane_color(d, sel):
-    lo, hi = LAYER_COLORS[layer_kind(d)]
+    lo, hi = LAYER_COLORS[layer_kind(dict(d, sus=False))]   # v0.7.90 레인은 주황 안 씀('?'·말풍선으로 표시)
     return QColor(hi if sel else lo)
 
 
@@ -899,25 +897,56 @@ class EllipseLanes(QWidget):
                 kx = self._x(k + 0.5)
                 active = (k == self.cur and sel) or bool(skf and skf[3] == "user" and skf[2] == k)
                 p.setBrush(QColor("#ffd23f") if active else QColor("#f2c94c"))
-                p.setPen(QPen(QColor("#ffffff"), 1.5) if active else QPen(QColor("#5a4a12"), 1))
-                r = 7 if active else 6
+                p.setPen(QPen(QColor("#ffffff"), 2) if active else QPen(QColor("#000000"), 2))   # v0.7.90 검정 테두리
+                r = 8 if active else 7
                 p.drawPolygon([QPointF(kx, cy - r), QPointF(kx + r, cy), QPointF(kx, cy + r), QPointF(kx - r, cy)])
             p.setPen(Qt.NoPen)
             # 라벨
             # 의심 트랙(짧거나 검출 점수 낮음) = 주황 라벨 + "?" — 오검출인지 먼저 확인할 곳
-            if d.get("sus"):
-                p.setPen(QColor("#ffe7cf"))             # 주황 막대 위에서도 읽히게 밝은 색
-                p.drawText(QRectF(4, y0, 40, y1 - y0), Qt.AlignVCenter | Qt.AlignLeft, d["label"] + "?")
-                continue
             p.setPen(QColor("#e6e6e6") if sel else QColor("#9aa0a6"))
-            p.drawText(QRectF(4, y0, 40, y1 - y0), Qt.AlignVCenter | Qt.AlignLeft, d["label"])
+            p.drawText(QRectF(4, y0, 40, y1 - y0), Qt.AlignVCenter | Qt.AlignLeft,
+                       d["label"] + ("?" if d.get("sus") else ""))
         g = self._gap()
         if g is not None:                           # v0.7.89 얼굴 | 간판 사이 빈 줄 + 가운데 점선
             gy = self.PAD + g * self.LANE_H + self.LANE_H / 2 - 1
             p.setPen(QPen(QColor("#6a6a6a"), 1, Qt.DashLine))
             p.drawLine(QPointF(0, gy), QPointF(self.width(), gy))
             p.setPen(Qt.NoPen)
-        x = self._x(self.cur + 0.5)
+
+
+# ------------------------------------------------------------ 재생선 한 줄(레인·소스 바·눈금 전체)
+class PlayheadOverlay(QWidget):
+    """v0.7.90 타임라인 영역 전체를 덮는 투명 층: 빨간 재생선을 위~아래 한 줄로 그림(마우스는 아래로 통과).
+    x 는 레인 기준(레인·소스 바·눈금 모두 프레임 중앙 = i+0.5). 틈·레인 아래 빈 곳에서 잡기는 MainWindow 이벤트 필터."""
+
+    def __init__(self, parent, lanes, bar):
+        super().__init__(parent)
+        self.lanes, self.bar = lanes, bar
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WA_NoSystemBackground)
+
+    def line_x(self):
+        """재생선 x(이 층 좌표) 또는 None."""
+        L = self.lanes
+        n = L.n or self.bar.n
+        if not n:
+            return None
+        cur = L.cur if L.n else self.bar.cur
+        x = (cur + 0.5) / n * max(1, L.width())
+        return L.mapTo(self.parentWidget(), QPointF(x, 0)).x()
+
+    def frame_at(self, x):
+        """이 층 x → 프레임."""
+        L = self.lanes
+        n = L.n or self.bar.n
+        lx = L.mapFrom(self.parentWidget(), QPointF(x, 0)).x()
+        return int(max(0, min(n - 1, lx / max(1, L.width()) * n)))
+
+    def paintEvent(self, e):
+        x = self.line_x()
+        if x is None:
+            return
+        p = QPainter(self)
         p.fillRect(QRectF(x - 1, 0, 2, self.height()), QColor("#e5484d"))
 
 
@@ -979,5 +1008,3 @@ class TimeRuler(QWidget):
             p.setPen(QColor("#333"))
             p.drawLine(int(xh), 4, int(xh), 7)
             t += step
-        x = self._x(self.cur + 0.5)                   # 프레임 중앙 — 소스 바·레인과 일치(한 프레임 어긋남 수정)
-        p.fillRect(QRectF(x - 1, 0, 2, self.height()), QColor("#e5484d"))

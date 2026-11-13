@@ -403,6 +403,24 @@ def extras(app, w, st, vids, out):
     assert w._render_analysis_p(it2) is None
     if keep is not None:
         st.an[(s0.path, "beauty")] = keep
+    # v0.7.90 재생선 한 줄: 덮개가 타임라인 전체 · 레인과 소스 바 사이 틈에서 잡아 끌기
+    from PySide6.QtCore import QPoint
+    from PySide6.QtTest import QTest
+    ph = w.playhead
+    pump(app, 0.2)
+    assert ph.geometry() == w._bot.rect() and ph.height() >= w.bar.geometry().bottom(), "재생선 덮개 크기"
+    if w.lanes.n or w.bar.n:
+        w.seek(5)
+        pump(app, 0.2)
+        lx = ph.line_x()
+        gy = w.lanes_box.geometry().bottom() + 2
+        assert gy < w.bar.geometry().top(), "틈 위치 전제"
+        QTest.mousePress(w._bot, Qt.LeftButton, Qt.NoModifier, QPoint(int(lx), gy))
+        QTest.mouseMove(w._bot, QPoint(int(lx) + 120, gy))
+        QTest.mouseRelease(w._bot, Qt.LeftButton, Qt.NoModifier, QPoint(int(lx) + 120, gy))
+        pump(app, 0.3)
+        assert w.f > 5, f"틈에서 재생선 끌기 안 됨 f={w.f}"
+        print("playhead overlay OK")
     # v0.7.79 종료 않고 새 프로젝트 → 타임라인(레이어·바·눈금)·캐시 싹 비움 (extras 맨 끝: 프로젝트 비워도 됨)
     from mosco.project import Project
     if w.panel._preset_dlg is not None:
@@ -515,7 +533,9 @@ def main():
         gs = src.edits.get(src.mode, {}).get("groups", [])
         g = next((g for g in gs if str(w.f) in g["keys"]), None)
         assert g is not None, f"드래그로 키가 안 생김 {gs}"
-        assert w.f in w.bar.keys, w.bar.keys
+        assert not w.bar.keys, "v0.7.90 소스 바에는 키 표시 안 함"
+        d = next(x for x in w.state.ellipse_spans(src) if x["key"] == ("g", g["gid"]))
+        assert w.f in d["ukeys"], "옮긴 프레임의 수동 키가 레인에 없음"
         w.panel.ov_rows["strength"].s.setValue(80)
         pump(app, 0.3)
         assert g["ov"].get("strength") == 80
