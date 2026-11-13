@@ -26,6 +26,7 @@ class Job(QRunnable):
         self.started = False
         self.submit_t = None      # 큐에 넣은 시각(대기 시간 측정용)
         self.start_t = None       # 실제 실행 시작 시각
+        self.err_trace = ""       # 실패 시 전체 추적(v0.7.82)
 
     def _emit(self, sig, *a):
         try:
@@ -44,6 +45,7 @@ class Job(QRunnable):
             if e.__class__.__name__ == "Cancelled":
                 msg = "취소됨"
             else:
+                self.err_trace = traceback.format_exc()   # v0.7.82 전체 추적 보관(errors.log 기록용)
                 traceback.print_exc()
             self._emit(self.signals.error, msg)
 

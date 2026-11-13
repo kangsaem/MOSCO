@@ -419,6 +419,7 @@ class AppState(QObject):
 
     def _an_done(self, key, z):
         if key in self.an:
+            getattr(self, "_an_retried", set()).discard(key)
             self._log_analyze(key, z, "done")
             self.an[key].update(z=z, p=1.0, state="done", level=_z_level(z, key[1]))
             self._tracks.pop(key, None)
@@ -450,6 +451,11 @@ class AppState(QObject):
                             "HDD" if disk.is_hdd(path) else "SSD", models.active_device(),
                             how if not err else f"{how}:{err}", wait, run, frames, fps,
                             jobs.ANALYZE_POOL.maxThreadCount()])
+            if err:                                  # v0.7.82 실패는 전체 추적까지 errors.log 에
+                tr = (j.err_trace if j is not None else "") or ""
+                with open(paths.log_dir() / "errors.log", "a", encoding="utf-8") as f:
+                    f.write(f"\n===== {_t.strftime('%Y-%m-%d %H:%M:%S')} · {__import__('os').path.basename(path)} · "
+                            f"{mode} · {err} =====\n{tr}\n")
         except Exception:  # noqa: BLE001
             pass
 
@@ -459,6 +465,19 @@ class AppState(QObject):
                 self.an.pop(key, None)
             self.analysis_changed.emit(key[0])
             return
+        self._log_analyze(key, None, "err", err=e)     # v0.7.82 실패도 로그(CSV + errors.log)
+        retried = getattr(self, "_an_retried", set())
+        self._an_retried = retried
+        rec = self.an.get(key)
+        if key not in retried and rec is not None:     # v0.7.82 실패한 파일만 한 번 더(뒤 순서로 순차)
+            retried.add(key)
+            src = next((s for s in self.project.sources if s.path == key[0]), None)
+            self.an.pop(key, None)
+            if src is not None:
+                self.ensure_analysis(src, key[1])
+                self.analysis_changed.emit(key[0])
+                return
+            self.an[key] = rec                         # 소스를 못 찾으면 원복해 오류로
         if key in self.an:
             self.an[key].update(state="err", err=e)
             self.errors[key[0]] = f"분석 실패: {e}"

@@ -111,7 +111,9 @@ def preset_dir() -> Path:
 
 
 def log_dir() -> Path:
-    return _mk("logs")
+    d = user_dir() / "logs"          # v0.7.82 프로그램 폴더 대신 내 문서(업데이트해도 유지·찾기 쉬움)
+    d.mkdir(exist_ok=True)
+    return d
 
 
 def settings_path() -> Path:
