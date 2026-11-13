@@ -406,6 +406,7 @@ def extras(app, w, st, vids, out):
     # v0.7.90 재생선 한 줄: 덮개가 타임라인 전체 · 레인과 소스 바 사이 틈에서 잡아 끌기
     from PySide6.QtCore import QPoint
     from PySide6.QtTest import QTest
+    from mosco.ui_monitor import EllipseLanes as EL
     ph = w.playhead
     pump(app, 0.2)
     assert ph.geometry() == w._bot.rect() and ph.height() >= w.bar.geometry().bottom(), "재생선 덮개 크기"
@@ -421,6 +422,16 @@ def extras(app, w, st, vids, out):
         pump(app, 0.3)
         assert w.f > 5, f"틈에서 재생선 끌기 안 됨 f={w.f}"
         print("playhead overlay OK")
+    # v0.7.91 레이어 칸 최대 높이 없음: 모니터를 줄인 만큼 레이어 칸이 커짐 · 소스 바는 아래(눈금 위)에 붙음
+    w.resize(w.width(), 1400)
+    pump(app, 0.2)
+    tot = sum(w.vsplit.sizes())
+    w.vsplit.setSizes([150, tot - 150])
+    pump(app, 0.3)
+    cap = EL.PAD * 2 + 30 * EL.LANE_H
+    assert w.lanes_box.height() > cap, f"레이어 칸이 안 늘어남 {w.lanes_box.height()} <= {cap}"
+    assert w._bot.height() - w.ruler.geometry().bottom() < 12, "소스 바·눈금이 아래에 안 붙음"
+    print("lanes grow OK", w.lanes_box.height())
     # v0.7.79 종료 않고 새 프로젝트 → 타임라인(레이어·바·눈금)·캐시 싹 비움 (extras 맨 끝: 프로젝트 비워도 됨)
     from mosco.project import Project
     if w.panel._preset_dlg is not None:

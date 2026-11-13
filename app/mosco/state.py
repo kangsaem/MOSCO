@@ -908,8 +908,7 @@ class AppState(QObject):
             intervals.append((a, prev))
             groups = {g["gid"]: g for g in edits.get(s, mode)["groups"]}
             g = groups.get(k[1]) if k[0] == "g" else None
-            hold_set = {int(x) for x in g.get("hold_frames", [])} if g else set()   # 구간 드래그가 만든 숨은 홀드(안 보임)
-            ukeys = sorted(int(x) for x in g.get("keys", {}) if int(x) not in hold_set) if g else []
+            ukeys = sorted(int(x) for x in g.get("keys", {})) if g else []
             if g is not None and g.get("manual"):       # 추가 타원 = 자동 없음, 사용자 키만
                 keys = []
             elif g is not None and g.get("akeys"):      # v0.7.83 고정 키프레임 = 그대로(다른 키 안 움직임)
@@ -956,24 +955,12 @@ class AppState(QObject):
         if g is None:
             self.undo_stack.pop()
             return
-        # v0.7.85 구간 드래그는 '보이는 키프레임'을 만들지 않음. 끝 고정은 '숨은 홀드'(hold_frames)로만,
-        # 매번 싹 지우고 다시 계산 → 바깥에 키가 안 남음. 검출이 있는 끝은 자동이 값을 주므로 홀드 불필요.
-        for fr in list(g.get("hold_frames", [])):          # 예전 숨은 홀드 제거(사용자가 찍은 진짜 키는 보존)
-            g.get("keys", {}).pop(str(int(fr)), None)
-        g["hold_frames"] = []
-        gkey = ("g", g["gid"])                             # 그룹 생성 후 레인 키는 ("g", gid)
-        self._res.clear()                                  # 예전 홀드 뺀 상태로 리졸버 새로(값 조회용)
-        new_holds = []
-        for a, b in merged:                                # 각 구간 양끝을 홀드(구간을 채움) — 숨김 처리(hold_frames)
-            for edge in (a, b):
-                fr = int(edge)
-                if str(fr) in g.get("keys", {}):           # 남은 키 = 사용자가 직접 찍은 진짜 키 → 보존(덮지 않음, 보이게)
-                    continue
-                e, _ = self._present_ell(s, gkey, edge, n)
-                if e is not None:
-                    edits.set_key(g, fr, e)
-                    new_holds.append(fr)
-        g["hold_frames"] = sorted(set(new_holds))
+        # v0.7.91 구간 드래그는 키를 전혀 만들지 않음: 구간만 기록(g["spans"]) → 리졸버가 구간 안의 빈 프레임을
+        # '가장 가까운 값(검출·사용자 키) 유지/사이 보간'으로 채움. (예전 v0.7.85 숨은 홀드 키는 끝 프레임에서
+        # 옮긴 값이 숨겨지고, 다시 끌면 지워지는 문제가 있었음)
+        g.pop("hold_frames", None)
+        g["spans"] = [[int(a), int(b)] for a, b in merged]
+        self._res.clear()
         g["off_all"] = False
         g["off"] = []
         prev = 0

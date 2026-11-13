@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import bisect
+import json
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -95,6 +96,9 @@ class Resolver:
         self.tid_g = {t: g for g, t in self.g_tid.items()}
         self.groups = {g["gid"]: g for g in self.e["groups"]}
         self._prep = {}
+        self._detf = None
+        if track is not None and any("hold_frames" in g for g in self.e["groups"]):
+            self.migrate_holds()                  # v0.7.91 예전 숨은 홀드 키 → 구간(spans)
 
     # ------------------------------------------------------------ 자동 타원
     def auto_at(self, i):
@@ -267,6 +271,129 @@ class Resolver:
         return bool(info and info.get("sus"))
 
     # ------------------------------------------------------------ 최종
+    def _apply(self, g, tid, i, ell, pts):
+        """자동 타원(ell, pts)에 그룹 편집(고정 키·펴기·키 보정량)을 반영."""
+        if g.get("akeys") or g.get("flat") or g.get("hold"):   # 고정 키프레임(bake) / 예전 펴기·고정
+            fv = self._edit_vec(g, tid, i)
+            if fv is not None:
+                if self.mode == "sign":
+                    from . import sign
+                    pts = fv.reshape(4, 2)
+                    ell = sign.quad_ell(pts)
+                else:
+                    ell = (*fv, ell[4])
+        ks, vals, offs, _ = self._g(g)
+        o = self._offset(ks, offs, i)
+        if o is not None:
+            if self.mode == "sign":
+                from . import sign
+                pts = (np.asarray(pts, np.float32).reshape(-1) + o).reshape(4, 2)
+                ell = sign.quad_ell(pts)
+            else:
+                ell = (*(np.array(ell[:4]) + o), ell[4])
+        return ell, pts
+
+    # ------------------------------------------------------------ v0.7.91 구간(spans) = 숨은 키 없이 '가까운 값 유지'
+    def _det_frames(self, tid):
+        """tid 의 자동 타원이 있는 프레임(정렬). 처음 필요할 때 한 번 훑음."""
+        if getattr(self, "_detf", None) is None:
+            # 트랙 객체에 캐시(리졸버는 자주 새로 만들어짐 — 재생 중 매번 훑지 않게). 합치기가 바뀌면 키가 달라짐
+            ck = (self.mode, json.dumps(self.e.get("merges", [])))
+            cache = getattr(self.track, "_mosco_detf", None)
+            if not isinstance(cache, dict):
+                cache = {}
+                try:
+                    self.track._mosco_detf = cache
+                except Exception:
+                    pass
+            if ck not in cache:
+                d = {}
+                for f in range(self.n):
+                    for t, *_ in self.auto_at(f):
+                        d.setdefault(t, []).append(f)
+                cache[ck] = d
+            self._detf = cache[ck]
+        return self._detf.get(tid, [])
+
+    def _det_vec(self, g, tid, f):
+        """검출 프레임 f 의 최종 값(편집 반영): (벡터, 각도). 간판 = 꼭짓점 8개, 그 외 = cx, cy, w, h."""
+        for t, ell, pts, _ in self.auto_at(f):
+            if t == tid:
+                ell, pts = self._apply(g, tid, f, ell, pts)
+                if self.mode == "sign":
+                    return np.asarray(pts, np.float32).reshape(-1), 0.0
+                return np.array(ell[:4], np.float32), float(ell[4])
+        return None, 0.0
+
+    def _gap_vec(self, g, tid, i):
+        """구간(g["spans"]) 안인데 자동 타원이 없는 프레임: 앞뒤 가장 가까운 값(검출·사용자 키) 사이 직선 보간,
+        한쪽만 있으면 그 값 유지. 구간 밖이면 None. → (벡터, 각도) 또는 (None, 0)."""
+        span = next(((a, b) for a, b in g.get("spans", ()) if a <= i <= b), None)
+        if span is None:
+            return None, 0.0
+        a, b = span
+        keys = g.get("keys", {})
+        if str(i) in keys:
+            return np.asarray(keys[str(i)], np.float32), 0.0
+        kf = sorted(int(k) for k in keys if a <= int(k) <= b)
+        df = self._det_frames(tid) if tid is not None else []
+        j = bisect.bisect_left(df, i)
+        cands_p = [f for f in (df[j - 1] if j > 0 else None,) if f is not None and f >= a]
+        cands_n = [f for f in (df[j] if j < len(df) else None,) if f is not None and f <= b]
+        k = bisect.bisect_left(kf, i)
+        if k > 0:
+            cands_p.append(kf[k - 1])
+        if k < len(kf):
+            cands_n.append(kf[k])
+        p = max(cands_p) if cands_p else None
+        q = min(cands_n) if cands_n else None
+
+        def val(f):
+            jj = bisect.bisect_left(df, f)
+            if jj < len(df) and df[jj] == f:              # 검출 프레임(키가 있으면 보정량으로 이미 반영)
+                return self._det_vec(g, tid, f)
+            return np.asarray(keys[str(f)], np.float32), 0.0
+
+        vp = val(p) if p is not None else (None, 0.0)
+        vq = val(q) if q is not None else (None, 0.0)
+        if vp[0] is not None and vq[0] is not None and len(vp[0]) == len(vq[0]):
+            u = (i - p) / (q - p)
+            return vp[0] * (1 - u) + vq[0] * u, vp[1] * (1 - u) + vq[1] * u
+        return vp if vp[0] is not None else vq
+
+    def migrate_holds(self):
+        """예전(v0.7.85~0.7.90) 숨은 홀드 키(hold_frames) → 구간(spans). 홀드 값이 '가까운 값 유지'와 같으면 지우고,
+        다르면(그 프레임에서 사용자가 옮긴 것) 진짜 키로 남김. 바꾼 그룹 수."""
+        n_ch = 0
+        for g in self.e["groups"]:
+            hf = g.pop("hold_frames", None)
+            if hf is None:
+                continue
+            n_ch += 1
+            if "spans" not in g and self.n:
+                spans, a = [], None
+                for f in range(self.n):
+                    on = not _off(g, f)
+                    if on and a is None:
+                        a = f
+                    if not on and a is not None:
+                        spans.append([a, f - 1])
+                        a = None
+                if a is not None:
+                    spans.append([a, self.n - 1])
+                g["spans"] = spans
+            tid = self.g_tid.get(g["gid"])
+            for fr in hf:
+                kv = g.get("keys", {}).pop(str(int(fr)), None)
+                if kv is None:
+                    continue
+                self._prep.pop(g["gid"], None)
+                v, _ = self._gap_vec(g, tid, int(fr))
+                if v is None or len(v) != len(kv) or float(np.max(np.abs(v - np.asarray(kv, np.float32)))) > 1.0:
+                    g["keys"][str(int(fr))] = kv           # 사용자가 옮긴 값 → 진짜 키(보임)
+            self._prep.pop(g["gid"], None)
+        return n_ch
+
     def items(self, i) -> list[Item]:
         out = []
         seen = set()
@@ -277,24 +404,7 @@ class Resolver:
                 if g.get("off_all") or _off(g, i):
                     seen.add(gid)
                     continue
-                if g.get("akeys") or g.get("flat") or g.get("hold"):   # 고정 키프레임(bake) / 예전 펴기·고정
-                    fv = self._edit_vec(g, tid, i)
-                    if fv is not None:
-                        if self.mode == "sign":
-                            from . import sign
-                            pts = fv.reshape(4, 2)
-                            ell = sign.quad_ell(pts)
-                        else:
-                            ell = (*fv, ell[4])
-                ks, vals, offs, _ = self._g(g)
-                o = self._offset(ks, offs, i)
-                if o is not None:
-                    if self.mode == "sign":
-                        from . import sign
-                        pts = (np.asarray(pts, np.float32).reshape(-1) + o).reshape(4, 2)
-                        ell = sign.quad_ell(pts)
-                    else:
-                        ell = (*(np.array(ell[:4]) + o), ell[4])
+                ell, pts = self._apply(g, tid, i, ell, pts)
                 seen.add(gid)
             minus = bool(g and g.get("minus"))
             out.append(Item(("g", gid) if gid is not None else ("t", tid), tid, ell, pts, pres,
@@ -305,7 +415,7 @@ class Resolver:
             if gid in seen or g.get("off_all") or _off(g, i):
                 continue
             ks, vals, offs, tid = self._g(g)
-            if not ks:
+            if not ks and (g.get("manual") or g.get("spans") is None):
                 continue
             if g.get("manual"):
                 # 수동(그린) 타원은 클립 처음~끝 존재: 첫 키 이전엔 첫 값, 마지막 키 이후엔 마지막 값
@@ -315,6 +425,15 @@ class Resolver:
                     v = vals[-1]
                 else:
                     v = _interp_keys(ks, vals, i)
+            elif g.get("spans") is not None:     # v0.7.91 구간 안 = 가까운 값 유지(숨은 키 없음)
+                v, ang = self._gap_vec(g, tid, i)
+                if v is None:
+                    continue
+                if self.mode != "sign":
+                    out.append(Item(("g", gid), tid, (*v[:4], ang), None, 1.0, dict(g.get("ov", {})), False,
+                                    gid, str(i) in g.get("keys", {}), bool(g.get("minus")),
+                                    not g.get("minus") and self._sus(tid)))
+                    continue
             else:       # 자동 그룹인데 이 프레임에 자동 타원이 없음 → 키 구간 안에서만
                 v = _interp_keys(ks, vals, i)
                 if v is None:

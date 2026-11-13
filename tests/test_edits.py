@@ -237,6 +237,43 @@ def flat_check():
     assert (a3 + 20) in next(x for x in st.ellipse_spans(st.source()) if x["key"] == st.sel)["ukeys"], \
         "구간 드래그가 사용자 키를 지움"
     print("set_spans hidden holds OK")
+    # v0.7.91 숨은 키 없음: 연장 구간 = 가장 가까운 값 유지 · 끝 프레임에서 옮기면 보이는 키 · 다시 끌어도 유지
+    st.set_spans(st.sel, [(a3, b3 + 25)])
+    gg = next(x for x in edits.get(st.source(), "blur")["groups"] if x["gid"] == st.sel[1])
+    assert "hold_frames" not in gg and gg.get("spans") == [[a3, b3 + 25]], gg.get("spans")
+    R = st.resolver(st.source())
+    last = next(it for it in R.items(b3) if it.key == st.sel).ell[:4]
+    for f in (b3 + 1, b3 + 12, b3 + 25):
+        e = next(it for it in R.items(f) if it.key == st.sel).ell[:4]
+        assert np.allclose(e, last, atol=0.01), f"연장 구간이 마지막 값 유지가 아님 f={f} {e} vs {last}"
+    assert not any(it.key == st.sel for it in R.items(b3 + 26)), "구간 밖에 타원이 남음"
+    end = b3 + 25
+    st.edit_ellipse(st.sel, end, (last[0] + 40, last[1], last[2], last[3]))           # 맨 끝 프레임에서 옮김
+    L = next(x for x in st.ellipse_spans(st.source()) if x["key"] == st.sel)
+    assert end in L["ukeys"], f"끝 프레임에서 옮긴 키가 안 보임 {L['ukeys']}"
+    R = st.resolver(st.source())
+    mid = next(it for it in R.items(b3 + 12) if it.key == st.sel).ell[0]
+    assert last[0] < mid < last[0] + 40, f"마지막 검출~끝 키 사이가 보간 안 됨 {mid}"
+    st.set_spans(st.sel, [(a3, b3 + 25)])                                             # 다시 끌어도
+    L = next(x for x in st.ellipse_spans(st.source()) if x["key"] == st.sel)
+    assert end in L["ukeys"], "다시 끌었더니 끝 키가 지워짐"
+    st.delete_key(end) if hasattr(st, "delete_key") else None
+    # 예전(v0.7.85~90) 숨은 홀드 → 구간으로 옮김: 홀드 값 = 지움, 사용자가 옮긴 값 = 진짜 키로 남김
+    gg = next(x for x in edits.get(st.source(), "blur")["groups"] if x["gid"] == st.sel[1])
+    gg["keys"] = {str(b3 + 25): [float(v) for v in last], str(a3): [float(v) + 0 for v in
+                  next(it for it in st.resolver(st.source()).items(a3) if it.key == st.sel).ell[:4]]}
+    gg["keys"][str(b3 + 25)][0] += 30                                                  # 끝 = 사용자가 옮김
+    gg["hold_frames"] = [a3, b3 + 25]
+    gg.pop("spans", None)
+    gg["off"] = []
+    edits.off_range(gg, b3 + 26, nn - 1)
+    if a3 > 0:
+        edits.off_range(gg, 0, a3 - 1)
+    st._res.clear()
+    R = st.resolver(st.source())
+    assert "hold_frames" not in gg and gg["spans"] == [[a3, b3 + 25]], gg.get("spans")
+    assert str(b3 + 25) in gg["keys"], "옮긴 끝 값이 마이그레이션에서 지워짐"
+    print("v0.7.91 spans hold-nearest · end key · migrate OK")
     print("flat / delete anywhere OK")
 
 

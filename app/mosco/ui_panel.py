@@ -618,6 +618,20 @@ class ControlPanel(QWidget):
         return self.view.value() or "fx"
 
 
+# v0.7.91 블러·간판 프리셋은 트랙(번호 매기기)에 쓰는 값을 안 건드림 — 바뀌면 트랙을 다시 만들어 레이어 번호가
+# 다시 매겨지고 편집(구간·키·삭제)이 위치로 다시 붙음(가까운 두 사람이 바뀔 수 있음).
+TRACK_KEYS = ("stabilize", "sensitivity", "min_size", "hold", "link", "profile", "margin", "max_count")
+
+
+def preset_params_for_apply(mode, params, kind):
+    """[적용]에 넘길 값. 블러·간판: 약·중·강 = 강도만 / 저장 프리셋 = 트랙 값 빼고. 뷰티는 그대로."""
+    if mode not in ("blur", "sign"):
+        return params
+    if kind == "level":
+        return {"strength": params["strength"]}
+    return {k: v for k, v in params.items() if k not in TRACK_KEYS}
+
+
 class PresetGridPopup(DragMove, QDialog):          # 빈 바탕을 끌어 옮김(DTME 팝업과 같음)
     """프리셋 격자. 작업(뷰티/블러) × 강도(약/중/강/강+) 또는 저장된 프리셋을 고르고 [적용].
 
@@ -822,6 +836,7 @@ class PresetGridPopup(DragMove, QDialog):          # 빈 바탕을 끌어 옮김
                 QMessageBox.warning(self, "프리셋", str(e))
                 return
             mode, params, label = d.get("mode", "beauty"), d.get("params", {}), self.pick[1]
+        params = preset_params_for_apply(mode, params, self.pick[0])
         if self.on_apply is not None:
             self.on_apply(mode, params, label)
         self.done_lb.setText(f"적용됨: {label}")

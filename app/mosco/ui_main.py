@@ -313,7 +313,9 @@ class MainWindow(QMainWindow):
         self.lanes_box.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.lanes_box.setWidget(self.lanes)
         self.lanes_box.setMinimumHeight(EllipseLanes.PAD * 2 + 2 * EllipseLanes.LANE_H)   # 최소 2레인
-        self.lanes_box.setMaximumHeight(EllipseLanes.PAD * 2 + 30 * EllipseLanes.LANE_H)  # 30레인까지, 넘으면 스크롤
+        # v0.7.91 최대 높이 제한 없음: 모니터를 줄이면 늘어난 만큼 레이어 칸이 차지(다 들어가면 스크롤바 없음).
+        # 처음 자동 높이(_autosize_lanes)만 30줄까지.
+        self.lanes_box.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         self.lanes_box.setStyleSheet("QScrollArea{background:#1a1a1a}")
         self.ruler = TimeRuler()
         # 모니터 ↕ (바+레인+눈금) 사이 드래그 — 레인 창을 높게 볼 수 있음(여기서 키프레임·타원 수정 후 AE)

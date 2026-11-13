@@ -52,3 +52,14 @@ sus_full = dict(span("blur", False), sus=True)
 assert _lane_color(sus_full, False).name() == LAYER_COLORS["face"][0].lower(), "레인에 주황이 남음"
 assert _lane_color(dict(sus_full, partial=True), False).name() == LAYER_COLORS["gray"][0].lower()
 print("lane no orange OK")
+
+# v0.7.91 블러·간판 프리셋 = 약중강은 강도만, 저장 프리셋은 트랙 값 빼고 · 뷰티는 그대로
+from mosco import autodetect as ad
+from mosco.ui_panel import preset_params_for_apply, TRACK_KEYS
+_, pb = ad.to_params("blur", "weak", {"min_face": 14, "motion": 12})
+assert preset_params_for_apply("blur", pb, "level") == {"strength": pb["strength"]}
+named = preset_params_for_apply("blur", pb, "named")
+assert not any(k in named for k in TRACK_KEYS) and named["strength"] == pb["strength"]
+_, pbeauty = ad.to_params("beauty", "weak")
+assert preset_params_for_apply("beauty", pbeauty, "level") == pbeauty
+print("preset strength-only OK")
