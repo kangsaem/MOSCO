@@ -208,6 +208,35 @@ def flat_check():
     st.delete_ellipse(lane_b["key"], 100)                      # 재생선 = 100(그 타원 없음)
     assert all(x["intervals"][-1][1] >= 60 for x in st.ellipse_spans(s2)), "구간 밖에서 레이어 삭제 안 됨"
     assert st.undo() and any(x["intervals"][-1][1] < 60 for x in st.ellipse_spans(st.source()))
+    # v0.7.85 구간 드래그(set_spans): 보이는 키 안 생김 · 바깥에 키 안 남음 · 사용자 키 보존
+    s3 = st.source()
+    s3.edits.clear(); st._res.clear(); st._spans_cache = (None,)
+    det3 = d[(d[:, 0] <= 70) | (d[:, 1] >= 700)]              # A 를 0~70 검출로 제한
+    tr3 = analyze.blur_track({"det": det3, "n": z["n"]}, s3.blur)
+    st.track = lambda src, mode=None: tr3
+    nn = tr3.n
+    cand = [x for x in st.ellipse_spans(s3) if x["intervals"][-1][1] < nn - 25]   # 연장 여지가 있는(검출이 일찍 끝난) 레인
+    lane = cand[0] if cand else max(st.ellipse_spans(s3), key=lambda x: x["intervals"][-1][1])
+    k3 = lane["key"]
+    a3, b3 = lane["intervals"][0][0], lane["intervals"][-1][1]
+    st.set_spans(k3, [(a3, b3 + 25)])                        # 검출 밖으로 연장
+    g3 = next(gg for gg in edits.get(st.source(), "blur")["groups"] if gg["gid"] == st.sel[1])
+    L = next(x for x in st.ellipse_spans(st.source()) if x["key"] == st.sel)
+    assert not L["ukeys"], f"구간 연장이 보이는 키를 만듦 {L['ukeys']}"
+    assert any(it.key == st.sel for it in st.resolver(st.source()).items(b3 + 15)), "연장 구간에 타원이 안 채워짐"
+    st.set_spans(st.sel, [(a3 + 8, b3 - 8)])                 # 다시 줄임
+    g3 = next(gg for gg in edits.get(st.source(), "blur")["groups"] if gg["gid"] == st.sel[1])
+    L = next(x for x in st.ellipse_spans(st.source()) if x["key"] == st.sel)
+    assert not L["ukeys"], "구간 축소가 보이는 키를 만듦"
+    assert all(a3 + 8 <= int(kk) <= b3 - 8 for kk in g3.get("keys", {})), \
+        f"구간 바깥에 키가 남음 {sorted(int(x) for x in g3.get('keys', {}))}"
+    it = next(it for it in st.resolver(st.source()).items(a3 + 20) if it.key == st.sel)
+    st.edit_ellipse(st.sel, a3 + 20, (it.ell[0] + 25, it.ell[1], it.ell[2], it.ell[3]))   # 사용자가 찍은 진짜 키
+    assert (a3 + 20) in next(x for x in st.ellipse_spans(st.source()) if x["key"] == st.sel)["ukeys"]
+    st.set_spans(st.sel, [(a3 + 8, b3 - 12)])
+    assert (a3 + 20) in next(x for x in st.ellipse_spans(st.source()) if x["key"] == st.sel)["ukeys"], \
+        "구간 드래그가 사용자 키를 지움"
+    print("set_spans hidden holds OK")
     print("flat / delete anywhere OK")
 
 
