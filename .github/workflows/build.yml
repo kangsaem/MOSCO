@@ -176,6 +176,7 @@ jobs:
         shell: pwsh
         run: |
           $env:MOSCO_SELFTEST = "1"
+          $env:MOSCO_JOB = "0"   # CI 러너 Job 과 충돌 방지(실제 exe 는 기본 켜짐)
           $p = Start-Process dist/MOSCO/MOSCO.exe -Wait -PassThru
           Write-Host "exit code: $($p.ExitCode)"
           if ($p.ExitCode -ne 0) { exit 1 }

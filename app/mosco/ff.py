@@ -40,11 +40,15 @@ def _win_job():
     if _job_ready:
         return _job
     _job_ready = True
-    # 기본 꺼짐: CI(윈도우 러너)·일부 환경에서 러너의 기존 Job 과 충돌해 자식이 죽는 사례가 있어
-    # 실기 검증 전까지 옵트인(MOSCO_JOB=1). 정상 종료 정리는 WeakSet+atexit(kill_all)로 충분.
-    if os.environ.get("MOSCO_JOB") != "1":
+    # v0.7.86: 실제 배포 exe(frozen)에서는 기본 켬 → 크래시·작업관리자 강제 종료로 ffmpeg 가 고아로
+    #   남아 구버전 폴더가 '권한 거부'로 안 지워지는 문제를 막는다(Job 핸들이 닫히면 OS 가 자식 정리).
+    #   CI 러너는 기존 Job 과 충돌해 자식이 죽는 사례가 있어 exe 스모크 테스트에서 MOSCO_JOB=0 로 끈다.
+    #   소스/개발 실행은 기본 꺼짐(테스트 ffmpeg 보호). MOSCO_JOB=1 로 강제 켬, =0 로 강제 끔.
+    import sys as _sys
+    want = os.environ.get("MOSCO_JOB")
+    if want == "0" or os.name != "nt":
         return None
-    if os.name != "nt":
+    if want != "1" and not getattr(_sys, "frozen", False):
         return None
     try:
         import ctypes
