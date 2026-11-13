@@ -409,11 +409,10 @@ class Monitor(QWidget):
                     cx, cy, ew, eh, ang = ent["ell"]
                     sel = ent["key"] == self.sel and self.sel is not None
                     # 종류별 색: 선택=흰·제외=초록·간판=청록·추가=파랑·얼굴=노랑
-                    # 의심 트랙(짧음·점수 낮음·튐) = 주황(v0.7.59)
-                    col = (QColor("#ffffff") if sel else QColor("#6fd38a") if ent.get("minus")
-                           else QColor("#ff9d4d") if ent.get("sus")
-                           else QColor("#3fd8c4") if ent.get("quad") is not None
-                           else QColor("#7fd1ff") if ent.get("manual") else QColor("#f2c94c"))
+                    # v0.7.84 레인과 같은 체계: 얼굴=노랑/주황(의심) · 간판=보라/밝은보라(의심) · 추가=파랑 · 제외=초록
+                    col = QColor("#ffffff") if sel else QColor(LAYER_COLORS[layer_kind({
+                        "minus": ent.get("minus"), "sus": ent.get("sus"),
+                        "quad": ent.get("quad") is not None, "manual": ent.get("manual")})][1])
                     pen = QPen(col, 2 if not sel else 2.5, Qt.SolidLine if sel else Qt.DashLine)
                     p.setPen(pen)
                     if ent.get("quad") is not None:          # 간판 4꼭짓점
@@ -552,21 +551,22 @@ class TimeBar(QWidget):
 
 # 레이어(타원·사각형) 종류별 색 — 오버레이·레인 공통. (sel = 선택 시 밝게)
 LAYER_COLORS = {
-    "minus":  ("#3f7a52", "#6fd38a"),    # 제외 = 초록
-    "sign":   ("#2e6a64", "#3fb8a0"),    # 간판 = 청록
-    "manual": ("#3d6690", "#5aa0f0"),    # 추가 타원 = 파랑
-    "face":   ("#8a7324", "#e6c24a"),    # 얼굴(자동) = 노랑
-    "sus":    ("#a8581c", "#ff9d4d"),    # 의심 트랙(짧음·점수 낮음·튐) = 주황 — 얼굴·간판 공통
+    "minus":    ("#3f7a52", "#6fd38a"),    # 제외 = 초록
+    "sign":     ("#5a3a8a", "#9b59d0"),    # 간판(사각형) = 보라 (v0.7.84)
+    "sign_sus": ("#7a3aa0", "#c77dff"),    # 의심 간판 = 밝은 보라 (v0.7.84)
+    "manual":   ("#3d6690", "#5aa0f0"),    # 추가 타원 = 파랑
+    "face":     ("#8a7324", "#e6c24a"),    # 얼굴(타원) = 노랑
+    "sus":      ("#a8581c", "#ff9d4d"),    # 의심 얼굴 = 주황
 }
 
 
 def layer_kind(d) -> str:
     if d.get("minus"):
         return "minus"
-    if d.get("sus"):
+    if d.get("quad"):                       # 사각형(간판) = 보라 / 의심이면 밝은 보라
+        return "sign_sus" if d.get("sus") else "sign"
+    if d.get("sus"):                        # 타원(얼굴) 의심 = 주황
         return "sus"
-    if d.get("quad"):
-        return "sign"
     if d.get("manual"):
         return "manual"
     return "face"

@@ -887,12 +887,10 @@ class AppState(QObject):
                         order.append(sk)
                     seen[sk]["frames"].append(i)
                     seen[sk]["geo"].append(_lane_geo(it, p, fx))   # 오토 키 계산용 기하
-        # v0.7.76 레인 순서 고정: 종류 → 트랙 번호 → 추가한 순서. 예전엔 '처음 나타난 순서'라, 레이어를 고르거나
-        # 손대서 그룹이 되면(자동이 없는 프레임에서는 맨 뒤에 나옴) 위아래가 뒤바뀌었음.
-        m_ord = {m: i for i, (_r, m) in enumerate(resolvers)}
-        order.sort(key=lambda sk: (m_ord[sk[0]], 0 if seen[sk]["tid"] is not None else 1,
-                                   seen[sk]["tid"] if seen[sk]["tid"] is not None else (sk[1][1] if sk[1][0] == "g" else 0),
-                                   seen[sk]["ord"]))
+        # v0.7.84 레인 순서(사용자 규칙): ① 타원(얼굴)이 항상 위, 사각형(간판)이 아래 ② 각 묶음 안에서
+        # 나타난 순서(트랙 번호)대로 ③ 선택·편집·그룹화해도 안 바뀜(트랙 번호·ord 는 불변이라 안정적).
+        order.sort(key=lambda sk: (1 if seen[sk]["quad"] else 0,
+                                   seen[sk]["tid"] if seen[sk]["tid"] is not None else 10 ** 6 + seen[sk]["ord"]))
         out = []
         for sk in order:
             mode, k = sk
