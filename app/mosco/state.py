@@ -879,7 +879,8 @@ class AppState(QObject):
                             lbl = "−" + (lbl if lbl not in ("+", "·") else "")
                         tinfo = res.track.tracks.get(it.tid) if (it.tid is not None and hasattr(res.track, "tracks")) else None
                         seen[sk] = {"label": lbl, "frames": [], "geo": [], "minus": it.minus, "mode": mode,
-                                    "tid": it.tid, "ord": len(order),
+                                    "tid": it.tid, "ord": len(order), "res": res,
+                                    "real": [],
                                     "sus": bool(tinfo and tinfo.get("sus")) and not it.manual and not it.minus,
                                     "note": (tinfo or {}).get("note", ""),
                                     "quad": bool(getattr(it, "pts", None) is not None
@@ -887,6 +888,8 @@ class AppState(QObject):
                         order.append(sk)
                     seen[sk]["frames"].append(i)
                     seen[sk]["geo"].append(_lane_geo(it, p, fx))   # 오토 키 계산용 기하
+                    seen[sk]["real"].append(it.tid is not None and not it.manual
+                                            and res._auto_vec(it.tid, i) is not None)   # 진짜 검출?
         # v0.7.84 레인 순서(사용자 규칙): ① 타원(얼굴)이 항상 위, 사각형(간판)이 아래 ② 각 묶음 안에서
         # 나타난 순서(트랙 번호)대로 ③ 선택·편집·그룹화해도 안 바뀜(트랙 번호·ord 는 불변이라 안정적).
         order.sort(key=lambda sk: (1 if seen[sk]["quad"] else 0,
@@ -912,11 +915,16 @@ class AppState(QObject):
             elif g is not None and g.get("akeys"):      # v0.7.83 고정 키프레임 = 그대로(다른 키 안 움직임)
                 keys = [k for k in sorted(int(f) for f in g["akeys"])
                         if any(a <= k <= b for a, b in intervals)]
-            else:                                       # 오토 트랙(또는 트랙 오버라이드) = 자동 키 + 사용자 키
-                keys = _auto_keys(fr, d["geo"], intervals)
+            else:                                       # 오토 트랙 = 실제 검출 프레임에서만 자동 키(늘린 구간 제외)
+                rfr = [f for f, ok in zip(fr, d["real"]) if ok]
+                rgeo = [gg for gg, ok in zip(d["geo"], d["real"]) if ok]
+                keys = _auto_keys(rfr, rgeo, intervals) if rfr else []
+            # v0.7.87 클립 처음~끝을 연속으로 안 덮으면(시작이 0 이 아님·끝이 n-1 이 아님·중간 틈) 미완성 → 회색
+            partial = (not d["manual"] and not d["minus"]
+                       and (intervals[0][0] != 0 or intervals[-1][1] != n - 1 or len(intervals) != 1))
             out.append({"key": k, "mode": mode, "label": d["label"], "intervals": intervals, "keys": keys,
                         "ukeys": ukeys, "n": n, "minus": d["minus"], "quad": d["quad"], "manual": d["manual"],
-                        "sus": d["sus"], "note": d["note"] if d["sus"] else ""})
+                        "sus": d["sus"], "partial": partial, "note": d["note"] if d["sus"] else ""})
         self._spans_cache = (sig, out)
         return out
 

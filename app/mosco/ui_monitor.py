@@ -551,10 +551,12 @@ class TimeBar(QWidget):
 
 # 레이어(타원·사각형) 종류별 색 — 오버레이·레인 공통. (sel = 선택 시 밝게)
 LAYER_COLORS = {
-    # v0.7.85 정상 = 톤다운, 의심 = 밝게(같은 명도 이동). 얼굴 = 노랑 계열, 간판 = 보라 계열.
-    "minus":    ("#3f7a52", "#6fd38a"),    # 제외 = 초록
-    "face":     ("#817239", "#d0b859"),    # 얼굴(타원) 정상 = 톤다운 노랑
-    "sus":      ("#9e8e4d", "#ffe57d"),    # 얼굴 의심 = 밝은 노랑
+    # v0.7.87 정상 = 톤다운, 의심 = 밝게. 얼굴 = 녹색(탁한 노랑에서 바꿈), 간판 = 보라.
+    # 클립 전체(처음~끝)를 안 덮는 레이어 = 회색으로 '미완성' 표시.
+    "gray":     ("#4a4a4a", "#7a7a7a"),    # 미완성(클립 처음~끝 미도달) = 회색
+    "minus":    ("#2e6a64", "#3fb8a0"),    # 제외 = 청록(얼굴 녹색과 구분)
+    "face":     ("#3a7a4a", "#5cb06f"),    # 얼굴(타원) 정상 = 톤다운 녹색
+    "sus":      ("#4a9a5e", "#7fe095"),    # 얼굴 의심 = 밝은 녹색
     "sign":     ("#603781", "#9b59d0"),    # 간판(사각형) 정상 = 톤다운 보라
     "sign_sus": ("#7b4d9e", "#c77dff"),    # 간판 의심 = 밝은 보라
     "manual":   ("#3d6690", "#5aa0f0"),    # 추가 타원 = 파랑
@@ -564,12 +566,14 @@ LAYER_COLORS = {
 def layer_kind(d) -> str:
     if d.get("minus"):
         return "minus"
-    if d.get("quad"):                       # 사각형(간판) = 보라 / 의심이면 밝은 보라
-        return "sign_sus" if d.get("sus") else "sign"
-    if d.get("sus"):                        # 타원(얼굴) 의심 = 주황
-        return "sus"
     if d.get("manual"):
         return "manual"
+    if d.get("partial"):                    # 클립 처음~끝을 안 덮음 = 회색(미완성)
+        return "gray"
+    if d.get("quad"):                       # 사각형(간판) = 보라 / 의심이면 밝은 보라
+        return "sign_sus" if d.get("sus") else "sign"
+    if d.get("sus"):                        # 타원(얼굴) 의심 = 밝은 녹색
+        return "sus"
     return "face"
 
 
