@@ -135,6 +135,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit 1 }
           python tests/test_track.py
           if ($LASTEXITCODE -ne 0) { exit 1 }
+          python tests/test_selmode.py
+          if ($LASTEXITCODE -ne 0) { exit 1 }
           python -c "import sys; sys.path.insert(0,'app'); from mosco import paths; p=paths._documents(); print('documents =', p); assert p.is_dir()"
           if ($LASTEXITCODE -ne 0) { exit 1 }
           python tests/test_aefx.py

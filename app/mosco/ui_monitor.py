@@ -70,6 +70,7 @@ class Monitor(QWidget):
         self.imgs: list[QImage] = []
         self.ells = []          # [{"key", "label", "ell", "manual", "keyed"}]
         self.sel = None
+        self.sel_mode = None     # v0.7.89 선택 레이어의 종류(얼굴 blur·간판 sign)
         self.tool = None        # None | "add" | "del" | "merge"
         self._edit = None       # (key, mode, p0, ell0)  mode: move | w | h
         self._draw = None       # (q0, q1) 드래그로 타원 그리는 중(원본 좌표)
@@ -113,9 +114,14 @@ class Monitor(QWidget):
         self.ells, self.show_ell, self.show_ids = ells or [], show_ell, show_ids
         self.update()
 
-    def set_selected(self, key):
-        self.sel = key
+    def set_selected(self, key, mode=None):
+        self.sel, self.sel_mode = key, mode
         self.update()
+
+    def _is_sel(self, e):
+        """v0.7.89 선택 = 종류+번호. 얼굴·간판 번호가 겹쳐도(얼굴 7·간판 7) 한쪽만."""
+        return (self.sel is not None and e["key"] == self.sel
+                and (self.sel_mode is None or e.get("mode") is None or e.get("mode") == self.sel_mode))
 
     def set_tool(self, tool):
         self.tool = tool
@@ -127,7 +133,7 @@ class Monitor(QWidget):
         import math
         tol = 8 / max(s, 1e-3)
         for e in self.ells:
-            if e["key"] != self.sel:
+            if not self._is_sel(e):
                 continue
             if e.get("quad") is not None:          # 간판: 꼭짓점 4개 손잡이
                 for k, (x, y) in enumerate(e["quad"]):
@@ -279,15 +285,15 @@ class Monitor(QWidget):
                     self.merge_with.emit(ent["key"], ent.get("mode"))
                 return
             if ent is not None:
-                if ent["key"] != self.sel:
-                    self.sel = ent["key"]
+                if not self._is_sel(ent):
+                    self.sel, self.sel_mode = ent["key"], ent.get("mode")
                     self.selected.emit(ent["key"], ent.get("mode"))
                 g0 = tuple(v for p in ent["quad"] for v in p) if ent.get("quad") is not None else tuple(ent["ell"])
                 self._edit = [ent["key"], mode, q, g0, s, False, ent.get("mode")]
                 self.update()
                 return
             if self.sel is not None:
-                self.sel = None
+                self.sel, self.sel_mode = None, None
                 self.selected.emit(None, None)
         if e.button() in (Qt.LeftButton, Qt.MiddleButton):
             pane = self.panes()[0]
@@ -407,7 +413,7 @@ class Monitor(QWidget):
                 p.setFont(f)
                 for ent in self.ells:
                     cx, cy, ew, eh, ang = ent["ell"]
-                    sel = ent["key"] == self.sel and self.sel is not None
+                    sel = self._is_sel(ent)
                     # 종류별 색: 선택=흰·제외=초록·간판=청록·추가=파랑·얼굴=노랑
                     # v0.7.84 레인과 같은 체계: 얼굴=노랑/주황(의심) · 간판=보라/밝은보라(의심) · 추가=파랑 · 제외=초록
                     col = QColor("#ffffff") if sel else QColor(LAYER_COLORS[layer_kind({
@@ -615,7 +621,7 @@ class EllipseLanes(QWidget):
         from PySide6.QtCore import QEvent
         if e.type() == QEvent.ToolTip:
             from PySide6.QtWidgets import QToolTip
-            idx = int((e.pos().y() - self.PAD) // self.LANE_H)
+            idx = self._idx_at(e.pos().y())
             d = self.spans[idx] if 0 <= idx < len(self.spans) else None
             if d is not None and d.get("sus"):
                 txt = f"{d['label']}번 주황 = {d.get('note') or '의심 트랙'}\n오검출인지 확인하세요. 블러는 그대로 적용됩니다"
@@ -627,7 +633,7 @@ class EllipseLanes(QWidget):
 
     def _key_hit(self, pos):
         """키프레임 ◆ 클릭 판정 → (lane_key, mode, frame, "user"|"auto") 또는 None. 사용자 키(ukeys) 우선."""
-        idx = int((pos.y() - self.PAD) // self.LANE_H)
+        idx = self._idx_at(pos.y())
         if not (0 <= idx < len(self.spans)):
             return None
         d = self.spans[idx]
@@ -643,10 +649,11 @@ class EllipseLanes(QWidget):
 
     def _fit(self):
         # 전체 레인 높이로 키움(8개 초과분은 바깥 QScrollArea 가 스크롤). 예전엔 8개로 잘라 아래 레인이 안 보였음.
-        self.setFixedHeight(self.PAD * 2 + max(1, len(self.spans)) * self.LANE_H)
+        self.setFixedHeight(self.PAD * 2 + max(1, self.rows()) * self.LANE_H)
 
-    def set_data(self, spans, n, cur, sel):
+    def set_data(self, spans, n, cur, sel, sel_mode=None):
         self.spans, self.n, self.cur, self.sel = spans or [], n, cur, sel
+        self._sel_mode = sel_mode if sel is not None else None
         kf = self.sel_kf                              # 고른 키가 없어졌거나 다른 타원을 골랐으면 해제
         if kf is not None:
             d = next((x for x in self.spans if x.get("mode") == kf[1]
@@ -658,6 +665,11 @@ class EllipseLanes(QWidget):
         self._preview = None
         self._fit()
         self.update()
+
+    def _is_sel(self, d):
+        """v0.7.89 대표 선택 = 종류+번호(얼굴 7·간판 7 이 함께 선택되던 것)."""
+        return (self.sel is not None and d["key"] == self.sel
+                and (self._sel_mode is None or d.get("mode") is None or d.get("mode") == self._sel_mode))
 
     def multi_keys(self):
         """Ctrl·Shift 로 더 고른 레이어의 key 목록(대표 제외)."""
@@ -687,7 +699,7 @@ class EllipseLanes(QWidget):
                                                           if (x.get("mode"), x["key"]) == t))[0]
                 self.multi.discard(m)
                 keep = set(self.multi)
-                self.sel = m[1]
+                self.sel, self._sel_mode = m[1], m[0]
                 self.select.emit(m[1], m[0])
                 self.multi = keep
         else:
@@ -706,13 +718,35 @@ class EllipseLanes(QWidget):
     def _frame(self, x):
         return int(max(0, min(self.n - 1, x / max(1, self.width()) * self.n)))
 
+    def _gap(self):
+        """v0.7.89 얼굴(타원)과 간판(사각형) 사이 빈 줄 위치 = 첫 사각형 레인 번호. 한 종류뿐이면 None."""
+        i = next((i for i, d in enumerate(self.spans) if d.get("quad")), None)
+        return i if i else None                      # 0(사각형만)·None(타원만) = 빈 줄 없음
+
+    def rows(self):
+        """화면 줄 수(레인 + 빈 줄)."""
+        return len(self.spans) + (1 if self._gap() is not None else 0)
+
     def _lane_rect(self, idx):
-        y = self.PAD + idx * self.LANE_H
+        g = self._gap()
+        row = idx + (1 if g is not None and idx >= g else 0)
+        y = self.PAD + row * self.LANE_H
         return y, y + self.LANE_H - 3
+
+    def _idx_at(self, y):
+        """y → 레인 번호(빈 줄·바깥 = -1)."""
+        row = int((y - self.PAD) // self.LANE_H)
+        g = self._gap()
+        if g is not None:
+            if row == g:
+                return -1
+            if row > g:
+                row -= 1
+        return row
 
     def _hit(self, pos):
         """→ (lane_idx, ("seg_in"|"seg_out", 구간번호) 또는 'mid')."""
-        idx = int((pos.y() - self.PAD) // self.LANE_H)
+        idx = self._idx_at(pos.y())
         if not (0 <= idx < len(self.spans)):
             return None, None
         d = self.spans[idx]
@@ -784,7 +818,7 @@ class EllipseLanes(QWidget):
         else:
             hi = (segs[si + 1][0] - 1) if si + 1 < len(segs) else (n - 1)
             segs[si][1] = min(hi, max(f, a))
-        self._preview = (d["key"], [tuple(x) for x in segs])
+        self._preview = (d["key"], [tuple(x) for x in segs], d.get("mode"))
         self.update()
 
     def mouseReleaseEvent(self, e):
@@ -792,7 +826,7 @@ class EllipseLanes(QWidget):
             self._scrub = False
             return
         if self._drag is not None and self._preview is not None:
-            key, segs = self._preview
+            key, segs = self._preview[:2]
             self.segments_changed.emit(key, segs)
         self._drag = None
         self._preview = None
@@ -827,9 +861,10 @@ class EllipseLanes(QWidget):
         p.setFont(f)
         for idx, d in enumerate(self.spans):
             y0, y1 = self._lane_rect(idx)
-            sel = d["key"] == self.sel or (d.get("mode"), d["key"]) in self.multi
+            sel = self._is_sel(d) or (d.get("mode"), d["key"]) in self.multi
             p.fillRect(QRectF(0, y0 - 1, self.width(), self.LANE_H - 1), QColor("#242424" if idx % 2 else "#202020"))
-            pv = self._preview if (self._preview and self._preview[0] == d["key"]) else None
+            pv = self._preview if (self._preview and self._preview[0] == d["key"]
+                                   and self._preview[2] == d.get("mode")) else None
             bar = _lane_color(d, sel)       # 종류별 색: 얼굴=노랑·간판=청록·추가=파랑·제외=초록
             ivs = pv[1] if pv else d["intervals"]       # 드래그 중이면 미리보기 구간
             for (a, b) in d["intervals"]:
@@ -876,6 +911,12 @@ class EllipseLanes(QWidget):
                 continue
             p.setPen(QColor("#e6e6e6") if sel else QColor("#9aa0a6"))
             p.drawText(QRectF(4, y0, 40, y1 - y0), Qt.AlignVCenter | Qt.AlignLeft, d["label"])
+        g = self._gap()
+        if g is not None:                           # v0.7.89 얼굴 | 간판 사이 빈 줄 + 가운데 점선
+            gy = self.PAD + g * self.LANE_H + self.LANE_H / 2 - 1
+            p.setPen(QPen(QColor("#6a6a6a"), 1, Qt.DashLine))
+            p.drawLine(QPointF(0, gy), QPointF(self.width(), gy))
+            p.setPen(Qt.NoPen)
         x = self._x(self.cur + 0.5)
         p.fillRect(QRectF(x - 1, 0, 2, self.height()), QColor("#e5484d"))
 

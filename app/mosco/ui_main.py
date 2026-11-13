@@ -581,10 +581,11 @@ class MainWindow(QMainWindow):
         sel = self.state.sel
         if sel is not None and sel[0] == "g" and not any(g["gid"] == sel[1] for g in edits.get(s)["groups"]):
             sel = self.state.sel = None          # 실행취소 등으로 없어진 타원
-        self.mon.set_selected(sel)
+        smode = s.mode if (sel is not None and s.mode in ("blur", "sign")) else None   # v0.7.89 종류+번호로 선택
+        self.mon.set_selected(sel, smode)
         r = self.state.resolver(s)
         self.bar.set_keys(r.keys_of(sel))
-        self.lanes.sel = sel
+        self.lanes.sel, self.lanes._sel_mode = sel, smode
         self.lanes.update()
         self.panel.show_selection(self.state.ov_of(sel, self.f) if sel else None, s.params(),
                                   self.state.minus_of(sel, self.f) if sel else False)
@@ -777,8 +778,9 @@ class MainWindow(QMainWindow):
         s = self.state.source()
         spans = self.state.ellipse_spans(s) if s else []    # 동시 블러면 두 종류 레인 포함
         n = spans[0]["n"] if spans else 0
-        self.lanes.set_data(spans, n, self.f, self.state.sel)
-        self._autosize_lanes(len(spans))
+        self.lanes.set_data(spans, n, self.f, self.state.sel,
+                            s.mode if (s is not None and s.mode in ("blur", "sign")) else None)
+        self._autosize_lanes(self.lanes.rows())
 
     def _autosize_lanes(self, count):
         """기본은 레이어가 다 보이게(최대 30레인), 넘으면 스크롤. 사용자가 스플리터를 직접 끌면 멈춤."""
