@@ -1,6 +1,7 @@
 """시작 창: [AUTO] / [편집]. AUTO = 파일·폴더 고르기 → AUTO 창만 → 보정+편집 = 본 편집 화면 / 보정+렌더 = 끝나면 종료.
 v0.7.73: 윈도우 제목 표시줄 없앰 → 위쪽 정사각형 그림(assets/start.png, 400×400) + 그 위 왼쪽 위 'MOSCO 버전',
-오른쪽 위 ✕(= 종료), 빈 곳을 끌어 옮김. v0.7.74: 1px 테두리 없앰(사용자 요청). 그림이 없으면 회색 자리."""
+오른쪽 위 ✕(= 종료), 빈 곳을 끌어 옮김. v0.7.74: 1px 테두리 없앰(사용자 요청). 그림이 없으면 회색 자리.
+v0.7.92: 새 그림(왼쪽 하늘·오른쪽 어둠) + 제목 뒤 하늘 쪽(왼쪽 절반)만 위 90px 파랑 그라데이션(흰 글자 잘 보이게)."""
 from __future__ import annotations
 
 from PySide6.QtCore import QPoint, Qt
@@ -12,6 +13,7 @@ from .ui_widgets import QSS, DragMove, btn
 
 IMG = 400                                      # 그림 한 변(논리 px). 그림 파일은 800×800(고배율 화면용)
 W, H = IMG, IMG + 160                          # v0.7.74 테두리 1px 없앰 → 400×560
+GRAD_W, GRAD_H = IMG // 2, 90                 # v0.7.92 제목 뒤 그라데이션(하늘 쪽 절반 · 높이 90)
 
 
 class StartWindow(DragMove, QWidget):
@@ -46,6 +48,14 @@ class StartWindow(DragMove, QWidget):
             pm.setDevicePixelRatio(dpr)
             self.img.setPixmap(pm)
         lay.addWidget(self.img)
+
+        if not pm.isNull():                    # v0.7.92 제목 뒤 파랑 그라데이션(위 진하게 → 아래 투명), 글자보다 먼저 만들어 아래에 깔림
+            grad = QWidget(self.img)
+            grad.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+            grad.setAttribute(Qt.WA_StyledBackground, True)
+            grad.setGeometry(0, 0, GRAD_W, GRAD_H)
+            grad.setStyleSheet("background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 rgba(30,120,230,235),"
+                               "stop:0.55 rgba(45,140,240,120),stop:1 rgba(45,140,240,0))")
 
         head = QWidget(self.img)
         head.setAttribute(Qt.WA_TransparentForMouseEvents, True)     # 글자 위를 잡아도 창이 끌림
