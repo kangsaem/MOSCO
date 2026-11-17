@@ -9,8 +9,6 @@ from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtGui import QColor, QPalette  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from mosco.ui_main import MainWindow  # noqa: E402
-from mosco.ui_side import VIDEO_EXT  # noqa: E402
 
 
 def dark(app: QApplication):
@@ -25,54 +23,16 @@ def dark(app: QApplication):
     app.setPalette(p)
 
 
-SINGLE_NAME = "MOSCO-single-" + (os.environ.get("USERNAME") or os.environ.get("USER") or "user")
-
-
-def already_running() -> bool:
-    """v0.7.98 중복 실행 막기: 이미 떠 있는 MOSCO 가 있으면 그 창을 앞으로 불러오고 True(이 실행은 끝냄).
-    응답이 1.5초 안에 없으면(멈춘 옛 프로세스 등) 막지 않고 그냥 실행. MOSCO_MULTI=1 이면 검사 안 함."""
-    if os.environ.get("MOSCO_MULTI") == "1" or os.environ.get("MOSCO_SELFTEST"):
-        return False
-    from PySide6.QtNetwork import QLocalSocket
-    sock = QLocalSocket()
-    sock.connectToServer(SINGLE_NAME)
-    if not sock.waitForConnected(500):
-        return False
-    sock.write(b"show\n")
-    sock.flush()
-    ok = sock.waitForReadyRead(1500) and bytes(sock.readAll()).startswith(b"ok")
-    sock.disconnectFromServer()
-    return ok
-
-
-def single_server(app):
-    """첫 실행이 듣는 쪽: 두 번째 실행이 오면 지금 보이는 창(모달 창 우선)을 맨 앞으로."""
-    from PySide6.QtNetwork import QLocalServer
-    QLocalServer.removeServer(SINGLE_NAME)                 # 비정상 종료로 남은 이름 정리(리눅스 소켓 파일)
-    srv = QLocalServer(app)
-    if not srv.listen(SINGLE_NAME):
-        return None
-
-    def on_conn():
-        c = srv.nextPendingConnection()
-        if c is None:
-            return
-
-        def answer():
-            c.readAll()
-            c.write(b"ok\n")
-            c.flush()
-            from mosco.ui_widgets import bring_front
-            w = QApplication.activeModalWidget() or next(
-                (x for x in QApplication.topLevelWidgets() if x.isVisible() and x.isWindow()
-                 and x.windowType() in (Qt.Window, Qt.Dialog)), None)
-            if w is not None:
-                if w.isMinimized():
-                    w.showNormal()
-                bring_front(w)
-        c.readyRead.connect(answer)
-    srv.newConnection.connect(on_conn)
-    return srv
+def _on_show():
+    """두 번째 실행이 왔을 때: 지금 보이는 창(모달 우선)을 맨 앞으로(최소화면 복원)."""
+    from mosco.ui_widgets import bring_front
+    w = QApplication.activeModalWidget() or next(
+        (x for x in QApplication.topLevelWidgets() if x.isVisible() and x.isWindow()
+         and x.windowType() in (Qt.Window, Qt.Dialog)), None)
+    if w is not None:
+        if w.isMinimized():
+            w.showNormal()
+        bring_front(w)
 
 
 def main():
@@ -80,9 +40,13 @@ def main():
     # 프로세스는 기본(보통)으로 둔다 — 낮추지 않음.
     app = QApplication(sys.argv)
     app.setApplicationName("MOSCO")
-    if already_running():                      # v0.7.98 하나만 실행(두 번째 실행 = 떠 있는 창을 앞으로)
-        _hard_exit(0)
-    app._single = single_server(app)
+    # v0.7.99 하나만 실행(mosco/single.py — 잠금 + 소켓, DTME 공용). 무거운 import 전에.
+    from mosco import single
+    if not single.acquire("MOSCO", skip=bool(os.environ.get("MOSCO_SELFTEST"))):
+        _hard_exit(0)                          # 이미 실행 중 → 그 창이 앞으로 옴
+    single.serve("MOSCO", _on_show, app)
+    from mosco.ui_main import MainWindow
+    from mosco.ui_side import VIDEO_EXT
     from PySide6.QtGui import QIcon
     from mosco import paths
     ico = paths.asset("mosco.ico")
@@ -158,6 +122,11 @@ def _hard_exit(code):
     (데몬/네이티브 스레드·onnxruntime·ffmpeg(GPU 포함)가 남아 프로세스가 안 죽고 GPU·화면을 계속 점유하던 것 방지.)
     윈도우에서 os._exit 은 무거운 네이티브 DLL(onnxruntime·ffmpeg·Qt) 해제 중 로더 락 교착을 일으킬 수 있어
     TerminateProcess 로 DLL 해제를 건너뛰고 즉시 종료한다(PyAV/Qt teardown 세그폴트도 함께 우회)."""
+    try:
+        from mosco import single
+        single.release()                       # v0.7.99 잠금 해제(못 해도 죽으면 자동 해제)
+    except Exception:  # noqa: BLE001
+        pass
     try:
         from mosco import decoder, ff
         decoder.close_all()
