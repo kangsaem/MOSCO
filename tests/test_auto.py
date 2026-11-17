@@ -268,6 +268,42 @@ def main():
     assert w.state.has_track(s2), "[AUTO] 뒤 편집 화면에 트랙이 준비돼 있어야 함"
     print("start->auto->each OK")
 
+    # v0.7.96 시작 창 = [AUTO] 하나 · [AUTO] = 빈 AUTO 창(파일 안 물음) · 끌어다 놓기/우클릭으로 추가 · 프로젝트 = 바로 편집 화면
+    proj = work / "p96.mosco.json"
+    w.state.project.save(str(proj))
+    w.state.dirty = False
+    w.hide()
+    sw2 = StartWindow(w)
+    assert not hasattr(sw2, "b_edit"), "시작 창 [편집] 삭제"
+    sw2.show()
+    log96 = {}
+
+    def drive_empty():
+        d = QApplication.activeModalWidget()
+        if not isinstance(d, AutoDialog):
+            QTimer.singleShot(100, drive_empty)
+            return
+        log96["empty"] = (len(d.clips), d._hint.isVisible())
+        d.add_paths([vid, str(work)])                    # 영상 + 폴더(폴더 안 영상 포함)
+        log96["added"] = (len(d.clips), d._hint.isVisible(), len(d.rows))
+        d.add_paths([str(proj)])                         # 목록에 영상이 있으면 묻는 창 → 오프스크린에선 바로 확인 못 함
+        if d.isVisible():                                # (묻는 창이 막으면) 목록 비우고 다시
+            d.clips.clear()
+            d.open_project(str(proj))
+        log96["outcome"] = d.outcome
+    QTimer.singleShot(100, drive_empty)
+    import mosco.ui_widgets as _uw
+    _orig_popup = _uw.info_popup
+    _uw.info_popup = lambda *a, **k: "ok"               # '목록 비우고 열기' 확인 = 열기
+    sw2.auto()
+    _uw.info_popup = _orig_popup
+    assert log96["empty"] == (0, True), log96
+    assert log96["added"][0] >= 2 and not log96["added"][1] and log96["added"][2] == log96["added"][0], log96
+    assert log96["outcome"] == "project", log96
+    assert w.isVisible() and not sw2.isVisible(), "프로젝트 열기 → 편집 화면"
+    assert w.state.project.file and Path(w.state.project.file).name == proj.name, w.state.project.file
+    print("start->empty auto->drop->project OK", log96)
+
     w.state.dirty = False
     print("AUTO TEST OK")
     sys.stdout.flush()

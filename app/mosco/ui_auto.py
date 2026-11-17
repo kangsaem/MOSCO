@@ -17,6 +17,7 @@ from .project import out_stem
 
 # 버튼 색 이름 — 모양은 ui_widgets.QSS(DTME buttons.qss) 한 곳
 RED, ORANGE, GREY = "red", "orange", "light"
+MENU_PX = 14               # v0.7.96 목록 우클릭 메뉴·빈 목록 안내 글자 크기
 AUTO_LW = 40               # AUTO 창 이름칸 폭(작업·강도·이름 = 두 글자)
 LIST_MAX = 20              # 클립 목록 최대 표시 줄(넘으면 스크롤)
 CLIP_ROW = 34              # ClipRow 높이 30 + 간격 4
@@ -173,7 +174,7 @@ class ClipRow(QFrame):
 
 class AutoDialog(DragMove, QDialog):
     def __init__(self, parent, state, only=None, mw=None):
-        """only = 이 클립 번호만 목록에(시작 창 AUTO = 방금 고른 파일만). outcome = 'each'·'' (닫힌 이유).
+        """only = 이 클립 번호만 목록에(시작 창 AUTO = 방금 고른 파일만). outcome = 'each'·'project'·'' (닫힌 이유).
         mw = 본 창(parent 가 None 일 때 — 시작 창 흐름: 작업표시줄에 따로 보이게 부모 없이 띄움)."""
         super().__init__(parent)
         self.mw = mw or parent
@@ -194,19 +195,13 @@ class AutoDialog(DragMove, QDialog):
         self.keep_existing = False          # 항상 '기존 보정 무시 · 키프레임 자동'으로 시작
         self.keep_keys = False
         self.after = "each"                 # v0.7.94 보정+렌더 없음 → each(편집 화면) / ae
+        self.only = set(only) if only is not None else None    # v0.7.96 시작 창 흐름 = 빈 목록에서 시작, 넣은 것만
         self.clips = []
         for i, s in enumerate(state.project.sources):
-            if only is not None and i not in only:
+            if self.only is not None and i not in self.only:
                 continue
-            self.clips.append({"idx": i, "name": s.name, "inc": True, "mode": s.mode if s.mode != "sign" else "sign",
-                               "both": bool(getattr(s, "both", False)), "measured": None, "prog": None,
-                               "c": s.custom,
-                               "strength": self.strength})      # v0.7.77 강도도 클립마다(작업처럼). 초기 = 저장된 기본값
-        # 창 높이: 클립 수에 맞춰 늘리되 최대 LIST_MAX 줄(넘으면 목록만 스크롤). 폭은 고정.
-        rows = min(len(self.clips), LIST_MAX)
-        list_h = rows * CLIP_ROW + 12                    # 목록 몸통(ClipRow 30 + 간격 4 ≈ CLIP_ROW)
-        h = max(720, list_h + 128)                       # 아래 진행막대·버튼·여백
-        self.setFixedSize(998, h)
+            self.clips.append(self._new_clip(i, s))
+        self._fit_size()
         self.selected = {self.clips[0]["idx"]} if self.clips else set()
         self.rows = []
         self._ds_target = None            # 드래그 체크 칠하기 방향
@@ -220,6 +215,19 @@ class AutoDialog(DragMove, QDialog):
         # 창을 열 때는 아무 작업도 안 함(v0.7.3) — 버튼을 누르면 측정부터 시작.
         # 막 추가한 파일은 정보(probe)가 늦게 옴 → 측정 단계에서 오면 그때 측정 시작
         state.changed.connect(self._on_state_changed)
+
+    def _new_clip(self, i, s):
+        return {"idx": i, "name": s.name, "inc": True, "mode": s.mode if s.mode != "sign" else "sign",
+                "both": bool(getattr(s, "both", False)), "measured": None, "prog": None,
+                "c": s.custom,
+                "strength": self.strength}      # v0.7.77 강도도 클립마다(작업처럼). 초기 = 저장된 기본값
+
+    def _fit_size(self):
+        """창 높이: 클립 수에 맞춰 늘리되 최대 LIST_MAX 줄(넘으면 목록만 스크롤). 폭은 고정."""
+        rows = min(len(self.clips), LIST_MAX)
+        list_h = rows * CLIP_ROW + 12                    # 목록 몸통(ClipRow 30 + 간격 4 ≈ CLIP_ROW)
+        h = max(720, list_h + 128)                       # 아래 진행막대·버튼·여백
+        self.setFixedSize(998, h)
 
     # ------------------------------------------------------------ 구성
     def _build(self):
@@ -241,16 +249,16 @@ class AutoDialog(DragMove, QDialog):
         bl = QVBoxLayout(body)
         bl.setContentsMargins(6, 6, 6, 6)
         bl.setSpacing(4)
+        self._bl = bl
         for c in self.clips:
-            r = ClipRow(c["idx"], c["name"])
-            r.clicked.connect(self._on_row)
-            r.toggle_one.connect(lambda i: self._on_check(i, not self._inc_of(i)))
-            r.drag_press.connect(self._ds_press)
-            r.drag_move.connect(self._ds_move)
-            r.drag_end.connect(self._ds_end)
-            bl.addWidget(r)
-            self.rows.append(r)
+            self._add_row(c)
         bl.addStretch(1)
+        # v0.7.96 빈 목록 안내(목록이 비었을 때만 · 클릭은 통과) + 우클릭 추가 메뉴 + 끌어다 놓기
+        self._hint = QLabel("파일이나 폴더를 끌어다 놓으세요\n또는 우클릭해서 추가하세요", body)
+        self._hint.setAlignment(Qt.AlignCenter)
+        self._hint.setStyleSheet(f"color:#6f6f6f;font-size:{MENU_PX}px;background:transparent")
+        self._hint.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.setAcceptDrops(True)
         sc.setWidget(body)
         mid.addWidget(sc, 1)
         # v0.7.76 영역 선택: 목록의 빈 곳이나 줄 본문에서 끌면 사각형이 보이고 걸친 줄이 선택됨(체크칸에서 끌기 = 체크 칠하기 그대로)
@@ -263,6 +271,7 @@ class AutoDialog(DragMove, QDialog):
         self._band_on = False
         self._anchor = self.clips[0]["idx"] if self.clips else None    # Shift 범위 선택의 기준 줄
         body.installEventFilter(self)
+        self._hint_sync()
         # 오른쪽 격자+값
         right = QVBoxLayout()
         right.setSpacing(10)
@@ -393,6 +402,119 @@ class AutoDialog(DragMove, QDialog):
         bw.setLayout(btmrow)
         root.addWidget(bw)
 
+    # ------------------------------------------------------------ v0.7.96 목록에 추가(드롭·우클릭) · 프로젝트 열기
+    def _add_row(self, c):
+        r = ClipRow(c["idx"], c["name"])
+        r.clicked.connect(self._on_row)
+        r.toggle_one.connect(lambda i: self._on_check(i, not self._inc_of(i)))
+        r.drag_press.connect(self._ds_press)
+        r.drag_move.connect(self._ds_move)
+        r.drag_end.connect(self._ds_end)
+        self._bl.insertWidget(len(self.rows), r)         # 맨 아래 늘림칸 앞
+        self.rows.append(r)
+
+    def _hint_sync(self):
+        h = getattr(self, "_hint", None)
+        if h is None:
+            return
+        h.setGeometry(self._body.rect())
+        h.setVisible(not self.clips)
+        h.raise_()
+
+    def _add_menu(self, gpos):
+        from PySide6.QtWidgets import QMenu
+        m = QMenu(self)
+        m.setStyleSheet(f"QMenu{{font-size:{MENU_PX}px}}QMenu::item{{padding:6px 22px}}"
+                        "QMenu::separator{height:1px;background:#444;margin:3px 8px}")
+        a_file = m.addAction("파일 추가…")
+        a_dir = m.addAction("폴더 추가…")
+        m.addSeparator()
+        a_proj = m.addAction("프로젝트 열기…")
+        a = m.exec(gpos)
+        if a is a_file:
+            self.add_paths(self.mw.pick_files(self))
+        elif a is a_dir:
+            files = self.mw.pick_folder(self)
+            if files == []:
+                self._status("이 폴더에 영상이 없습니다", None)
+                self.status.setStyleSheet("color:#e06c6c")
+            elif files:
+                self.add_paths(files)
+        elif a is a_proj:
+            from PySide6.QtWidgets import QFileDialog as _FD
+
+            from .ui_main import PROJ_FILTER
+            f, _ = _FD.getOpenFileName(self, "프로젝트 열기", self.state.settings.d.get("last_folder", ""), PROJ_FILTER)
+            if f:
+                self.open_project(f)
+
+    def dragEnterEvent(self, e):
+        if e.mimeData().hasUrls() and self._phase is None:
+            e.acceptProposedAction()
+
+    def dropEvent(self, e):
+        self.add_paths([u.toLocalFile() for u in e.mimeData().urls()])
+
+    def add_paths(self, paths):
+        """영상·폴더 → 목록에 추가. 프로젝트 파일(.json) → 목록에 넣지 않고 바로 편집 화면으로(덮어쓰기 방지)."""
+        if not paths or self._phase is not None:
+            return
+        from pathlib import Path
+
+        from .ui_main import find_videos
+        from .ui_side import VIDEO_EXT
+        vids, projs = [], []
+        for f in paths:
+            pth = Path(f)
+            if pth.is_dir():
+                vids += find_videos(pth)
+            elif pth.suffix.lower() in VIDEO_EXT:
+                vids.append(str(pth))
+            elif pth.name.lower().endswith(".json"):
+                projs.append(str(pth))
+        if not vids:
+            if projs:
+                self.open_project(projs[0])
+            return
+        self.state.add_files(vids)
+        want, have = set(vids), {c["idx"] for c in self.clips}
+        new = []
+        for i, s in enumerate(self.state.project.sources):
+            if s.path in want and i not in have:
+                if self.only is not None:
+                    self.only.add(i)
+                c = self._new_clip(i, s)
+                self.clips.append(c)
+                self._add_row(c)
+                new.append(i)
+        if not new:
+            return
+        if not self.selected:
+            self.selected, self._anchor = {new[0]}, new[0]
+        self._fit_size()
+        self._hint_sync()
+        self._refresh()
+
+    def open_project(self, f):
+        """프로젝트 파일 → 이 창을 닫고 그 프로젝트로 편집 화면(outcome='project')."""
+        mw = self.mw
+        if self.parent() is None:                        # 시작 창 흐름: 목록에 넣은 영상만 버림(저장할 편집 없음)
+            if self.clips:
+                from .ui_widgets import info_popup
+                if info_popup(self, "프로젝트 열기", "목록을 비우고 프로젝트를 엽니다",
+                              [("취소", "no", False, 80), ("열기", "ok", True, 80)]) != "ok":
+                    return
+            self.state.dirty = False
+        elif not mw._confirm_discard():
+            return
+        before = self.state.project
+        mw._load(f)
+        if self.state.project is before:                 # 불러오기 실패(경고는 _load 가 띄움)
+            return
+        self.outcome = "project"
+        self.accept()
+        mw.flash("프로젝트 열림")
+
     # ------------------------------------------------------------ 선택·적용
     def _targets(self):
         if self.selected:
@@ -417,6 +539,11 @@ class AutoDialog(DragMove, QDialog):
     def eventFilter(self, o, e):
         if o is getattr(self, "_body", None):
             t = e.type()
+            if t == QEvent.ContextMenu:                  # 목록 어디서나(줄 위 포함) 우클릭 = 추가 메뉴
+                self._add_menu(e.globalPos())
+                return True
+            if t == QEvent.Resize:
+                self._hint_sync()
             if t == QEvent.MouseButtonPress and e.button() == Qt.LeftButton:
                 self._band_start(e.globalPosition().toPoint(), e.modifiers())
                 return True                              # 창 끌어 옮기기로 넘어가지 않게

@@ -1,12 +1,13 @@
-"""시작 창: [AUTO] / [편집]. AUTO = 파일·폴더 고르기 → AUTO 창만 → [AUTO] = 본 편집 화면(v0.7.94 보정+렌더·자동 종료 삭제).
+"""시작 창: [AUTO] 하나(v0.7.96 [편집] 삭제). [AUTO] = 빈 AUTO 창 → 끌어다 놓기·우클릭으로 영상 추가 → [AUTO] = 본 편집 화면,
+프로젝트 파일을 놓거나 열면 바로 편집 화면(v0.7.94 보정+렌더·자동 종료 삭제).
 v0.7.73: 윈도우 제목 표시줄 없앰 → 위쪽 정사각형 그림(assets/start.png, 400×400) + 그 위 왼쪽 위 'MOSCO 버전',
 오른쪽 위 ✕(= 종료), 빈 곳을 끌어 옮김. v0.7.74: 1px 테두리 없앰(사용자 요청). 그림이 없으면 회색 자리.
 v0.7.92: 새 그림(왼쪽 하늘·오른쪽 어둠) + 제목 뒤 하늘 쪽(왼쪽 절반)만 위 90px 파랑 그라데이션(흰 글자 잘 보이게)."""
 from __future__ import annotations
 
-from PySide6.QtCore import QPoint, Qt
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
-from PySide6.QtWidgets import QApplication, QLabel, QMenu, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from . import __version__, paths
 from .ui_widgets import QSS, DragMove, btn
@@ -79,17 +80,14 @@ class StartWindow(DragMove, QWidget):
         self.b_close.move(IMG - 26 - 10, 10)
         self.b_close.clicked.connect(self.close)
 
-        # 아래: 버튼(예전과 같음)
+        # 아래: [AUTO] 하나(v0.7.96)
         lay.addStretch(1)
-        self.b_auto = btn("AUTO", "파일·폴더를 골라 한 번에 보정", size=(160, 48), red=True, on_click=self.auto)
+        self.b_auto = btn("AUTO", "AUTO 창 열기", size=(160, 48), red=True, on_click=self.auto)
         f = self.b_auto.font()
         f.setPointSizeF(f.pointSizeF() * 1.3)
         f.setBold(True)
         self.b_auto.setFont(f)
-        self.b_edit = btn("편집", "편집 화면 열기", size=(160, 32), on_click=self.edit)
         lay.addWidget(self.b_auto, 0, Qt.AlignHCenter)
-        lay.addSpacing(12)
-        lay.addWidget(self.b_edit, 0, Qt.AlignHCenter)
         lay.addStretch(1)
         self._going = False
 
@@ -106,29 +104,16 @@ class StartWindow(DragMove, QWidget):
 
     # ------------------------------------------------------------ AUTO
     def auto(self):
-        m = QMenu(self)
-        a_file = m.addAction("파일…")
-        a_dir = m.addAction("폴더…")
-        a = m.exec(self.b_auto.mapToGlobal(QPoint(0, self.b_auto.height())))
-        if a is a_file:
-            files = self.mw.pick_files(self)
-        elif a is a_dir:
-            files = self.mw.pick_folder(self)
-            if files == []:
-                self.mw.flash("이 폴더에 영상이 없습니다")
-        else:
-            return
-        if files:
-            self.run_auto(files)
+        self.run_auto()                        # v0.7.96 파일·폴더를 먼저 묻지 않음 → 빈 AUTO 창
 
-    def run_auto(self, files):
-        """고른 파일을 목록에 넣고 그 파일만 AUTO 창으로. [AUTO] → 본 편집 화면, 취소 → 시작 창."""
+    def run_auto(self, files=None):
+        """AUTO 창(files 가 있으면 그 파일만, 없으면 빈 목록). [AUTO]·프로젝트 열기 → 본 편집 화면, 취소 → 시작 창."""
         st = self.mw.state
-        st.add_files(files)
-        want = set(files)
-        idxs = [i for i, s in enumerate(st.project.sources) if s.path in want]
-        if not idxs:
-            return
+        idxs = []
+        if files:
+            st.add_files(files)
+            want = set(files)
+            idxs = [i for i, s in enumerate(st.project.sources) if s.path in want]
         from .ui_auto import AutoDialog
         dlg = AutoDialog(None, st, only=idxs, mw=self.mw)
         scr = QApplication.primaryScreen()
@@ -136,10 +121,13 @@ class StartWindow(DragMove, QWidget):
             dlg.move(scr.availableGeometry().center() - dlg.rect().center())
         self.hide()
         dlg.exec()
-        if dlg.outcome == "each":
+        if dlg.outcome in ("each", "project"):
             self.edit()
             return
-        st.dirty = False                       # 시작 창 흐름의 샘플·AE 는 저장할 편집이 없음
+        # 취소: 넣었던 영상은 버림(다음 AUTO 창은 다시 빈 목록, 편집 화면에 남지 않게). 샘플·AE 는 저장할 편집 없음
+        from .project import Project
+        st.set_project(Project())
+        st.dirty = False
         self.show()
 
     def exit_app(self):

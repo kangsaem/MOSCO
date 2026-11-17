@@ -1255,10 +1255,7 @@ class MainWindow(QMainWindow):
         return j
 
     # ------------------------------------------------------------ AUTO
-    def open_auto(self):
-        if not self.state.project.sources:
-            self.flash("먼저 영상을 추가하세요")
-            return
+    def open_auto(self):                        # v0.7.96 소스가 없어도 열림(AUTO 창에서 끌어다 놓기·우클릭 추가)
         from .ui_auto import AutoDialog
         dlg = AutoDialog(self, self.state)
         dlg.move(self.geometry().center() - dlg.rect().center())
