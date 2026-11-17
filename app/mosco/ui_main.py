@@ -1264,23 +1264,6 @@ class MainWindow(QMainWindow):
         dlg.move(self.geometry().center() - dlg.rect().center())
         dlg.exec()
 
-    def render_auto(self, idxs, out_dir, name, prores=None):
-        """AUTO 보정+렌더: 렌더 목록에 넣고 바로 시작. 만든 RenderItem 목록을 돌려줌(AUTO 창이 진행률 표시)."""
-        made = []
-        rs = dict(self.state.settings.render)
-        if name:
-            rs["name"] = name
-        for idx in idxs:
-            if 0 <= idx < len(self.state.project.sources):
-                s = self.state.project.sources[idx]
-                it = RenderItem(s, dict(rs, prores=ff.prores_kind((prores or {}).get(idx, rs.get("prores")))), out_dir)
-                self.rpanel.add(it)
-                self._start_render(it)
-                made.append(it)
-        if idxs:
-            self.flash(f"AUTO 적용 완료 — {len(idxs)}개 렌더 시작")
-        return made
-
     def rerender(self, rows):
         for r in rows:
             it = self.rpanel.items[r]
@@ -1405,8 +1388,6 @@ class MainWindow(QMainWindow):
         if any(it.state in ("진행", "대기") for it in self.rpanel.items):
             return
         self._render_batch = False
-        if getattr(self, "_suppress_render_popup", False):
-            return                                  # 시작창 AUTO 흐름 = AUTO 창이 직접 완료 팝업을 띄움
         done = sum(it.state == "완료" for it in self.rpanel.items)
         err = sum(it.state == "오류" for it in self.rpanel.items)
         cancel = sum(it.state == "취소" for it in self.rpanel.items)

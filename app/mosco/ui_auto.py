@@ -1,14 +1,13 @@
 """AUTO 창·샘플 창 (DTME AUTO_UI.md 틀). 분류·값은 MOSCO 것.
 
-AUTO: 체크한 클립을 장면 인식(autodetect) → 속성 격자로 고치고 → 적용(바로 렌더 / 개별 보정) 또는 샘플.
+AUTO: 체크한 클립을 장면 인식(autodetect) → 속성 격자로 고치고 → 적용([AUTO] = 분석까지 끝내고 편집 화면 / [AE] = .jsx) 또는 샘플. v0.7.94 바로 렌더([보정+렌더]) 삭제.
 """
 from __future__ import annotations
 
 import copy
-import time
 
 from PySide6.QtCore import QEvent, QPoint, QRect, QSize, Qt, Signal
-from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel,
+from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel,
                                QLineEdit, QPushButton, QScrollArea, QStyle, QVBoxLayout, QWidget)
 
 from . import autodetect as ad
@@ -178,7 +177,7 @@ class ClipRow(QFrame):
 
 class AutoDialog(DragMove, QDialog):
     def __init__(self, parent, state, only=None, mw=None):
-        """only = 이 클립 번호만 목록에(시작 창 AUTO = 방금 고른 파일만). outcome = 'each'·'render'·'' (닫힌 이유).
+        """only = 이 클립 번호만 목록에(시작 창 AUTO = 방금 고른 파일만). outcome = 'each'·'' (닫힌 이유).
         mw = 본 창(parent 가 None 일 때 — 시작 창 흐름: 작업표시줄에 따로 보이게 부모 없이 띄움)."""
         super().__init__(parent)
         self.mw = mw or parent
@@ -198,7 +197,7 @@ class AutoDialog(DragMove, QDialog):
         self.strength = state.settings.d.get("auto_strength", "mid")
         self.keep_existing = False          # 항상 '기존 보정 무시 · 키프레임 자동'으로 시작
         self.keep_keys = False
-        self.after = state.settings.d.get("auto_after", "render")
+        self.after = "each"                 # v0.7.94 보정+렌더 없음 → each(편집 화면) / ae
         self.clips = []
         for i, s in enumerate(state.project.sources):
             if only is not None and i not in only:
@@ -218,9 +217,8 @@ class AutoDialog(DragMove, QDialog):
         self._ds_press_idx = None
         self._jobs = {}
         self._closed = False
-        self._renders = []            # 보정+렌더 중인 RenderItem
         self._phase = None            # None · measure · analyze · sample · render
-        self._an = []                 # [보정+편집] 분석·트랙 대상 [(clip, source, 트랙 요청함)]
+        self._an = []                 # [AUTO] 분석·트랙 대상 [(clip, source, 트랙 요청함)]
         self._build()
         self._refresh()
         # 창을 열 때는 아무 작업도 안 함(v0.7.3) — 버튼을 누르면 측정부터 시작.
@@ -387,21 +385,19 @@ class AutoDialog(DragMove, QDialog):
         self.t_bskip.toggled2.connect(lambda v: self.state.set_bottom_skip(0.25 if v else 0.0))
         btmrow.addWidget(self.t_bskip)
         btmrow.addSpacing(12)
-        # 오른쪽 그룹에 같은 간격으로: [취소][AE][샘플][보정+편집][보정+렌더]. AE 는 취소와 같은 크기(v0.7.18)
+        # 오른쪽 그룹에 같은 간격·같은 크기로: [취소][샘플][AE][AUTO]
+        # v0.7.94 [보정+렌더] 삭제(렌더는 편집 화면 [렌더]에서), [보정+편집] → [AUTO](빨강), 샘플을 AE 왼쪽으로
         self.b_cancel = _b("취소", w=88, h=32, on=self._cancel)
         btmrow.addWidget(self.b_cancel)
-        self.b_ae = _b("AE", w=88, h=32, style=RED, tip="적용 + 분석 후 각 클립의 타원·간판 트랙을 에펙 마스크 스크립트(.jsx)로 저장\n"
-                       "(렌더 안 함 · 저장폴더 선택)", on=lambda: self._go("ae"))
-        btmrow.addWidget(self.b_ae)
         self.b_sample = _b("샘플", w=88, h=32, style=ORANGE, tip="렌더 없이 샘플 PNG 만 (마지막 샘플 설정)",
                            on=lambda: self._go("sample"))
         btmrow.addWidget(self.b_sample)
-        self.b_correct = _b("보정+편집", w=96, h=32, style=GREY,
+        self.b_ae = _b("AE", w=88, h=32, style=RED, tip="적용 + 분석 후 각 클립의 타원·간판 트랙을 에펙 마스크 스크립트(.jsx)로 저장\n"
+                       "(렌더 안 함 · 저장폴더 선택)", on=lambda: self._go("ae"))
+        btmrow.addWidget(self.b_ae)
+        self.b_correct = _b("AUTO", w=88, h=32, style=RED,
                             tip="적용 + 타원 분석까지 끝내고 편집 화면으로", on=lambda: self._go("each"))
-        self.b_render = _b("보정+렌더", w=110, h=32, style=RED,
-                           tip="적용하고 렌더 — 끝나면 창이 닫힘", on=lambda: self._go("render"))
         btmrow.addWidget(self.b_correct)
-        btmrow.addWidget(self.b_render)
         bw = QWidget()
         bw.setLayout(btmrow)
         root.addWidget(bw)
@@ -603,7 +599,7 @@ class AutoDialog(DragMove, QDialog):
             m = c["measured"]
             lbl = ("얼굴+간판" if c.get("both") else ad.LABEL.get(c["mode"], c["mode"]))
             sub = ""
-            kind = c.get("kind", "render" if self._renders else "measure")
+            kind = c.get("kind", "measure")
             if c["prog"] is not None:
                 # 진행 중: 단계 글자 + 퍼센트(샘플은 c['sub'] 에 'k/n')
                 sub = (c.get("sub") if kind == "sample" else None) or f"{PROG_TXT[kind]} {int(c['prog'] * 100)}%"
@@ -809,18 +805,11 @@ class AutoDialog(DragMove, QDialog):
         self.state.settings.save()
 
     def _busy(self, on):
-        for b in (self.b_sample, self.b_correct, self.b_render, self.b_ae):
+        for b in (self.b_sample, self.b_correct, self.b_ae):
             b.setEnabled(not on)
 
     def _cancel(self):
-        """취소: 진행 중이면 그 작업만 멈추고 창은 그대로(측정·분석·렌더), 아니면 창 닫기."""
-        live = [it for it in self._renders if it.state in ("대기", "진행")]
-        if live:
-            for it in live:
-                if it.job is not None:
-                    it.job.cancel.set()
-            self.status.setText("렌더 취소 중…")
-            return
+        """취소: 진행 중이면 그 작업만 멈추고 창은 그대로(측정·분석·AE), 아니면 창 닫기."""
         if self._phase in ("measure", "analyze", "ae"):
             self._stop_phase()
             self._status("취소됨", None)
@@ -847,14 +836,13 @@ class AutoDialog(DragMove, QDialog):
         self._refresh()
 
     def reject(self):
-        if any(it.state in ("대기", "진행") for it in self._renders) or self._phase in ("measure", "analyze", "ae"):
+        if self._phase in ("measure", "analyze", "ae"):
             self._cancel()                        # 진행 중 Esc = 그 작업 취소(창은 유지)
             return
         super().reject()
 
     def _go(self, after):
-        """버튼 공통: 측정(블러만) → 보정+편집(each) / 보정+렌더(render) / 샘플(sample).
-        렌더·샘플은 저장폴더가 필요하다."""
+        """버튼 공통: 측정(블러만) → AUTO(each) / AE(ae) / 샘플(sample). 샘플만 저장폴더가 필요하다."""
         if after == "ae":
             for c in self.clips:              # AE = 소스 목록의 모든 클립(체크 무관), 각 원본 폴더 옆에 저장
                 c["inc"] = True
@@ -862,7 +850,7 @@ class AutoDialog(DragMove, QDialog):
         if self._phase is not None or not any(c["inc"] for c in self.clips):
             return
         out_dir = None
-        if after in ("render", "sample"):     # AE 는 소스 옆에 저장 → 저장폴더 안 물음
+        if after == "sample":                 # AE 는 소스 옆에 저장 → 저장폴더 안 물음
             out_dir = self.mw._out_dir()
             if not out_dir:
                 return
@@ -893,22 +881,7 @@ class AutoDialog(DragMove, QDialog):
     def _apply(self, out_dir):
         assigns = self._assignments()
         self.state.apply_auto(assigns, keep_keys=self.keep_keys)
-        mw = self.mw
-        idxs = [c["idx"] for c in self.clips if c["inc"]]
-        if self.after == "render":
-            # 렌더: 창을 띄운 채 진행률 표시 → 다 끝나면 완료 팝업 → 종료(오류가 있으면 남아서 알림)
-            self._phase = "render"
-            self._render_t0 = time.monotonic()        # 경과시간용
-            self._render_out = out_dir                 # [폴더 열기]용
-            mw._suppress_render_popup = True           # MainWindow 중복 팝업 억제(이 창이 직접 띄움)
-            # 클립마다 고른 출력(422/LT)을 실제 렌더에 반영(예전: 표시만 바뀌고 렌더는 ⚙ 설정값으로 나갔음)
-            self._renders = mw.render_auto(idxs, out_dir, self.name, {c["idx"]: c["outp"] for c in self.clips})
-            from PySide6.QtCore import QTimer
-            self._rt = QTimer(self, interval=250, timeout=self._render_tick)
-            self._rt.start()
-            self._render_tick()
-            return
-        # 보정+편집 / AE: 이 창에서 타원 분석 + 트랙 계산까지 끝냄. each = 편집 화면, ae = .jsx 저장
+        # AUTO / AE: 이 창에서 타원 분석 + 트랙 계산까지 끝냄. each = 편집 화면, ae = .jsx 저장
         self._ae_mode = (self.after == "ae")
         self._phase = "analyze"
         srcs = self.state.project.sources
@@ -1036,7 +1009,7 @@ class AutoDialog(DragMove, QDialog):
         self.mw.flash(f"AE 보내기 완료 — {n}개 .jsx")
 
     def _cancel_analysis(self):
-        """[보정+편집] 분석 중 취소·창 닫기: 돌고 있는 분석 작업 멈춤."""
+        """[AUTO] 분석 중 취소·창 닫기: 돌고 있는 분석 작업 멈춤."""
         for c, s, _ in self._an:
             a = self.state.an.get((s.path, s.mode))
             if a and a.get("state") == "run" and a.get("job") is not None:
@@ -1048,85 +1021,6 @@ class AutoDialog(DragMove, QDialog):
                 self.state.an.pop((s.path, s.mode), None)
                 self.state.analysis_changed.emit(s.path)
         self._an = []
-
-    def _render_tick(self):
-        if not self._renders:
-            self._rt.stop()
-            self._phase = None
-            self._busy(False)
-            return
-        by_path = {}
-        for it in self._renders:
-            by_path[it.src.path] = it
-        for c in self.clips:
-            it = by_path.get(self.state.project.sources[c["idx"]].path) if c["idx"] < len(self.state.project.sources) else None
-            if it is not None:
-                c["kind"] = "render"
-                c["prog"] = it.p if it.state in ("대기", "진행") else None
-                an = self.state.an.get((it.src.path, it.src.mode))
-                if c["prog"] is not None and an and an.get("state") == "run" and (an.get("p") or 0) > 0:
-                    c["kind"], c["prog"] = "analyze", an["p"]     # 렌더 차례 전 미리 분석 중 = 청록
-        n = len(self._renders)
-        frac = sum(1.0 if it.state in ("완료", "오류", "취소") else it.p for it in self._renders) / n
-        self._set_bar(frac, "render")
-        done = sum(1 for it in self._renders if it.state == "완료")
-        run = [(i, it.p) for i, it in enumerate(self._renders) if it.state == "진행"]
-        self._status(f"렌더 {done}/{n}" + (f" ({run[0][0] + 1}번 {int(run[0][1] * 100)}%)" if run else ""), "render")
-        self._refresh()
-        if all(it.state in ("완료", "오류", "취소") for it in self._renders):
-            self._rt.stop()
-            bad = [it for it in self._renders if it.state != "완료"]
-            if not bad:
-                self._done_popup(done, n)          # 종료 전 완료 팝업([폴더 열기]/[확인])
-                self.outcome = "render"
-                self.accept()
-                return
-            err = sum(1 for it in bad if it.state == "오류")
-            self.status.setText(f"렌더 {done}/{n} 완료 · " + (f"오류 {err}" if err else "취소됨"))
-            self.status.setStyleSheet("color:#e06c6c" if err else "color:#c8c8c8")
-            self._phase = None
-            self.pbar.set(0.0)
-            self._busy(False)
-            self._renders = []
-            for c in self.clips:
-                c["prog"] = None
-            self._refresh()
-
-    def _elapsed(self):
-        secs = int(time.monotonic() - getattr(self, "_render_t0", time.monotonic()))
-        if secs >= 3600:
-            return f"{secs // 3600}시간 {(secs % 3600) // 60}분 {secs % 60}초"
-        return f"{secs // 60}분 {secs % 60}초"
-
-    def _done_popup(self, done, n):
-        """보정+렌더가 전부 성공한 뒤, 종료 직전 결과 팝업. [폴더 열기]·[확인] 모두 누른 뒤 창이 닫히며 종료."""
-        msg = f"렌더 완료 {done}개 · 실패 {n - done}개 · {self._elapsed()}"
-        QApplication.alert(self)                       # 창이 뒤에 있으면 작업표시줄 깜빡
-        if QApplication.platformName() == "offscreen":
-            return                                     # 테스트/헤드리스: 모달 생략
-        from .ui_widgets import info_popup
-        if info_popup(self, "렌더 완료", msg,
-                      [("폴더 열기", "open", False, 92), ("확인", "ok", True, 80)]) == "open":
-            self._open_out()
-
-    def _open_out(self):
-        out = getattr(self, "_render_out", "")
-        if not out:
-            return
-        import os
-        import sys
-        try:
-            if sys.platform == "win32":
-                os.startfile(out)                      # noqa: S606  (윈도우 탐색기)
-            else:
-                from PySide6.QtCore import QUrl
-                from PySide6.QtGui import QDesktopServices
-                QDesktopServices.openUrl(QUrl.fromLocalFile(out))
-        except Exception:
-            pass
-
-    def _set_bar(self, frac, kind="render"):
-        self.pbar.set(frac, kind)
 
     def _sample(self, out_dir):
         """샘플: (측정 뒤) 샘플 설정 창 → 만드는 동안 이 창 목록·막대에 호박색 진행 → 끝나면 AUTO 창으로 돌아와 대기."""

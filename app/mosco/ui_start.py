@@ -1,4 +1,4 @@
-"""시작 창: [AUTO] / [편집]. AUTO = 파일·폴더 고르기 → AUTO 창만 → 보정+편집 = 본 편집 화면 / 보정+렌더 = 끝나면 종료.
+"""시작 창: [AUTO] / [편집]. AUTO = 파일·폴더 고르기 → AUTO 창만 → [AUTO] = 본 편집 화면(v0.7.94 보정+렌더·자동 종료 삭제).
 v0.7.73: 윈도우 제목 표시줄 없앰 → 위쪽 정사각형 그림(assets/start.png, 400×400) + 그 위 왼쪽 위 'MOSCO 버전',
 오른쪽 위 ✕(= 종료), 빈 곳을 끌어 옮김. v0.7.74: 1px 테두리 없앰(사용자 요청). 그림이 없으면 회색 자리.
 v0.7.92: 새 그림(왼쪽 하늘·오른쪽 어둠) + 제목 뒤 하늘 쪽(왼쪽 절반)만 위 90px 파랑 그라데이션(흰 글자 잘 보이게)."""
@@ -122,7 +122,7 @@ class StartWindow(DragMove, QWidget):
             self.run_auto(files)
 
     def run_auto(self, files):
-        """고른 파일을 목록에 넣고 그 파일만 AUTO 창으로. 보정+편집 → 본 편집 화면, 보정+렌더 → 종료, 취소 → 시작 창."""
+        """고른 파일을 목록에 넣고 그 파일만 AUTO 창으로. [AUTO] → 본 편집 화면, 취소 → 시작 창."""
         st = self.mw.state
         st.add_files(files)
         want = set(files)
@@ -139,10 +139,7 @@ class StartWindow(DragMove, QWidget):
         if dlg.outcome == "each":
             self.edit()
             return
-        st.dirty = False                       # 시작 창 흐름의 렌더·샘플은 저장할 편집이 없음
-        if dlg.outcome == "render":            # 보정+렌더가 다 끝나면 프로그램 종료
-            self.exit_app()
-            return
+        st.dirty = False                       # 시작 창 흐름의 샘플·AE 는 저장할 편집이 없음
         self.show()
 
     def exit_app(self):

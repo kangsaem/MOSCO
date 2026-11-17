@@ -124,7 +124,10 @@ def main():
     # v0.7.3: 창을 열 때는 아무 작업도 안 함(버튼을 눌러야 측정)
     pump(app, 1)
     assert not dlg._jobs and all(c["prog"] is None and c["measured"] is None for c in dlg.clips), "열자마자 측정함"
-    assert dlg.b_correct.text() == "보정+편집"
+    assert dlg.b_correct.text() == "AUTO" and not hasattr(dlg, "b_render")    # v0.7.94 [보정+렌더] 삭제
+    _row = dlg.b_ae.parentWidget().layout()
+    _order = [_row.indexOf(b) for b in (dlg.b_cancel, dlg.b_sample, dlg.b_ae, dlg.b_correct)]
+    assert _order == sorted(_order), f"버튼 순서 = [취소][샘플][AE][AUTO] 여야 함: {_order}"
     for c in dlg.clips:                    # 측정은 블러만 → 블러로 바꿔서 측정
         c["mode"] = "blur"
     dlg._phase = "measure"
@@ -159,7 +162,7 @@ def main():
     print("apply OK")
     dlg.reject()
 
-    # AUTO [보정+편집] → 이 창에서 측정 → 분석 → 트랙까지 끝내고 닫힘(편집 화면에서 다시 안 기다림)
+    # AUTO [AUTO] → 이 창에서 측정 → 분석 → 트랙까지 끝내고 닫힘(편집 화면에서 다시 안 기다림)
     w.state.settings.render["out_dir"] = str(work)
     import shutil as _sh
     from mosco import paths
@@ -171,7 +174,7 @@ def main():
     seen = set()
     dlg2._go("each")
     assert pump(app, 600, lambda: (seen.add(dlg2._phase), dlg2.outcome == "each")[1]), \
-        f"보정+편집이 끝나지 않음: {dlg2.status.text()}"
+        f"[AUTO]가 끝나지 않음: {dlg2.status.text()}"
     assert "analyze" in seen, seen
     for s in w.state.project.sources:
         a = w.state.analysis(s)
@@ -210,7 +213,7 @@ def main():
     pngs = sorted(f for f in os.listdir(work) if f.endswith(".png"))
     print("sample OK:", pngs[:3], "...", len(pngs), "장")
 
-    # 시작 창 흐름: [AUTO] → (파일 고름) → AUTO 창만 → 샘플 설정 창 → 다시 AUTO 창 → 보정+렌더 → 끝나면 종료
+    # 시작 창 흐름: [AUTO] → (파일 고름) → AUTO 창만 → 샘플 설정 창 → 다시 AUTO 창 → 취소 → 시작 창(v0.7.94 보정+렌더 삭제)
     from PySide6.QtCore import QTimer
     from mosco.ui_start import StartWindow
     app.setQuitOnLastWindowClosed(False)
@@ -244,17 +247,14 @@ def main():
         d._go("sample")                      # (측정 없음=뷰티) 샘플 창 exec → 끝나면 AUTO 창으로 돌아옴
         log["sample"] = len(set(os.listdir(work)) - before)
         log["open_after_sample"] = d.isVisible()
-        d._go("render")
+        d.reject()                           # 취소 → 시작 창으로
     QTimer.singleShot(100, drive_render)
     sw.run_auto([vid2])
     assert log.get("clips") == ["synth_copy"], log
     assert log["keep"] == (False, False), log           # 기본 = 기존 보정 무시 · 키프레임 자동
     assert log["sample"] >= 6 and log["open_after_sample"], log
-    outs = [f for f in os.listdir(work) if f.startswith("synth_copy_") and f.endswith(".mov")
-            and "BLUR4444" not in f]      # v0.7.61 "_MOSCO" 없음 → 원본과 같은 폴더면 _2 (원본을 덮어쓰지 않음)
-    assert outs, "보정+렌더 출력 없음"
-    assert log.get("exit"), "보정+렌더가 끝나면 종료해야 함"
-    print("start->auto->sample->render->exit OK", outs)
+    assert sw.isVisible() and not log.get("exit"), "AUTO 창 취소 → 시작 창으로 돌아와야 함(종료 아님)"
+    print("start->auto->sample->cancel->start OK")
 
     def drive_each():
         d = QApplication.activeModalWidget()
@@ -264,9 +264,9 @@ def main():
         d._go("each")
     QTimer.singleShot(100, drive_each)
     sw.run_auto([vid2])
-    assert w.isVisible() and not sw.isVisible(), "보정+편집 → 본 편집 화면"
+    assert w.isVisible() and not sw.isVisible(), "[AUTO] → 본 편집 화면"
     s2 = next(s for s in w.state.project.sources if s.path == vid2)
-    assert w.state.has_track(s2), "보정+편집 뒤 편집 화면에 트랙이 준비돼 있어야 함"
+    assert w.state.has_track(s2), "[AUTO] 뒤 편집 화면에 트랙이 준비돼 있어야 함"
     print("start->auto->each OK")
 
     w.state.dirty = False
