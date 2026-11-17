@@ -103,6 +103,7 @@ class SourceList(QListWidget):
     files_dropped = Signal(list)
     queue_requested = Signal()      # v0.7.32 우클릭 → 선택 소스를 렌더 대기목록으로
     relink_requested = Signal()     # v0.7.56 우클릭 → 없는 원본을 폴더에서 다시 연결
+    delete_requested = Signal()     # v0.7.97 Del(창 단축키가 못 받는 경우 대비)
 
     def __init__(self, state):
         super().__init__()
@@ -119,6 +120,12 @@ class SourceList(QListWidget):
         state.analysis_changed.connect(lambda *_: self.viewport().update())
         state.busy_changed.connect(lambda *_: self.viewport().update())
         state.current_changed.connect(self._cur)
+
+    def keyPressEvent(self, e):
+        if e.key() == Qt.Key_Delete and not e.modifiers():
+            self.delete_requested.emit()
+            return
+        super().keyPressEvent(e)
 
     def refresh(self):
         n = len(self.state.project.sources)

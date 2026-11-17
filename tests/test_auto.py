@@ -286,6 +286,16 @@ def main():
         log96["empty"] = (len(d.clips), d._hint.isVisible())
         d.add_paths([vid, str(work)])                    # 영상 + 폴더(폴더 안 영상 포함)
         log96["added"] = (len(d.clips), d._hint.isVisible(), len(d.rows))
+        # v0.7.97 Del = 고른 클립 바로 삭제(묻지 않음) · 시작 창 흐름이면 프로젝트에서도
+        from PySide6.QtTest import QTest
+        n_src, n_clip = len(w.state.project.sources), len(d.clips)
+        first = d.clips[0]["idx"]
+        d._on_row(first, Qt.NoModifier)
+        d.setFocus()
+        QTest.keyClick(d, Qt.Key_Delete)
+        log96["del"] = (n_clip - len(d.clips), n_src - len(w.state.project.sources), len(d.rows) == len(d.clips),
+                        all(0 <= c["idx"] < len(w.state.project.sources) and
+                            w.state.project.sources[c["idx"]].path == c["path"] for c in d.clips))
         d.add_paths([str(proj)])                         # 목록에 영상이 있으면 묻는 창 → 오프스크린에선 바로 확인 못 함
         if d.isVisible():                                # (묻는 창이 막으면) 목록 비우고 다시
             d.clips.clear()
@@ -300,6 +310,7 @@ def main():
     assert log96["empty"] == (0, True), log96
     assert log96["added"][0] >= 2 and not log96["added"][1] and log96["added"][2] == log96["added"][0], log96
     assert log96["outcome"] == "project", log96
+    assert log96["del"] == (1, 1, True, True), log96
     assert w.isVisible() and not sw2.isVisible(), "프로젝트 열기 → 편집 화면"
     assert w.state.project.file and Path(w.state.project.file).name == proj.name, w.state.project.file
     print("start->empty auto->drop->project OK", log96)

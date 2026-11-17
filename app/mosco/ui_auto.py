@@ -217,7 +217,7 @@ class AutoDialog(DragMove, QDialog):
         state.changed.connect(self._on_state_changed)
 
     def _new_clip(self, i, s):
-        return {"idx": i, "name": s.name, "inc": True, "mode": s.mode if s.mode != "sign" else "sign",
+        return {"idx": i, "path": s.path, "name": s.name, "inc": True, "mode": s.mode if s.mode != "sign" else "sign",
                 "both": bool(getattr(s, "both", False)), "measured": None, "prog": None,
                 "c": s.custom,
                 "strength": self.strength}      # v0.7.77 강도도 클립마다(작업처럼). 초기 = 저장된 기본값
@@ -259,6 +259,7 @@ class AutoDialog(DragMove, QDialog):
         self._hint.setStyleSheet(f"color:#6f6f6f;font-size:{MENU_PX}px;background:transparent")
         self._hint.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self.setAcceptDrops(True)
+        self.setFocusPolicy(Qt.ClickFocus)               # v0.7.97 Del 받기
         sc.setWidget(body)
         mid.addWidget(sc, 1)
         # v0.7.76 영역 선택: 목록의 빈 곳이나 줄 본문에서 끌면 사각형이 보이고 걸친 줄이 선택됨(체크칸에서 끌기 = 체크 칠하기 그대로)
@@ -413,6 +414,44 @@ class AutoDialog(DragMove, QDialog):
         self._bl.insertWidget(len(self.rows), r)         # 맨 아래 늘림칸 앞
         self.rows.append(r)
 
+    def keyPressEvent(self, e):
+        if e.key() == Qt.Key_Delete and self._phase is None and self.selected:   # v0.7.97 Del = 고른 클립 바로 삭제
+            self.remove_clips(set(self.selected))
+            return
+        super().keyPressEvent(e)
+
+    def remove_clips(self, idxs):
+        """목록에서 빼기(묻지 않음). 시작 창 흐름 = 프로젝트에서도 뺌(넣은 것뿐이라), 편집 화면에서 연 창 = 이번 AUTO 대상에서만 뺌."""
+        gone = [c for c in self.clips if c["idx"] in idxs]
+        if not gone:
+            return
+        order = [c["idx"] for c in self.clips]
+        nxt = next((i for i in order[order.index(gone[-1]["idx"]) + 1:] if i not in idxs), None)
+        if nxt is None:
+            nxt = next((i for i in reversed(order[:order.index(gone[0]["idx"])]) if i not in idxs), None)
+        keep_sel = nxt
+        self.clips = [c for c in self.clips if c["idx"] not in idxs]
+        if self.parent() is None:
+            self.state.remove(sorted(idxs))
+            where = {s.path: i for i, s in enumerate(self.state.project.sources)}
+            nxt_path = next((c["path"] for c in self.clips if c["idx"] == keep_sel), None)
+            for c in self.clips:
+                c["idx"] = where.get(c["path"], c["idx"])
+            if self.only is not None:
+                self.only = {c["idx"] for c in self.clips}
+            keep_sel = where.get(nxt_path) if nxt_path else None
+        for r in self.rows:                              # 줄 다시 만들기(번호가 바뀌었을 수 있음)
+            self._bl.removeWidget(r)
+            r.deleteLater()
+        self.rows = []
+        for c in self.clips:
+            self._add_row(c)
+        self.selected = {keep_sel} if keep_sel is not None else set()
+        self._anchor = keep_sel
+        self._fit_size()
+        self._hint_sync()
+        self._refresh()
+
     def _hint_sync(self):
         h = getattr(self, "_hint", None)
         if h is None:
@@ -556,6 +595,7 @@ class AutoDialog(DragMove, QDialog):
         return super().eventFilter(o, e)
 
     def _band_start(self, gpt, mods):
+        self.setFocus()
         self._band_org = self._body.mapFromGlobal(gpt)
         self._band_base = set(self.selected) if mods & (Qt.ControlModifier | Qt.ShiftModifier) else set()
         self._band_on = False
@@ -614,6 +654,7 @@ class AutoDialog(DragMove, QDialog):
         return None
 
     def _ds_press(self, idx):
+        self.setFocus()                                  # v0.7.97 목록을 누르면 Del 이 이 창으로(이름 칸에 머물지 않게)
         self._ds_press_idx = idx
         self._ds_target = None
         r = next((x for x in self.rows if x.idx == idx), None)
