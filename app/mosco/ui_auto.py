@@ -17,7 +17,7 @@ from .project import out_stem
 
 # 버튼 색 이름 — 모양은 ui_widgets.QSS(DTME buttons.qss) 한 곳
 RED, ORANGE, GREY = "red", "orange", "light"
-AUTO_LW = 40               # AUTO 창 이름칸 폭(작업·강도·출력·이름 = 두 글자)
+AUTO_LW = 40               # AUTO 창 이름칸 폭(작업·강도·이름 = 두 글자)
 LIST_MAX = 20              # 클립 목록 최대 표시 줄(넘으면 스크롤)
 CLIP_ROW = 34              # ClipRow 높이 30 + 간격 4
 LEFT_PAD = AUTO_LW + 5     # _seg 이름칸 폭 + 간격 = [약|중|강] 첫 버튼 왼쪽 끝
@@ -110,15 +110,12 @@ class ClipRow(QFrame):
         self.sub = QLabel("")                 # 측정 결과(작게)
         self.sub.setStyleSheet("color:#8a9bb0;font-size:11px")
         lay.addWidget(self.sub)
-        self.out = QLabel("HQ")               # 출력 칩(오른쪽)
-        self.out.setStyleSheet("background:#3a3a3a;border-radius:2px;padding:1px 7px;font-size:10px;color:#cfcfcf")
-        lay.addWidget(self.out)
         self.sel = False
         self.prog = None
         self.kind = "measure"         # 진행 단계(색) — ui_widgets.PROG
         self._paint()
 
-    def set_state(self, included, sel, c, preset, sub, out, prog, detected_auto, kind="measure"):
+    def set_state(self, included, sel, c, preset, sub, prog, detected_auto, kind="measure"):
         self.sel = sel
         self.prog = prog
         self.kind = kind
@@ -128,7 +125,6 @@ class ClipRow(QFrame):
         self.tag.setText((("C · " if c else "") + preset) if preset else ("C" if c else ""))
         self.sub.setStyleSheet("font-size:11px;color:%s" % (PROG[kind][1] if prog is not None else "#8a9bb0"))
         self.sub.setText(sub)                 # 글자는 스타일 다음에(먼저 넣으면 폭이 옛 글꼴로 잡혀 잘림)
-        self.out.setText(out)
         self.name.setStyleSheet("font-weight:700;color:%s" % ("#eaeaea" if included else "#777"))
         self._paint()
 
@@ -204,7 +200,7 @@ class AutoDialog(DragMove, QDialog):
                 continue
             self.clips.append({"idx": i, "name": s.name, "inc": True, "mode": s.mode if s.mode != "sign" else "sign",
                                "both": bool(getattr(s, "both", False)), "measured": None, "prog": None,
-                               "c": s.custom, "outp": ff.prores_kind(rs.get("prores", "422 HQ")),
+                               "c": s.custom,
                                "strength": self.strength})      # v0.7.77 강도도 클립마다(작업처럼). 초기 = 저장된 기본값
         # 창 높이: 클립 수에 맞춰 늘리되 최대 LIST_MAX 줄(넘으면 목록만 스크롤). 폭은 고정.
         rows = min(len(self.clips), LIST_MAX)
@@ -318,12 +314,7 @@ class AutoDialog(DragMove, QDialog):
         self.seg_strength, self.set_strength = _seg([("weak", "약"), ("mid", "중"), ("strong", "강"), ("strongplus", "강+")], self.strength,
                                                     self._on_strength, lw=AUTO_LW, label="강도")
         right.addWidget(self.seg_strength)
-        # 출력 = 버튼 이름 그대로의 ProRes(422 HQ · 422 · LT). 처음 선택 = ⚙ 렌더 설정값
-        _cur = ff.prores_kind(self.state.settings.render.get("prores", "422 HQ"))
-        self.seg_out, self.set_out = _seg([("hq", "422 HQ"), ("std", "422"), ("lt", "LT")],
-                                          {"422 HQ": "hq", "422": "std", "LT": "lt"}[_cur],
-                                          self._on_out, lw=AUTO_LW, label="출력")
-        right.addWidget(self.seg_out)
+        # v0.7.95 출력 줄·클립 칩 삭제: 완성본은 항상 ProRes 422 HQ(블러·간판 오버레이는 4444 알파)
         nrow = QHBoxLayout()
         nlb = QLabel("이름")
         nlb.setFixedWidth(AUTO_LW)
@@ -560,14 +551,6 @@ class AutoDialog(DragMove, QDialog):
     def _resolved_work(self, c):
         return c["mode"]
 
-    def _out_chip(self, c):
-        return {"422 HQ": "HQ"}.get(c["outp"], c["outp"]) + ("+α" if self._resolved_work(c) in ("blur", "sign") else "")
-
-    def _on_out(self, k):
-        for c in self._targets():
-            c["outp"] = {"hq": "422 HQ", "std": "422", "lt": "LT"}[k]
-        self._refresh()
-
     def _on_name(self, t):
         self.name = t.strip()
         self._refresh()
@@ -609,7 +592,7 @@ class AutoDialog(DragMove, QDialog):
                     bits.append(f"최소 얼굴 {m['min_face']}px")
                 bits.append(f"움직임 {m.get('motion', 0)}")
                 sub = "측정: " + " · ".join(bits)
-            r.set_state(c["inc"], c["idx"] in self.selected, c["c"], lbl, sub, self._out_chip(c), c["prog"], False,
+            r.set_state(c["inc"], c["idx"] in self.selected, c["c"], lbl, sub, c["prog"], False,
                         kind)
         # primary 클립 기준 작업 버튼 상태
         p = self._primary()

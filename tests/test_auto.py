@@ -147,9 +147,8 @@ def main():
     assert dlg.clips[1]["both"] and dlg._kinds(dlg.clips[1]) == ["blur", "sign"]
     dlg._toggle_work("sign")              # 간판 끄기 → 얼굴만
     assert not dlg.clips[1]["both"] and dlg.clips[1]["mode"] == "blur"
-    # 출력 바꾸기 → 블러라 +α
-    dlg._on_out("std")
-    assert "+α" in dlg._out_chip(dlg.clips[1])
+    # v0.7.95 출력 줄·클립 칩 없음(완성본 = 422 HQ 고정)
+    assert not hasattr(dlg, "seg_out") and not hasattr(dlg.rows[0], "out")
     # 기존 값 무시, 개별 보정
     dlg.keep_existing = False
     assigns = dlg._assignments()

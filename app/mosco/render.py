@@ -145,7 +145,7 @@ def render(src: Source, rs: dict, out_dir: str, progress=None, cancel=None, work
     writers = {}
     try:
         if rs.get("main", True):
-            writers["main"] = ff.Writer(str(names["main"]), info, rs.get("prores", "422 HQ"), audio=rs.get("audio", True))
+            writers["main"] = ff.Writer(str(names["main"]), info, "422 HQ", audio=rs.get("audio", True))
         if src.mode in ("blur", "sign") and rs.get("overlay", True):
             writers["overlay"] = ff.Writer(str(names["overlay"]), info, alpha=True, audio=False)
         if rs.get("review"):

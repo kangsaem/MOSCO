@@ -11,7 +11,6 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDialog,
                                QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMenu, QPushButton, QSpinBox, QStyle,
                                QStyledItemDelegate, QVBoxLayout, QWidget)
 
-from . import ff
 from .ui_widgets import BTN_MAIN, PROG, PROG_TXT, DragMove, Seg, add_shadow, btn, tone
 from .project import out_stem
 
@@ -437,14 +436,9 @@ class RenderSettings(DragMove, QDialog):
         nr.addWidget(self.name_pos)
         f.addRow("명칭", nr)
         r = QHBoxLayout()
-        self.main = QCheckBox("ProRes")
+        self.main = QCheckBox("ProRes 422 HQ")       # v0.7.95 출력 종류 고정(422·LT 선택 삭제)
         self.main.setChecked(rs.get("main", True))
-        self.prores = QComboBox()
-        self.prores.addItems(list(ff.PRORES))
-        self.prores.setCurrentText(ff.prores_kind(rs.get("prores", "422 HQ")))
-        self.prores.setToolTip("ProRes 종류: 422 HQ(가장 높은 품질) · 422 · LT")
         r.addWidget(self.main)
-        r.addWidget(self.prores)
         r.addStretch(1)
         f.addRow("완성본", r)
         self.overlay = QCheckBox("ProRes 4444 알파")
@@ -500,7 +494,7 @@ class RenderSettings(DragMove, QDialog):
     def value(self):
         return {"out_dir": self.dir.text().strip(), "name": self.name.text().strip(), "name_pos": self.name_pos.value() or "front",
                 "main": self.main.isChecked(),
-                "prores": self.prores.currentText(), "overlay": self.overlay.isChecked(),
+                "prores": "422 HQ", "overlay": self.overlay.isChecked(),
                 "review": self.review.isChecked(), "audio": self.audio.isChecked(),
                 "hw": self.hw.currentIndex() == 1, "two_pass": self.two.currentIndex() == 0,
                 "gpu": self.gpu.currentIndex() == 1, "workers": self.workers.value()}
