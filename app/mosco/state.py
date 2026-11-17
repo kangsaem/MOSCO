@@ -474,6 +474,20 @@ class AppState(QObject):
         except Exception:  # noqa: BLE001
             pass
 
+    @staticmethod
+    def log_error(what, name, msg, trace=""):
+        """errors.log 에 한 건(v0.7.98: 트랙 계산 실패·AUTO 오류 요약도 남김)."""
+        try:
+            import os as _os
+            import time as _t
+
+            from . import paths
+            with open(paths.log_dir() / "errors.log", "a", encoding="utf-8") as f:
+                f.write(f"\n===== {_t.strftime('%Y-%m-%d %H:%M:%S')} · {_os.path.basename(name)} · {what} · {msg} =====\n"
+                        f"{trace}\n")
+        except Exception:  # noqa: BLE001
+            pass
+
     def _an_err(self, key, e):
         if e == "취소됨":                          # 취소는 오류 아님 → 다음에 다시 분석
             if key in self.an and self.an[key].get("state") == "run":
@@ -592,10 +606,26 @@ class AppState(QObject):
             self._tracks[k] = (sig, t)
             if on_done:
                 on_done()
+
+        def fail(e, j_=None):
+            # v0.7.98 트랙 계산 실패도 errors.log 에(예전엔 기록·재시도 없음) + 한 번 다시, 그래도 실패면 소스 목록 오류 표시
+            jj = j_ or j
+            self.log_error(f"{mode} 트랙", s.path, e, getattr(jj, "err_trace", ""))
+            if e != "취소됨" and not getattr(jj, "_retried", False):
+                j2 = jobs.Job(fn)
+                j2._retried = True
+                j2.signals.done.connect(done)
+                j2.signals.error.connect(lambda e2: fail(e2, j2))
+                jobs.submit(jobs.ANALYZE_POOL, j2, 5)
+                return
+            if e != "취소됨":
+                self.errors[s.path] = f"트랙 계산 실패: {e}"
+                self.changed.emit()
+            if on_error:
+                on_error(e)
         j = jobs.Job(fn)
         j.signals.done.connect(done)
-        if on_error:
-            j.signals.error.connect(on_error)
+        j.signals.error.connect(fail)
         jobs.submit(jobs.ANALYZE_POOL, j, 5)
         return j
 

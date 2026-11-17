@@ -181,6 +181,22 @@ def main():
         assert w.state.has_track(s), "트랙 미리 계산 안 됨"
     print("auto->analyze->track OK", sorted(x for x in seen if x))
 
+    # v0.7.98 오류가 있어도 [AUTO] → 편집 화면 · 오류 표시 유지 · errors.log 에 이유
+    from mosco import paths as _p
+    elog = _p.log_dir() / "errors.log"
+    before_log = elog.read_text(encoding="utf-8") if elog.exists() else ""
+    bad_path = w.state.project.sources[0].path
+    w.state.errors[bad_path] = "분석 실패: 테스트 오류"
+    dlg3 = AutoDialog(w, w.state)
+    dlg3.keep_existing = False
+    dlg3._go("each")
+    assert pump(app, 300, lambda: dlg3.outcome == "each"), f"오류가 있어도 편집 화면으로 가야 함: {dlg3.status.text()}"
+    assert w.state.errors.get(bad_path, "").startswith("분석 실패"), "오류 표시 유지"
+    after_log = elog.read_text(encoding="utf-8") if elog.exists() else ""
+    assert "AUTO 오류" in after_log[len(before_log):] and "테스트 오류" in after_log[len(before_log):], "errors.log 에 이유"
+    w.state.errors.pop(bad_path, None)
+    print("auto with error -> editor + log OK")
+
     # AUTO [AE]: 측정·분석 후 각 클립 .jsx 저장(창 유지) — v0.7.15
     import glob
     for f in glob.glob(str(Path(vid).with_name("*_AE.jsx"))):

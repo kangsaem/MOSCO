@@ -1090,10 +1090,10 @@ class AutoDialog(DragMove, QDialog):
             return
         self._at.stop()
         self._phase = None
-        bad = [c for (c, _, _), (_, k) in zip(self._an, st) if k == "err"]
-        if bad:
+        bad = [(c, src) for (c, src, _), (_, k) in zip(self._an, st) if k == "err"]
+        if bad and getattr(self, "_ae_mode", False):     # AE 는 그대로: 오류면 창에 남아 알림
             self._status(f"분석 {len(st) - len(bad)}/{len(st)} 완료 · 오류 {len(bad)} — "
-                         + ", ".join(c["name"] for c in bad[:3]))
+                         + ", ".join(c["name"] for c, _ in bad[:3]))
             self.status.setStyleSheet("color:#e06c6c")
             self.pbar.set(0.0)
             self._busy(False)
@@ -1101,12 +1101,23 @@ class AutoDialog(DragMove, QDialog):
         if getattr(self, "_ae_mode", False):
             self._export_ae()
             return
+        # v0.7.98 오류가 있어도 편집 화면으로(성공한 것은 그대로 쓰고, 오류 클립은 소스 목록 오류 표시 유지 + errors.log)
+        for c, src in bad:
+            why = self.state.errors.get(src.path) or next(
+                (a.get("err") for m in (src.blur_kinds() or [src.mode])
+                 for a in [self.state.analysis(src, m) or {}] if a.get("err")), "") or "알 수 없음"
+            self.state.errors.setdefault(src.path, f"AUTO 실패: {why}")
+            self.state.log_error("AUTO 오류", src.path, why)
+        if bad:
+            self.state.changed.emit()
         self.outcome = "each"
         idxs = [c["idx"] for c, _, _ in self._an]
+        ok = [c["idx"] for c, src, _ in self._an if all(c is not b for b, _ in bad)]
         self.accept()
         mw = self.mw
-        mw.state.select(idxs[0] if idxs else 0)
-        mw.flash("AUTO 적용 완료 — 타원 준비됨")
+        mw.state.select((ok or idxs or [0])[0])
+        mw.flash(f"AUTO 적용 — 오류 {len(bad)}개(소스 목록 표시) · 이유: 내 문서\\MOSCO\\logs\\errors.log" if bad
+                 else "AUTO 적용 완료 — 타원 준비됨")
 
     def _export_ae(self):
         """분석·트랙이 끝난 각 클립 → 소스 원본 폴더 옆 .jsx 저장(백그라운드). 창은 유지."""

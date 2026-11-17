@@ -52,7 +52,9 @@ class SourceDelegate(QStyledItemDelegate):
             else:
                 label = f"분석 {int(prog * 100)}%"
         if err:
-            kind, prog, label = None, None, ("분석 실패" if str(err).startswith("분석 실패") else "읽기 실패")
+            e_ = str(err)                                  # v0.7.98 트랙·AUTO 실패도 이름대로
+            label = next((t for t in ("분석 실패", "트랙 계산 실패", "AUTO 실패") if e_.startswith(t)), "읽기 실패")
+            kind, prog = None, None
         base = QColor("#c9c9c9") if err else QColor("#2d2d2c")     # 읽기 실패 = 밝은 회색(누르면 다시 읽기)
         p.save()
         p.setRenderHint(QPainter.Antialiasing)
