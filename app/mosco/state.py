@@ -361,7 +361,10 @@ class AppState(QObject):
     def _probed(self, path, info):
         self.infos[path] = info
         self.errors.pop(path, None)
-        # 불러올 때 자동 분석하지 않음. 분석은 [분석] 버튼·재생 전·렌더 때만.
+        # 영상을 넣을 때는 자동 분석하지 않음(분석은 [분석] 버튼·재생 전·렌더 때). 단 프로젝트를 열었을 때는 v0.8.1 자동.
+        if path in getattr(self, "_autoload", set()):
+            self._autoload.discard(path)
+            self._load_analysis(path)
         self.changed.emit()
         if self.source() and self.source().path == path:
             self.current_changed.emit()
@@ -369,6 +372,24 @@ class AppState(QObject):
     def _err(self, path, e):
         self.errors[path] = str(e)
         self.changed.emit()
+
+    def open_loaded(self):
+        """v0.8.1 프로젝트를 열었을 때·자동 저장 복구 때: 분석 저장 파일이 있으면 바로 읽어 레이어를 보여 주고,
+        없으면 분석을 시작(현재 소스 먼저). 예전엔 [분석]을 누르기 전까지 레이어가 하나도 안 보였음."""
+        self._autoload = set()
+        for s in self.project.sources:
+            if s.path in self.infos:
+                self._load_analysis(s.path)
+            else:
+                self._autoload.add(s.path)            # 영상 정보(probe)가 오면 _probed 에서
+
+    def _load_analysis(self, path):
+        cur = self.source()
+        srcs = [s for s in self.project.sources if s.path == path]
+        srcs.sort(key=lambda s: s is not cur, reverse=False)
+        for s in srcs:
+            for m in (s.blur_kinds() or [s.mode]):
+                self.ensure_analysis(s, m)           # 저장 파일 있으면 즉시 읽음, 없으면 분석 시작
 
     def retry(self, path):
         self.errors.pop(path, None)
@@ -1062,7 +1083,14 @@ class AppState(QObject):
 
     def ellipse_spans(self, s):
         """타원별 {key,mode,label,intervals,keys,n}. 동시 블러면 두 종류(얼굴·간판) 레인을 함께. 캐시."""
-        resolvers = [(r, m) for r, m in self.blur_resolvers(s) if r.track is not None]
+        resolvers = []
+        info = self.infos.get(s.path)
+        for r, m in self.blur_resolvers(s):
+            if r.track is not None:
+                resolvers.append((r, m))
+            elif info is not None and any(g.get("manual") for g in edits.get(s, m)["groups"]):
+                r.n = int(info.frames)               # v0.8.1 분석 전에도 추가·복사 레이어는 레인에(수동은 트랙 없이 그려짐)
+                resolvers.append((r, m))
         if not resolvers:
             return []
         n = max(r.n for r, _ in resolvers)

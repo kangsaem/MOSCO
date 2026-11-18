@@ -31,7 +31,14 @@ def _mk(name) -> Path:
 
 
 def cache_dir() -> Path:
-    return _mk("cache")
+    """분석 결과·자동 저장(v0.8.1): 내 문서\\MOSCO\\cache — 새 버전을 다른 폴더에 풀어도 다시 분석하지 않게.
+    (예전엔 프로그램 폴더 cache → 버전마다 처음부터 분석). 내 문서를 못 쓰면 프로그램 폴더."""
+    try:
+        d = user_dir() / "cache"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+    except Exception:  # noqa: BLE001
+        return _mk("cache")
 
 
 _USER_DIR = None

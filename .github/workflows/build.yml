@@ -156,6 +156,9 @@ jobs:
           $out = python tests/test_renderprog.py engine_test/synth.mov renderprog_test 2>&1 | Out-String
           Write-Host $out
           if (-not ($out -match "RENDERPROG OK")) { exit 1 }
+          $out = python tests/test_reopen.py engine_test/synth.mov reopen_test 2>&1 | Out-String
+          Write-Host $out
+          if (-not ($out -match "REOPEN OK")) { exit 1 }
           $out = python tests/test_single.py 2>&1 | Out-String
           Write-Host $out
           if (-not ($out -match "SINGLE OK")) { exit 1 }

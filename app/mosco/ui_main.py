@@ -1576,6 +1576,7 @@ class MainWindow(QMainWindow):
             return False
         p.file = meta["file"] or ""            # 원래 프로젝트 파일(있었다면) — [저장하기]가 거기에 저장
         self.state.set_project(p)
+        self.state.open_loaded()               # v0.8.1 분석 저장 파일 바로 읽기(없으면 분석 시작)
         self.state.dirty = True                # 아직 저장 안 된 작업
         self._title()
         self.flash("자동 저장된 작업을 복구했습니다 — [저장하기]로 저장하세요")
@@ -1626,6 +1627,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "불러오기 실패", str(e))
             return
         self.state.set_project(p)
+        self.state.open_loaded()               # v0.8.1 분석 저장 파일 바로 읽기(없으면 분석 시작) — 레이어가 바로 보이게
         self._clear_autosave()
         self._title()
         self._warn_missing()                    # 없는 원본 → [폴더 지정]으로 다시 연결
