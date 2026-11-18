@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import Qt, QSize, QTimer
+from PySide6.QtCore import QObject, QSize, Qt, QTimer
 from PySide6.QtGui import QAction, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QApplication, QDialog, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
                                QScrollArea, QSplitter, QToolBar, QVBoxLayout, QWidget)
@@ -253,6 +253,29 @@ class Player:
     def stop(self):
         self.stop_ev.set()
         self.timer.stop()
+
+
+class _SpaceFilter(QObject):
+    """앱 전체 키 필터(스페이스). 창(MainWindow)을 약하게 잡아, 창이 지워졌으면 아무것도 안 함
+    (v0.8.0 은 창 자체를 앱 필터로 걸어 종료 중 지워진 창이 불려 access violation — CI 에서 드물게)."""
+
+    def __init__(self, mw):
+        super().__init__(QApplication.instance())
+        import weakref
+        self._mw = weakref.ref(mw)
+
+    def eventFilter(self, o, e):
+        T = e.type()
+        if T not in (T.KeyPress, T.KeyRelease):
+            return False
+        mw = self._mw()
+        try:
+            import shiboken6
+            if mw is None or not shiboken6.isValid(mw):
+                return False
+            return mw.space_key(e)
+        except Exception:  # noqa: BLE001
+            return False
 
 
 class MainWindow(QMainWindow):
@@ -502,7 +525,8 @@ class MainWindow(QMainWindow):
             s.setContext(Qt.WindowShortcut)
             s.activated.connect(fn)
         # v0.8.0 스페이스 = 앱 이벤트 필터(_space_key): 누른 채 끌면 화면 이동, 안 끌고 떼면 재생/정지(포토샵 방식)
-        QApplication.instance().installEventFilter(self)
+        self._space_filter = _SpaceFilter(self)      # v0.8.2 앱 필터는 따로(창이 지워진 뒤 종료 중에 불려도 안전)
+        QApplication.instance().installEventFilter(self._space_filter)
         sc(QKeySequence(Qt.CTRL | Qt.Key_D), self.duplicate_layers)     # v0.8.0 레이어 복사(독립 사본)
         sc(Qt.Key_Left, lambda: self.step(-1))
         sc(Qt.Key_Right, lambda: self.step(1))
@@ -1672,19 +1696,24 @@ class MainWindow(QMainWindow):
         fw = QApplication.focusWidget()
         return not isinstance(fw, (QLineEdit, QAbstractSpinBox, QTextEdit, QPlainTextEdit))
 
+    def space_key(self, e) -> bool:
+        """스페이스(앱 필터 _SpaceFilter 에서): 누른 채 끌면 화면 이동, 안 끌고 떼면 재생/정지. 처리했으면 True."""
+        T = e.type()
+        if e.key() != Qt.Key_Space or e.modifiers() or not self._space_ok():
+            return False
+        if T == T.KeyPress:
+            if not e.isAutoRepeat():
+                self.mon.set_space(True)
+            return True
+        if not e.isAutoRepeat():
+            used = self.mon.space_used
+            self.mon.set_space(False)
+            if not used:
+                self.toggle_play()
+        return True
+
     def eventFilter(self, o, e):
         T = e.type()
-        if T in (T.KeyPress, T.KeyRelease) and e.key() == Qt.Key_Space and not e.modifiers() and self._space_ok():
-            if T == T.KeyPress:
-                if not e.isAutoRepeat():
-                    self.mon.set_space(True)
-                return True
-            if not e.isAutoRepeat():
-                used = self.mon.space_used
-                self.mon.set_space(False)
-                if not used:
-                    self.toggle_play()
-            return True
         if o is self.lanes_box.verticalScrollBar() and T in (T.Show, T.Hide):
             w = o.sizeHint().width() if T == T.Show else 0
             self._tl_pad.setContentsMargins(0, 0, w, 0)
