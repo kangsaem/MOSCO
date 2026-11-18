@@ -321,7 +321,8 @@ def main():
     import mosco.ui_widgets as _uw
     _orig_popup = _uw.info_popup
     _uw.info_popup = lambda *a, **k: "ok"               # '목록 비우고 열기' 확인 = 열기
-    sw2.auto()
+    sw2.auto()                                           # v0.8.3 영상 재생(5초) → 끝나면 AUTO 창
+    pump(app, 30, lambda: "outcome" in log96)
     _uw.info_popup = _orig_popup
     assert log96["empty"] == (0, True), log96
     assert log96["added"][0] >= 2 and not log96["added"][1] and log96["added"][2] == log96["added"][0], log96

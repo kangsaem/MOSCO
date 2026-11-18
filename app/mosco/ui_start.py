@@ -3,12 +3,13 @@
 v0.7.73: 윈도우 제목 표시줄 없앰 → 위쪽 정사각형 그림(assets/start.png, 400×400) + 그 위 왼쪽 위 'MOSCO 버전',
 오른쪽 위 ✕(= 종료), 빈 곳을 끌어 옮김. v0.7.74: 1px 테두리 없앰(사용자 요청). 그림이 없으면 회색 자리.
 v0.7.92: 새 그림(왼쪽 하늘·오른쪽 어둠) + 제목 뒤 하늘 쪽(왼쪽 절반)만 위 90px 파랑 그라데이션(흰 글자 잘 보이게).
-v0.8.2: 그림 자리 = 영상(assets/start.webp, 사용자 영상을 거꾸로·DomoAI 표시 지움·600×600·24fps·5초) 한 번 재생 →
-마지막 장면에서 멈춤(지금 그림과 같은 구도). 실행 중 두 번째로 보일 때는 마지막 장면만. 영상을 못 읽으면 start.png.
+v0.8.3: 그림 자리 = 영상(assets/start.webp, 사용자 영상·DomoAI 표시 지움·600×600·24fps·5초, 정방향) 첫 장면으로 멈춰 있다가
+[AUTO] 를 누르면 그때 재생 → 끝나면 AUTO 창(재생 중 [AUTO] 를 한 번 더 누르면 건너뜀). AUTO 창을 취소하고 돌아오면
+다시 첫 장면. 영상을 못 읽으면 start.png(바로 AUTO 창). (v0.8.2 는 역재생을 시작할 때 자동 재생)
 그라데이션 = 곱하기(멀티플라이)로 프레임마다 직접 그림, 전체 폭 — 어두운 쪽엔 파랑이 거의 안 보임."""
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor, QImage, QLinearGradient, QMovie, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QVBoxLayout, QWidget
 
@@ -64,9 +65,9 @@ class StartWindow(DragMove, QWidget):
         self.img.setAlignment(Qt.AlignCenter)
         self._dpr = self.devicePixelRatioF() or 1.0
         self._movie = None
-        self._played = False
+        self._auto_pending = False
         mv = QMovie(str(paths.asset("start.webp")))
-        if mv.isValid() and mv.frameCount() > 1:       # v0.8.2 영상: 보일 때 한 번 재생 → 마지막 장면에서 멈춤
+        if mv.isValid() and mv.frameCount() > 1:       # v0.8.3 영상: 첫 장면 → [AUTO] 누르면 재생 → 끝나면 AUTO 창
             self._movie = mv
             mv.setCacheMode(QMovie.CacheNone)
             mv.frameChanged.connect(self._on_frame)
@@ -119,13 +120,18 @@ class StartWindow(DragMove, QWidget):
             return
         self.img.setPixmap(compose(mv.currentImage(), self._dpr))
         if n >= mv.frameCount() - 1:
-            mv.stop()                              # 마지막 장면(지금 그림과 같은 구도)에서 멈춤
-            self._played = True
+            mv.stop()                              # 끝 → AUTO 창
+            if self._auto_pending:
+                self._auto_pending = False
+                QTimer.singleShot(0, self._go_auto)
 
-    def showEvent(self, e):
-        super().showEvent(e)
-        if self._movie is not None and not self._played and self._movie.state() != QMovie.Running:
-            self._movie.start()                    # 실행 후 처음 보일 때만 재생(AUTO 창 취소로 돌아오면 마지막 장면)
+    def _first_frame(self):
+        mv = self._movie
+        if mv is None:
+            return
+        mv.stop()
+        mv.jumpToFrame(0)
+        self.img.setPixmap(compose(mv.currentImage(), self._dpr))
 
     def center(self):
         scr = QApplication.primaryScreen()
@@ -140,7 +146,26 @@ class StartWindow(DragMove, QWidget):
 
     # ------------------------------------------------------------ AUTO
     def auto(self):
-        self.run_auto()                        # v0.7.96 파일·폴더를 먼저 묻지 않음 → 빈 AUTO 창
+        """[AUTO]: 영상 재생 → 끝나면 AUTO 창(v0.8.3). 재생 중 다시 누르면 건너뜀. 영상 없으면 바로."""
+        mv = self._movie
+        if mv is None:
+            self.run_auto()                    # v0.7.96 파일·폴더를 먼저 묻지 않음 → 빈 AUTO 창
+            return
+        if mv.state() == QMovie.Running:       # 재생 중 한 번 더 = 건너뛰기
+            self._auto_pending = False
+            mv.stop()
+            QTimer.singleShot(0, self._go_auto)
+            return
+        if self._auto_pending:
+            return
+        self._auto_pending = True
+        self._first_frame()
+        mv.start()
+
+    def _go_auto(self):
+        self.run_auto()
+        if not self._going:                    # 취소로 시작 창에 돌아옴 → 다시 첫 장면
+            self._first_frame()
 
     def run_auto(self, files=None):
         """AUTO 창(files 가 있으면 그 파일만, 없으면 빈 목록). [AUTO]·프로젝트 열기 → 본 편집 화면, 취소 → 시작 창."""
