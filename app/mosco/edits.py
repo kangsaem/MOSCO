@@ -23,6 +23,19 @@ import numpy as np
 from . import analyze
 
 FADE = 12
+GEO_KEYS = ("margin", "head_size", "neck")      # v0.8.0 레이어별 모양 값(ov) — 리졸버에서 적용
+# v0.8.0 레이어별로 바꿀 수 있는 값(왼쪽 패널 키). 뷰티 '크기'(size, 절대 %)는 ov 의 head_size 로 저장
+# (ov 의 size 는 예전부터 '타원별 크기 %' 배율이라 겹치지 않게).
+LAYER_KEYS = {
+    "beauty": ("strength", "wrinkle", "texture", "grain", "skin_range", "unify", "soft", "toneup", "shine", "tint",
+               "eye_hole", "size", "feather", "neck"),
+    "blur": ("strength", "margin", "feather"),
+    "sign": ("strength", "margin", "feather"),
+}
+
+
+def ov_key(mode, k):
+    return "head_size" if (mode == "beauty" and k == "size") else k
 
 
 @dataclass
@@ -38,6 +51,11 @@ class Item:
     keyed: bool = False        # 이 프레임에 키 있음
     minus: bool = False        # 블러 제외 타원
     sus: bool = False          # 의심 트랙(짧음·점수 낮음·튐) — 주황 표시(검수용, 블러는 그대로)
+
+
+def baked(g) -> bool:
+    """고정 키프레임 모드인지(v0.7.83 bake). v0.8.0: 고정 오토 키를 다 지워도({}) 키 모드 유지 — 'akeys' 가 있으면."""
+    return g is not None and "akeys" in g
 
 
 def empty():
@@ -224,14 +242,18 @@ class Resolver:
         return v if v is not None else self._auto_vec(tid, i)
 
     def _akeys_vec(self, g, i):
-        """고정된 오토 키프레임(g["akeys"] = {프레임: 값}, v0.7.83): 키 사이 직선 보간, 끝은 끝값."""
-        ak = g.get("akeys")
-        if not ak:
+        """고정된 키프레임 모드(v0.7.83 bake, v0.8.0 AE 방식): 고정 오토 키(akeys) + 사용자 키(keys, 같은 프레임이면 사용자 키)를
+        **절대값**으로 합쳐 키 사이 직선 보간, 첫 키 앞·마지막 키 뒤는 그 값 그대로(자동 추적·보정량 안 씀)."""
+        if not baked(g):
             return None
-        ks = sorted(int(f) for f in ak)
+        kv = dict(g.get("akeys") or {})
+        kv.update(g.get("keys") or {})
+        ks = sorted(int(f) for f in kv)
         if not ks:
             return None
-        vals = [np.asarray(ak[str(k)], np.float32) for k in ks]
+        vals = [np.asarray(kv[str(k)], np.float32) for k in ks]
+        if len({len(v) for v in vals}) != 1:
+            return None
         if i <= ks[0]:
             return vals[0]
         if i >= ks[-1]:
@@ -240,7 +262,7 @@ class Resolver:
 
     def _edit_vec(self, g, tid, i):
         """오토 키를 지워 바뀐 값(고정 키프레임 → 펴기 → 고정 순). 해당 없으면 None."""
-        v = self._akeys_vec(g, i) if g.get("akeys") else None   # v0.7.83 키 고정(bake) 우선
+        v = self._akeys_vec(g, i) if baked(g) else None         # v0.7.83 키 고정(bake) 우선
         if v is None and g.get("flat"):                         # 예전 방식(저장된 프로젝트 호환)
             v = self._flat_vec(g, tid, i)
         if v is None and g.get("hold"):
@@ -273,7 +295,17 @@ class Resolver:
     # ------------------------------------------------------------ 최종
     def _apply(self, g, tid, i, ell, pts):
         """자동 타원(ell, pts)에 그룹 편집(고정 키·펴기·키 보정량)을 반영."""
-        if g.get("akeys") or g.get("flat") or g.get("hold"):   # 고정 키프레임(bake) / 예전 펴기·고정
+        if baked(g):                                          # v0.8.0 고정 키프레임 = 키 값 그대로(보정량·서서히 빠짐 없음)
+            fv = self._akeys_vec(g, i)
+            if fv is not None:
+                if self.mode == "sign":
+                    from . import sign
+                    pts = fv.reshape(4, 2)
+                    ell = sign.quad_ell(pts)
+                else:
+                    ell = (*fv, ell[4])
+                return ell, pts
+        if g.get("flat") or g.get("hold"):                     # 예전 펴기·고정(저장된 프로젝트 호환)
             fv = self._edit_vec(g, tid, i)
             if fv is not None:
                 if self.mode == "sign":
@@ -332,6 +364,9 @@ class Resolver:
         if span is None:
             return None, 0.0
         a, b = span
+        if baked(g):                                          # v0.8.0 고정 키프레임 = 키로만(검출 없는 프레임도 같은 규칙)
+            v = self._akeys_vec(g, i)
+            return (v, 0.0) if v is not None else (None, 0.0)
         keys = g.get("keys", {})
         if str(i) in keys:
             return np.asarray(keys[str(i)], np.float32), 0.0
@@ -395,6 +430,59 @@ class Resolver:
         return n_ch
 
     def items(self, i) -> list[Item]:
+        out = self._items(i)
+        for it in out:                                   # v0.8.0 레이어별 모양 값(여유·크기·목) 반영
+            g = self.groups.get(it.gid) if it.gid is not None else None
+            if g is not None and g.get("ov") and any(k in g["ov"] for k in GEO_KEYS):
+                it.ell, it.pts = self.geo(g, it.tid, i, it.ell, it.pts)
+        return out
+
+    # ------------------------------------------------------------ v0.8.0 레이어별 모양 값
+    def _sign_h(self, tid, i, q, m1):
+        """간판 글자 높이(프레임 좌표). 트랙에 있으면 그 값, 없으면(추가·복사 레이어) 사각형 짧은 변에서 추정."""
+        t = getattr(self.track, "tracks", None)
+        info = t.get(tid) if (tid is not None and isinstance(t, dict)) else None
+        if info is not None and info.get("h") is not None:
+            k = i - info["f0"]
+            hh = info["h"]
+            if len(hh):
+                return float(hh[min(max(k, 0), len(hh) - 1)])
+        q = np.asarray(q, np.float32).reshape(4, 2)
+        side = min(np.linalg.norm(q[1] - q[2]), np.linalg.norm(q[0] - q[3]),
+                   np.linalg.norm(q[0] - q[1]), np.linalg.norm(q[2] - q[3]))
+        return float(side) / (1 + 2 * m1)
+
+    def geo(self, g, tid, i, ell, pts, inverse=False):
+        """레이어 값 ov 의 모양 값을 전체 값 대신 적용(inverse=True 면 되돌림 — 모니터에서 고친 값을 저장할 때).
+        간판 여유 = 네 변을 글자 높이 × (레이어 여유 − 전체 여유) 만큼 평행 이동 / 얼굴 여유 = 머리 타원 비율 /
+        뷰티 크기·목 = 랜드마크로 두 타원을 만들어 차이만큼."""
+        ov = g.get("ov") or {}
+        p = self.p
+        if self.mode == "sign" and "margin" in ov and pts is not None:
+            from . import sign
+            m1, m2 = float(p.get("margin", 60)) / 100, float(ov["margin"]) / 100
+            d = (m2 - m1) * self._sign_h(tid, i, pts, m1)
+            q = sign.grow(pts, -d if inverse else d)
+            return sign.quad_ell(q), q
+        if self.mode == "blur" and "margin" in ov:
+            s1, s2 = float(p.get("margin", 160)) / 100, float(ov["margin"]) / 100
+            if inverse:
+                s1, s2 = s2, s1
+            cx, cy, w, h, ang = ell
+            fh = h / (1.25 * s1)                     # 얼굴 상자 높이(face_to_head 의 역)
+            cyf = cy + fh * 0.12 * s1
+            return (cx, cyf - fh * 0.12 * s2, w / s1 * s2, h / s1 * s2, ang), pts
+        if self.mode == "beauty" and ("head_size" in ov or "neck" in ov) and pts is not None:
+            e1 = analyze.head_ellipse(pts, p["size"], p["neck"])
+            e2 = analyze.head_ellipse(pts, ov.get("head_size", p["size"]), ov.get("neck", p["neck"]))
+            if inverse:
+                e1, e2 = e2, e1
+            cx, cy, w, h, ang = ell
+            return (cx + e2[0] - e1[0], cy + e2[1] - e1[1], w * e2[2] / max(e1[2], 1e-3),
+                    h * e2[3] / max(e1[3], 1e-3), ang), pts
+        return ell, pts
+
+    def _items(self, i) -> list[Item]:
         out = []
         seen = set()
         for tid, ell, pts, pres in self.auto_at(i):
@@ -415,7 +503,7 @@ class Resolver:
             if gid in seen or g.get("off_all") or _off(g, i):
                 continue
             ks, vals, offs, tid = self._g(g)
-            if not ks and (g.get("manual") or g.get("spans") is None):
+            if not ks and not baked(g) and (g.get("manual") or g.get("spans") is None):
                 continue
             if g.get("manual"):
                 # 수동(그린) 타원은 클립 처음~끝 존재: 첫 키 이전엔 첫 값, 마지막 키 이후엔 마지막 값
@@ -433,6 +521,11 @@ class Resolver:
                     out.append(Item(("g", gid), tid, (*v[:4], ang), None, 1.0, dict(g.get("ov", {})), False,
                                     gid, str(i) in g.get("keys", {}), bool(g.get("minus")),
                                     not g.get("minus") and self._sus(tid)))
+                    continue
+            elif baked(g):   # v0.8.0 고정 키프레임 그룹인데 이 프레임에 자동 타원이 없음 → 키 범위 안에서 키로
+                kk = sorted(int(f) for f in {**(g.get("akeys") or {}), **(g.get("keys") or {})})
+                v = self._akeys_vec(g, i) if kk and kk[0] <= i <= kk[-1] else None
+                if v is None:
                     continue
             else:       # 자동 그룹인데 이 프레임에 자동 타원이 없음 → 키 구간 안에서만
                 v = _interp_keys(ks, vals, i)

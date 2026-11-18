@@ -395,7 +395,8 @@ def sign_track(z, params, two_pass=True) -> SignTrack:
                          skip=A._edge_frames(z, S, T, fs, t["obs"]))
         why, note = A.sus_reason(len(fs), jumps, 6)
         tracks[out_id] = {"f0": a2, "box": quads, "obs": val, "ok": okm, "sus": bool(why), "why": why, "note": note,
-                          "score": msc}
+                          "score": msc,
+                          "h": (hh[:, 0] * S[a2:a2 + L]).astype(np.float32)}   # v0.8.0 글자 높이(프레임 좌표) — 레이어별 여유용
         for k in range(L):
             if okm[k]:
                 frames[a2 + k].append((out_id, quads[k].reshape(4, 2), bool(val[k])))

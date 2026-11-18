@@ -107,6 +107,133 @@ def sign_check():
     print("sign edits OK")
 
 
+def sign_keymode_check():
+    """v0.8.0 간판: 오토 키를 다 지우면 남은 키로만(사용자 키 뒤에서 미끄러지지 않음) · 키 우클릭 '이후 키 삭제'."""
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    from mosco import sign
+    from mosco.project import Source as Src
+    from mosco.state import AppState
+    app = QApplication.instance() or QApplication([])  # noqa: F841
+    n = 120
+    rows = []
+    hist = np.zeros(16, np.float32); hist[5] = 1
+    for f in range(n):
+        q = np.float32([[100, 100], [400, 120], [400, 200], [100, 190]]) + (f * 2 + 10 * np.sin(f / 7), 0)
+        x0, y0 = q.min(0); x1, y1 = q.max(0)
+        rows.append(np.r_[np.float32(f), [x0, y0, x1, y1, 0.9, sign.KIND_TEXT], hist, q.reshape(-1), [40.0]])
+    z = {"det": np.array(rows, np.float32), "n": np.array(n)}
+    st = AppState()
+    s = Src("x.mov", "sign")
+    s.sign["margin"] = 0
+    st.project.sources.append(s)
+    st.cur = 0
+    tr = sign.sign_track(z, s.sign)
+    st.track = lambda src, mode=None: tr
+    st.blur_resolvers = lambda src: [(st.resolver(src), "sign")]
+    it = st.resolver(s).items(60)[0]
+    st.sel = it.key
+    q = np.asarray(it.pts).copy() + (0, 30)
+    st.edit_ellipse(it.key, 60, tuple(q.reshape(-1)))
+    key = st.sel
+
+    def x0(f):
+        its = [i for i in st.resolver(st.source()).items(f) if i.key == key]
+        return float(np.asarray(its[0].pts)[0][0]) if its else None
+    # 이후 자동 키 삭제(39 뒤) → 39 이전은 고정 키 그대로, 39~60 직선, 60 뒤는 사용자 키 값 유지
+    lane = next(x for x in st.ellipse_spans(s) if x["key"] == key)
+    keep = [k for k in lane["keys"] if k <= 39]
+    assert st.delete_after([key], 39, False) > 0
+    lane = next(x for x in st.ellipse_spans(st.source()) if x["key"] == key)
+    assert lane["keys"] == keep and lane["ukeys"] == [60], lane
+    assert abs(x0(70) - x0(60)) < 0.01 and abs(x0(119) - x0(60)) < 0.01, "마지막 키 뒤가 움직임"
+    assert x0(39) < x0(50) < x0(60), "키 사이 직선이 아님"
+    # 이후 키 모두 삭제 → 60 사용자 키도 지움, 39 뒤 고정
+    assert st.delete_after([key], 39, True) == 1
+    assert abs(x0(119) - x0(39)) < 0.01
+    assert st.undo() and st.undo()
+    # 오토 키를 하나씩 다 지워도(사용자 키 남음) 사용자 키 값으로 고정 — 예전엔 키 뒤 12프레임 동안 미끄러졌음
+    s = st.source()
+    while True:
+        lane = next(x for x in st.ellipse_spans(s) if x["key"] == key)
+        if not lane["keys"]:
+            break
+        assert st.delete_auto_key(key, lane["keys"][0]) == "", lane["keys"]
+        s = st.source()
+    xs = {round(x0(f), 2) for f in range(0, n, 5)}
+    assert len(xs) == 1, f"오토 키를 다 지웠는데 움직임: {sorted(xs)[:5]}"
+    print("sign key mode OK")
+
+
+def layer_values_check():
+    """v0.8.0 B안 레이어별 값: 간판 여유(글자 높이 기준 평행 이동) · 얼굴 여유(머리 타원 비율) · 뷰티 크기(head_size)·강도 ·
+    다른 레이어는 그대로 · 모니터 편집 저장값 되돌림(이중 적용 없음) · [전체 값으로]."""
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    from mosco.state import AppState
+    app = QApplication.instance() or QApplication([])  # noqa: F841
+    # 얼굴 여유
+    z = fake_det()
+    st = AppState()
+    s = Source("x.mov", "blur")
+    st.project.sources.append(s)
+    st.cur = 0
+    tr = analyze.blur_track(z, s.blur)
+    st.track = lambda src, mode=None: tr
+    st.blur_resolvers = lambda src: [(st.resolver(src), "blur")]
+    its = sorted(st.resolver(s).items(20), key=lambda it: it.ell[0])
+    ka, kb = its[0].key, its[1].key
+    ea, eb = its[0].ell, its[1].ell
+    st.push_undo()
+    mv = st.set_layer_values([ka], 20, "margin", s.blur["margin"] * 1.5)
+    ka = mv[ka]
+    r = st.resolver(st.source())
+    na = next(it for it in r.items(20) if it.key == ka).ell
+    nb = next(it for it in r.items(20) if it.key == kb).ell
+    assert abs(na[2] / ea[2] - 1.5) < 0.01 and abs(na[3] / ea[3] - 1.5) < 0.01, (ea, na)
+    assert np.allclose(nb, eb), "다른 레이어가 같이 바뀜"
+    disp = (na[0] + 5, na[1], na[2], na[3], na[4])
+    st.edit_ellipse(ka, 20, disp)
+    ka = st.sel
+    back = next(it for it in st.resolver(st.source()).items(20) if it.key == ka).ell
+    assert np.allclose(back[:4], disp[:4], atol=0.5), f"편집 저장값 되돌림 실패 {disp} {back}"
+    vals, own = st.layer_values(ka, 20)
+    assert own == {"margin"} and vals["margin"] == s.blur["margin"] * 1.5
+    st.clear_layer_values([ka], 20)
+    assert not st.layer_values(ka, 20)[1]
+    # 뷰티 크기(head_size)·강도: 레이어 값이 리졸버·보정에 들어감
+    from mosco import models
+    N = 30
+    lm = np.full((N, 2, 468, 2), np.nan, np.float32)
+    ang = np.linspace(0, 2 * np.pi, len(models.FACE_OVAL), endpoint=False)
+    for cx, cy, slot in ((500, 400, 0), (1300, 500, 1)):
+        oval = np.stack([cx + 120 * np.cos(ang), cy + 160 * np.sin(ang)], 1).astype(np.float32)
+        for f in range(N):
+            lm[f, slot, :] = (cx, cy)
+            lm[f, slot, models.FACE_OVAL] = oval
+    zb = {"lm": lm, "n": np.array(N), "k": np.array(2)}
+    st2 = AppState()
+    sb = Source("y.mov", "beauty")
+    st2.project.sources.append(sb)
+    st2.cur = 0
+    trb = analyze.beauty_track(zb, sb.beauty)
+    st2.track = lambda src, mode=None: trb
+    its = sorted(st2.resolver(sb).items(15), key=lambda it: it.ell[0])
+    k1, k2 = its[0].key, its[1].key
+    w1, w2 = its[0].ell[2], its[1].ell[2]
+    st2.push_undo()
+    k1 = st2.set_layer_values([k1], 15, "size", sb.beauty["size"] + 40)[k1]
+    k1 = st2.set_layer_values([k1], 15, "strength", 90)[k1]
+    its2 = {it.key: it for it in st2.resolver(st2.source()).items(15)}
+    assert its2[k1].ell[2] > w1 * 1.15 and abs(its2[k2].ell[2] - w2) < 0.01, "뷰티 레이어 크기"
+    assert its2[k1].ov.get("strength") == 90 and "strength" not in its2[k2].ov
+    vals, own = st2.layer_values(k1, 15)
+    assert vals["size"] == sb.beauty["size"] + 40 and own == {"size", "strength"}, (vals, own)
+    print("layer values OK")
+
+
 def flat_check():
     """v0.7.73 오토 키 삭제 = 앞뒤 키 사이 직선 · 재생선이 구간 밖이어도 레이어 삭제(상태 계층까지)."""
     import os
@@ -372,6 +499,8 @@ def main():
     print("beauty multiface OK")
     minus_check()
     sign_check()
+    sign_keymode_check()
+    layer_values_check()
     skin_range_migration()
     names_and_presets()
     eye_area()

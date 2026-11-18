@@ -467,6 +467,7 @@ class MainWindow(QMainWindow):
         self.lanes.segments_changed.connect(self._on_segments)
         self.lanes.seek.connect(self.seek)               # 레인 재생선 드래그 → 프레임 이동
         self.lanes.del_key.connect(self._del)            # 레인: 고른 키 → 그 키, 아니면 고른 레이어 삭제
+        self.lanes.del_after.connect(self._del_after)    # v0.8.0 키 우클릭 → 이후 키 삭제
         self.ruler.seek.connect(self.seek)
         self.panel.tool.connect(self.on_tool)
         self.mon.add_at.connect(self.on_add)
@@ -480,6 +481,9 @@ class MainWindow(QMainWindow):
         self.panel.minus.connect(lambda v: self.state.set_minus(v, self.f))
         self.panel.ov_pressed.connect(self.state.push_undo)
         self.panel.ov_changed.connect(self.on_ov)
+        self.panel.layer_info = self._layer_info                 # v0.8.0 B안
+        self.panel.layer_changed.connect(self._on_layer_val)
+        self.panel.layer_reset.connect(self._on_layer_reset)
         self._merge_anchor = None
 
         self._full_t = QTimer(self, singleShot=True, interval=350, timeout=self.request_full)
@@ -497,7 +501,9 @@ class MainWindow(QMainWindow):
             s = QShortcut(QKeySequence(key), self)
             s.setContext(Qt.WindowShortcut)
             s.activated.connect(fn)
-        sc(Qt.Key_Space, self.toggle_play)
+        # v0.8.0 스페이스 = 앱 이벤트 필터(_space_key): 누른 채 끌면 화면 이동, 안 끌고 떼면 재생/정지(포토샵 방식)
+        QApplication.instance().installEventFilter(self)
+        sc(QKeySequence(Qt.CTRL | Qt.Key_D), self.duplicate_layers)     # v0.8.0 레이어 복사(독립 사본)
         sc(Qt.Key_Left, lambda: self.step(-1))
         sc(Qt.Key_Right, lambda: self.step(1))
         sc(QKeySequence(Qt.SHIFT | Qt.Key_Left), lambda: self.step(-self._sec()))
@@ -597,6 +603,40 @@ class MainWindow(QMainWindow):
         self.lanes.update()
         self.panel.show_selection(self.state.ov_of(sel, self.f) if sel else None, s.params(),
                                   self.state.minus_of(sel, self.f) if sel else False)
+        self.panel.apply_layer()
+
+    # ------------------------------------------------------------ v0.8.0 레이어별 값(B안)
+    def _layer_keys(self):
+        """패널 값을 넣을 레이어: 대표 + 함께 고른 같은 종류 레이어."""
+        s = self.state.source()
+        if s is None or self.state.sel is None:
+            return []
+        pairs = self.lanes.sel_pairs()
+        if not pairs or pairs[0][1] != self.state.sel:
+            return [self.state.sel]
+        return [k for m, k in pairs if m in (None, s.mode)]
+
+    def _layer_info(self):
+        keys = self._layer_keys()
+        if not keys:
+            return None
+        vals, own = self.state.layer_values(keys[0], self.f)
+        return len(keys), vals, own
+
+    def _on_layer_val(self, k, v):
+        keys = self._layer_keys()
+        if not keys:
+            return
+        moved = self.state.set_layer_values(keys, self.f, k, v)
+        if moved:                                   # 자동 트랙 → 그룹이 되면 레인 선택도 새 key 로
+            self.lanes.multi = {(m, moved.get(kk, kk)) for m, kk in self.lanes.multi}
+            self.lanes.sel = self.state.sel
+
+    def _on_layer_reset(self):
+        keys = self._layer_keys()
+        if keys:
+            self.state.clear_layer_values(keys, self.f)
+            self.flash("선택 레이어 = 전체 값으로 (Ctrl+Z 되돌리기)")
 
     def _toggle_minus(self):
         s = self.state.source()
@@ -624,11 +664,40 @@ class MainWindow(QMainWindow):
         elif self.state.sel is not None:
             if self._del_selected_key():                 # 레인에서 클릭해 고른 키(오토·수동) → 그 키만(v0.7.73)
                 return
-            more = self.lanes.multi_keys()               # Ctrl·Shift 로 더 고른 레이어까지 한 번에(v0.7.76)
+            pairs = self.lanes.sel_pairs() or [(None, self.state.sel)]   # Ctrl·Shift 로 더 고른 레이어까지(v0.7.76·v0.8.0 종류 섞임)
+            if pairs[0][1] != self.state.sel:
+                pairs = [(None, self.state.sel)]
             self.lanes.multi = set()
-            n = self.state.delete_ellipses([self.state.sel] + more, self.f)
+            n = self.state.delete_layers(pairs, self.f)
             if n > 1:
                 self.flash(f"레이어 {n}개 삭제 (Ctrl+Z 되돌리기)")
+
+    def duplicate_layers(self):
+        if self.state.sel is None:
+            self.flash("복사할 레이어를 먼저 선택하세요")
+            return
+        pairs = self.lanes.sel_pairs()
+        if not pairs or pairs[0][1] != self.state.sel:
+            pairs = [(None, self.state.sel)]
+        made = self.state.duplicate_layers(pairs, self.f)
+        if not made:
+            self.flash("복사할 수 없는 레이어입니다")
+            return
+        self.lanes.multi = set()
+        m0, k0 = made[0]
+        if m0 in ("blur", "sign"):
+            self.state.set_active(m0)
+        self.state.sel = k0
+        self._sel_refresh()
+        self.flash(f"레이어 {len(made)}개 복사 — 같은 자리에 겹쳐 있음 (Ctrl+Z 되돌리기)")
+
+    def _del_after(self, keys, mode, frame, everything):
+        if mode in ("blur", "sign"):
+            self.state.set_active(mode)
+        n = self.state.delete_after(keys, frame, everything)
+        self.lanes.sel_kf = None
+        self.flash((f"이후 {'키' if everything else '자동 키'} {n}개 삭제 — 마지막 키 뒤는 그 값 유지 (Ctrl+Z 되돌리기)")
+                   if n else "지울 키가 없습니다")
 
     def _del_selected_key(self) -> bool:
         """고른 키를 삭제. 오토 키(흰 ◆) = 펴기, 수동 키(노랑) = 그 키. → 고른 키가 있어 처리했으면 True.
@@ -1130,9 +1199,14 @@ class MainWindow(QMainWindow):
     def render_settings(self):
         d = RenderSettings(self, self.state.settings.render)
         if d.exec():
-            self.state.settings.render.update(d.value())
-            self.state.settings.save()
-            from . import models
+            self._apply_render_settings(d.value())
+
+    def _apply_render_settings(self, v):
+        old = dict(self.state.settings.render)
+        self.state.settings.render.update(v)
+        self.state.settings.save()
+        if any(bool(v.get(k, d)) != bool(old.get(k, d)) for k, d in (("gpu", False), ("two_pass", True))):
+            from . import models                     # 검출 장치·앞뒤 2회가 바뀌면 트랙 다시
             models.set_gpu(self.state.settings.render.get("gpu", False))
             self.state._tracks.clear()
             self.on_params()
@@ -1143,6 +1217,14 @@ class MainWindow(QMainWindow):
         if rs.get("out_dir") and Path(rs["out_dir"]).is_dir():
             return rs["out_dir"]
         return self._ask_out_dir()
+
+    def _ask_render_settings(self):
+        """v0.8.0 [렌더] 전 렌더 설정 창(저장폴더 칸 포함). 취소 = None."""
+        rs = dict(self.state.settings.render)
+        if not (rs.get("out_dir") and Path(rs["out_dir"]).is_dir()):
+            rs["out_dir"] = self.state.settings.d.get("last_folder", "") or ""
+        d = RenderSettings(self, rs, ok_text="렌더", need_dir=True)
+        return d.value() if d.exec() else None
 
     def _ask_out_dir(self):
         """저장폴더를 반드시 물어봄(지난 폴더를 초기 위치로). 취소 = None."""
@@ -1183,11 +1265,15 @@ class MainWindow(QMainWindow):
         if not todo:
             self.flash("이미 모두 렌더됨 — 다시 하려면 우클릭 '다시 렌더'")
             return
-        out = self._ask_out_dir()                      # v0.7.80 [렌더] 누를 때마다 반드시 저장폴더 물어봄(1-A)
-        if not out:
+        # v0.8.0 [렌더] 누를 때마다 렌더 설정 창(저장폴더 포함, 한 창) → [렌더] 로 시작
+        v = self._ask_render_settings()
+        if not v:
             return
+        self._apply_render_settings(v)
+        out = self.state.settings.render["out_dir"]
         for it in todo:
             it.state, it.p, it.err, it.out_dir = "대기", 0.0, "", out
+            it.rs = dict(self.state.settings.render)     # 방금 정한 설정으로(목록에 넣을 때 값 말고)
         for it in todo:
             self._start_render(it)
 
@@ -1577,8 +1663,26 @@ class MainWindow(QMainWindow):
             if it.job is not None:
                 it.job.cancel.set()
 
+    def _space_ok(self):
+        from PySide6.QtWidgets import QAbstractSpinBox, QLineEdit, QPlainTextEdit, QTextEdit
+        if not self.isActiveWindow() or QApplication.activeModalWidget() is not None:
+            return False
+        fw = QApplication.focusWidget()
+        return not isinstance(fw, (QLineEdit, QAbstractSpinBox, QTextEdit, QPlainTextEdit))
+
     def eventFilter(self, o, e):
         T = e.type()
+        if T in (T.KeyPress, T.KeyRelease) and e.key() == Qt.Key_Space and not e.modifiers() and self._space_ok():
+            if T == T.KeyPress:
+                if not e.isAutoRepeat():
+                    self.mon.set_space(True)
+                return True
+            if not e.isAutoRepeat():
+                used = self.mon.space_used
+                self.mon.set_space(False)
+                if not used:
+                    self.toggle_play()
+            return True
         if o is self.lanes_box.verticalScrollBar() and T in (T.Show, T.Hide):
             w = o.sizeHint().width() if T == T.Show else 0
             self._tl_pad.setContentsMargins(0, 0, w, 0)

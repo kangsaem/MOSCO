@@ -693,11 +693,28 @@ class AppState(QObject):
         sz = g.get("ov", {}).get("size", 100) / 100
         if len(ell) >= 8:                     # 간판 4꼭짓점(표시는 크기 % 적용됨 → 되돌려 저장)
             from . import sign
-            edits.set_key(g, frame, tuple(sign.scale_quad(np.asarray(ell[:8], np.float32), 1 / sz).reshape(-1)))
+            vec = tuple(sign.scale_quad(np.asarray(ell[:8], np.float32), 1 / sz).reshape(-1))
         else:
-            edits.set_key(g, frame, (ell[0], ell[1], ell[2] / sz, ell[3] / sz))
+            vec = (ell[0], ell[1], ell[2] / sz, ell[3] / sz)
+        edits.set_key(g, frame, self._geo_inv(s, g, frame, vec))
         self.sel = ("g", g["gid"])
         self._edited()
+
+    def _geo_inv(self, s, g, frame, vec):
+        """v0.8.0 표시값(레이어 여유·크기·목 적용됨) → 저장값(전체 값 기준). 레이어 모양 값이 없으면 그대로."""
+        ov = g.get("ov") or {}
+        if not any(k in ov for k in edits.GEO_KEYS):
+            return tuple(vec)
+        r = self.resolver(s)
+        it = self._item(s, ("g", g["gid"]), frame)
+        tid = it.tid if it is not None else r.g_tid.get(g["gid"])
+        if len(vec) >= 8:
+            q = np.asarray(vec[:8], np.float32).reshape(4, 2)
+            _, q2 = r.geo(g, tid, frame, None, q, inverse=True)
+            return tuple(float(x) for x in np.asarray(q2).reshape(-1))
+        pts = it.pts if it is not None else None
+        e2, _ = r.geo(g, tid, frame, (*vec[:4], 0.0), pts, inverse=True)
+        return tuple(float(x) for x in e2[:4])
 
     def add_ellipse(self, frame, x, y, size):
         s = self.source()
@@ -722,6 +739,118 @@ class AppState(QObject):
     def delete_ellipse(self, key, frame):
         """타원 삭제: 추가(수동) 타원은 그룹째 제거, 자동 타원은 전 구간 숨김(off_all)."""
         return self.delete_ellipses([key], frame)
+
+    def _by_mode(self, pairs):
+        """[(mode, key)] → {mode: [key…]} (순서 유지, 중복 제거). mode 가 None 이면 지금 편집 종류."""
+        s = self.source()
+        out = {}
+        for m, k in pairs:
+            if k is None:
+                continue
+            m = m or (s.mode if s else None)
+            if k not in out.setdefault(m, []):
+                out[m].append(k)
+        return out
+
+    def delete_layers(self, pairs, frame):
+        """v0.8.0 종류가 섞인 여러 레이어 삭제(Shift 범위 선택이 얼굴·간판을 함께 고름). 실행취소 한 번."""
+        s = self.source()
+        groups = self._by_mode(pairs)
+        if s is None or not groups:
+            return 0
+        if len(groups) == 1:
+            m, keys = next(iter(groups.items()))
+            if m in ("blur", "sign"):
+                self.set_active(m)
+            return self.delete_ellipses(keys, frame)
+        orig = s.mode
+        self.push_undo()
+        s = self.source()
+        n = 0
+        for m, keys in groups.items():
+            s.mode = m
+            self._res.clear()
+            for k in keys:
+                f = self._frame_with(s, k, frame)
+                s, g = self._group_for(k, f)
+                if g is None:
+                    continue
+                if g.get("manual"):
+                    edits.remove_group(s, g["gid"])
+                else:
+                    g["off_all"] = True
+                n += 1
+                self._res.clear()
+        s.mode = orig
+        self._res.clear()
+        if not n:
+            self.undo_stack.pop()
+            return 0
+        self.sel = None
+        self._edited()
+        return n
+
+    def duplicate_layers(self, pairs, frame):
+        """v0.8.0 Ctrl+D 레이어 복사 = 독립 사본(수동 레이어). 원본의 움직임을 키로 구움(자동 키·사용자 키·구간 끝 프레임),
+        자기 값(ov)·제외 여부 복사, 원본이 없는 구간은 꺼 둠. 같은 자리에 겹쳐 생김. → 새 (mode, key) 목록."""
+        s = self.source()
+        groups = self._by_mode(pairs)
+        if s is None or not groups:
+            return []
+        orig = s.mode
+        self.push_undo()
+        s = self.source()
+        made = []
+        for m, keys in groups.items():
+            s.mode = m
+            self._res.clear()
+            e = edits.get(s, m)
+            for k in keys:
+                d = self._span(s, k)
+                if d is None or not d["intervals"]:
+                    continue
+                frs = set(d["keys"]) | set(d.get("ukeys", ()))
+                for a, b in d["intervals"]:
+                    frs |= {a, b}
+                kv, ov, minus = {}, {}, False
+                for f in sorted(frs):
+                    it = self._item(s, k, f)
+                    if it is None:
+                        continue
+                    if m == "sign" and it.pts is not None:
+                        vec = np.asarray(it.pts, np.float32).reshape(-1)
+                    else:
+                        vec = np.asarray(it.ell[:4], np.float32)
+                    kv[str(int(f))] = [float(x) for x in vec]
+                    ov = {k2: v2 for k2, v2 in it.ov.items() if k2 not in edits.GEO_KEYS}   # 모양 값은 키에 이미 구워짐
+                    minus = bool(it.minus)
+                if not kv:
+                    continue
+                n = d["n"]
+                off, prev = [], -1
+                for a, b in d["intervals"]:
+                    if a > prev + 1:
+                        off.append([prev + 1, a - 1])
+                    prev = b
+                if prev < n - 1:
+                    off.append([prev + 1, n - 1])
+                f0 = min(int(x) for x in kv)
+                v0 = kv[str(f0)]
+                cx, cy = (float(np.mean(v0[0::2])), float(np.mean(v0[1::2]))) if len(v0) >= 8 else (v0[0], v0[1])
+                g = {"gid": e["next"], "manual": True, "anchor": [f0, cx, cy], "keys": kv, "off": off,
+                     "ov": ov, "minus": minus}
+                e["next"] += 1
+                e["groups"].append(g)
+                made.append((m, ("g", g["gid"])))
+                self._res.clear()
+        s.mode = orig
+        self._res.clear()
+        if not made:
+            self.undo_stack.pop()
+            return []
+        self.sel = made[0][1]
+        self._edited()
+        return made
 
     def delete_ellipses(self, keys, frame):
         """여러 타원을 한 번에 삭제(실행취소 한 번, v0.7.76). → 지운 개수."""
@@ -762,7 +891,7 @@ class AppState(QObject):
     def _bake_akeys(self, s, g, key, d):
         """오토 트랙의 현재 키들을 '고정 키프레임'(g["akeys"])으로 한 번 구움. 이미 있으면 그대로.
         이후 삭제·편집은 이 키프레임만 건드리므로 다른 키가 안 움직임(v0.7.83)."""
-        if g.get("akeys"):
+        if edits.baked(g):
             return
         it = self._item(s, key, d["intervals"][0][0] if d["intervals"] else 0)
         tid = key[1] if key[0] == "t" else (it.tid if it is not None else None)
@@ -788,7 +917,7 @@ class AppState(QObject):
         frame = int(frame)
         if frame not in d["keys"]:
             return "키를 찾지 못했습니다"
-        if len(d["keys"]) < 2:
+        if len(d["keys"]) + len(d.get("ukeys", ())) < 2:
             return "키가 하나뿐이라 지울 수 없습니다"
         self.push_undo()
         s, g = self._group_for(key, frame)
@@ -797,17 +926,63 @@ class AppState(QObject):
             return "키를 찾지 못했습니다"
         self._bake_akeys(s, g, key, d)
         ak = g.get("akeys") or {}
-        if str(frame) not in ak or len(ak) < 2:
+        # v0.8.0 마지막 오토 키도 지울 수 있음(사용자 키가 남아 있으면) — 키가 하나도 안 남는 것만 막음
+        if str(frame) not in ak or len(ak) + len(g.get("keys", {})) < 2:
             self.undo_stack.pop()
             self._res.clear()
             self._spans_cache = (None,)
-            return "키가 하나뿐이라 지울 수 없습니다" if len(ak) < 2 else "키를 찾지 못했습니다"
+            return "키가 하나뿐이라 지울 수 없습니다" if str(frame) in ak else "키를 찾지 못했습니다"
         del ak[str(frame)]
         g["akeys"] = ak
         self._res.clear()                        # 리졸버 캐시 비움(akeys 반영)
         self.sel = ("g", g["gid"])
         self._edited()
         return ""
+
+    def delete_after(self, keys, frame, everything=False):
+        """v0.8.0 키 우클릭 '이후 자동 키 삭제'(everything=False) / '이후 키 모두 삭제'(True).
+        keys = 대상 레이어들(누른 레이어 + 함께 선택된 레이어). frame 보다 뒤의 키만 지움(누른 키는 남김).
+        자동 키를 지우면 그 레이어는 고정 키프레임 모드(bake) → 남은 키로만 움직이고 마지막 키 뒤는 그 값 유지(AE 방식).
+        키가 하나도 안 남게 되면 가장 앞 키 하나는 남김. → 지운 키 수."""
+        s = self.source()
+        if s is None:
+            return 0
+        self.push_undo()
+        frame, n_del = int(frame), 0
+        for key in keys:
+            d = self._span(s, key)
+            if d is None:
+                continue
+            s, g = self._group_for(key, self._frame_with(s, key, frame))
+            if g is None:
+                continue
+            if not g.get("manual"):
+                if any(k > frame for k in d["keys"]) or (everything and any(k > frame for k in d.get("ukeys", ()))):
+                    self._bake_akeys(s, g, key, d)
+                ak = g.get("akeys")
+                if ak is not None:
+                    for k in [k for k in ak if int(k) > frame]:
+                        del ak[k]
+                        n_del += 1
+            if everything:
+                uk = g.get("keys", {})
+                for k in [k for k in uk if int(k) > frame]:
+                    del uk[k]
+                    n_del += 1
+            left = len(g.get("akeys") or {}) + len(g.get("keys", {}))
+            if left == 0 and not g.get("manual"):           # 다 지워짐(누른 지점이 모든 키 앞) → 그 프레임 값으로 키 하나
+                self._res.clear()
+                it = self._item(s, ("g", g["gid"]), frame)
+                if it is not None:
+                    vec = np.asarray(it.pts, np.float32).reshape(-1) if (s.mode == "sign" and it.pts is not None) \
+                        else np.asarray(it.ell[:4], np.float32)
+                    g.setdefault("keys", {})[str(frame)] = [float(x) for x in self._geo_inv(s, g, frame, tuple(vec))]
+        if n_del == 0:
+            self.undo_stack.pop()
+            return 0
+        self._res.clear()
+        self._edited()
+        return n_del
 
     def delete_key(self, frame):
         s, g = self._group_for(self.sel, frame, create=False)
@@ -941,7 +1116,7 @@ class AppState(QObject):
             ukeys = sorted(int(x) for x in g.get("keys", {})) if g else []
             if g is not None and g.get("manual"):       # 추가 타원 = 자동 없음, 사용자 키만
                 keys = []
-            elif g is not None and g.get("akeys"):      # v0.7.83 고정 키프레임 = 그대로(다른 키 안 움직임)
+            elif g is not None and edits.baked(g):      # v0.7.83 고정 키프레임 = 그대로(다른 키 안 움직임)
                 keys = [k for k in sorted(int(f) for f in g["akeys"])
                         if any(a <= k <= b for a, b in intervals)]
             else:                                       # 오토 트랙 = 실제 검출 프레임에서만 자동 키(늘린 구간 제외)
@@ -951,7 +1126,9 @@ class AppState(QObject):
             # v0.7.87 클립 처음~끝을 연속으로 안 덮으면(시작이 0 이 아님·끝이 n-1 이 아님·중간 틈) 미완성 → 회색
             partial = (not d["manual"] and not d["minus"]
                        and (intervals[0][0] != 0 or intervals[-1][1] != n - 1 or len(intervals) != 1))
-            out.append({"key": k, "mode": mode, "label": d["label"], "intervals": intervals, "keys": keys,
+            lk = {edits.ov_key(mode, x) for x in edits.LAYER_KEYS.get(mode, ())}
+            own = bool(g and any(x in (g.get("ov") or {}) for x in lk))      # v0.8.0 자기 값 가진 레이어(레인 점)
+            out.append({"key": k, "mode": mode, "label": d["label"], "intervals": intervals, "keys": keys, "own": own,
                         "ukeys": ukeys, "n": n, "minus": d["minus"], "quad": d["quad"], "manual": d["manual"],
                         "sus": d["sus"], "partial": partial, "note": d["note"] if d["sus"] else ""})
         self._spans_cache = (sig, out)
@@ -1017,6 +1194,66 @@ class AppState(QObject):
             g.setdefault("ov", {})[k] = v
         self.sel = ("g", g["gid"])
         self._edited()
+
+    def set_layer_values(self, keys, frame, k, v):
+        """v0.8.0 왼쪽 패널(B안): 선택한 레이어들에만 값(k = 패널 키, v = None 이면 그 값 지움).
+        실행취소는 부른 쪽(슬라이더 누를 때 push_undo). → {옛 key: 새 key}(자동 트랙 ('t', tid) → 그룹 ('g', gid))."""
+        s = self.source()
+        if s is None:
+            return {}
+        ok = edits.ov_key(s.mode, k)
+        moved = {}
+        for key in keys:
+            f = self._frame_with(s, key, frame)
+            s, g = self._group_for(key, f)
+            if g is None:
+                continue
+            if v is None:
+                g.setdefault("ov", {}).pop(ok, None)
+            else:
+                g.setdefault("ov", {})[ok] = v
+            moved[key] = ("g", g["gid"])
+            self._res.clear()
+        if self.sel in moved:
+            self.sel = moved[self.sel]
+        self._edited()
+        return moved
+
+    def clear_layer_values(self, keys, frame):
+        """[전체 값으로]: 선택한 레이어들의 자기 값(패널 값) 모두 지움(타원 배율 size·제외 여부는 유지)."""
+        s = self.source()
+        if s is None:
+            return
+        self.push_undo()
+        drop = {edits.ov_key(s.mode, k) for k in edits.LAYER_KEYS.get(s.mode, ())}
+        for key in keys:
+            f = self._frame_with(s, key, frame)
+            s, g = self._group_for(key, f, create=False)
+            if g is None:
+                continue
+            for k in drop:
+                g.setdefault("ov", {}).pop(k, None)
+            self._res.clear()
+        self._edited()
+
+    def layer_values(self, key, frame):
+        """선택 레이어의 패널 값(자기 값이 없으면 전체 값). → {패널 키: 값}, {자기 값인 패널 키}."""
+        s = self.source()
+        if s is None or key is None:
+            return {}, set()
+        p = s.params_for(s.mode)
+        f = self._frame_with(s, key, frame)
+        _, g = self._group_for(key, f, create=False)
+        ov = (g or {}).get("ov") or {}
+        vals, own = {}, set()
+        for k in edits.LAYER_KEYS.get(s.mode, ()):
+            ok = edits.ov_key(s.mode, k)
+            if ok in ov:
+                vals[k] = ov[ok]
+                own.add(k)
+            else:
+                vals[k] = p.get(k)
+        return vals, own
 
     def ov_of(self, key, frame):
         s = self.source()

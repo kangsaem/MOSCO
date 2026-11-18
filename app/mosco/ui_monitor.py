@@ -86,6 +86,10 @@ class Monitor(QWidget):
         self.picking = False
         self.playing = False        # 재생 중에는 부드러운 확대 끔(빠르게)
         self._drag = None
+        self.space_down = False     # v0.8.0 스페이스를 누른 채 = 왼쪽 드래그로 화면 이동(메인 창이 알려 줌)
+        self.space_used = False     # 스페이스를 누른 동안 화면을 끌었음 → 떼도 재생 안 함
+        self._band = None           # v0.8.0 빈 곳 드래그 = 꼭짓점 고무줄 선택 [q0, q1](원본 좌표)
+        self.vsel = (None, None, set())   # 고른 꼭짓점: (레이어 key, mode, {꼭짓점 번호}) — 한 레이어만
         self.zoom = ZoomBox(self)
         self.zoom.step.connect(self.zoom_step)
         self.zoom.pick.connect(self.zoom_pick)
@@ -115,8 +119,18 @@ class Monitor(QWidget):
         self.update()
 
     def set_selected(self, key, mode=None):
+        if (key, mode) != (self.vsel[0], self.vsel[1]):
+            self.vsel = (None, None, set())           # 다른 레이어를 고르면 꼭짓점 선택 해제
         self.sel, self.sel_mode = key, mode
         self.update()
+
+    def set_space(self, down):
+        """v0.8.0 스페이스 누름/뗌(메인 창에서). 누르는 동안 손 모양."""
+        self.space_down = down
+        if down:
+            self.space_used = False
+        if self._drag is None:
+            self.setCursor(Qt.OpenHandCursor if down else (Qt.CrossCursor if self.tool else Qt.ArrowCursor))
 
     def _is_sel(self, e):
         """v0.7.89 선택 = 종류+번호. 얼굴·간판 번호가 겹쳐도(얼굴 7·간판 7) 한쪽만."""
@@ -262,6 +276,15 @@ class Monitor(QWidget):
 
     def mousePressEvent(self, e):
         q, pane = self.to_img(e.position())
+        # v0.8.0 화면 이동 = 휠(가운데) 클릭 드래그 또는 스페이스 + 왼쪽 드래그만(빈 곳 왼쪽 드래그는 이동 안 함)
+        if e.button() == Qt.MiddleButton or (e.button() == Qt.LeftButton and self.space_down):
+            if self.space_down:
+                self.space_used = True
+            pane = self.panes()[0]
+            s, c = self.xform(pane)
+            self._drag = (e.position(), s, QPointF(c))
+            self.setCursor(Qt.ClosedHandCursor)
+            return
         if e.button() == Qt.LeftButton and self.picking:
             if q is not None:
                 self.picked.emit(q.x(), q.y())
@@ -288,6 +311,14 @@ class Monitor(QWidget):
                 if not self._is_sel(ent):
                     self.sel, self.sel_mode = ent["key"], ent.get("mode")
                     self.selected.emit(ent["key"], ent.get("mode"))
+                vk, vm, vset = self.vsel
+                if mode and mode.startswith("c") and (vk, vm) == (ent["key"], ent.get("mode")) and len(vset) > 1:
+                    if int(mode[1]) in vset:
+                        mode = "multi"                      # 고른 꼭짓점 중 하나를 끌면 고른 꼭짓점 전부 같이
+                    else:
+                        self.vsel = (None, None, set())
+                elif mode == "move" or (mode and mode.startswith("c")):
+                    self.vsel = (None, None, set()) if mode != "move" else self.vsel
                 g0 = tuple(v for p in ent["quad"] for v in p) if ent.get("quad") is not None else tuple(ent["ell"])
                 self._edit = [ent["key"], mode, q, g0, s, False, ent.get("mode")]
                 self.update()
@@ -295,12 +326,18 @@ class Monitor(QWidget):
             if self.sel is not None:
                 self.sel, self.sel_mode = None, None
                 self.selected.emit(None, None)
-        if e.button() in (Qt.LeftButton, Qt.MiddleButton):
-            pane = self.panes()[0]
-            s, c = self.xform(pane)
-            self._drag = (e.position(), s, QPointF(c))
+            self.vsel = (None, None, set())
+            if q is not None:                           # v0.8.0 빈 곳 드래그 = 꼭짓점 고무줄 선택
+                self._band = [q, q]
+            self.update()
 
     def mouseMoveEvent(self, e):
+        if self._band is not None:
+            q, _ = self.to_img(e.position())
+            if q is not None:
+                self._band[1] = q
+                self.update()
+            return
         if self._draw is not None:
             q, _ = self.to_img(e.position())
             if q is not None:
@@ -318,6 +355,11 @@ class Monitor(QWidget):
                 if mode == "move":
                     dx, dy = q.x() - q0.x(), q.y() - q0.y()
                     v = [v[i] + (dx if i % 2 == 0 else dy) for i in range(8)]
+                elif mode == "multi":                   # v0.8.0 고른 꼭짓점들만 같이 이동
+                    dx, dy = q.x() - q0.x(), q.y() - q0.y()
+                    for k in self.vsel[2]:
+                        v[2 * k] += dx
+                        v[2 * k + 1] += dy
                 else:
                     k = int(mode[1])
                     v[2 * k], v[2 * k + 1] = q.x(), q.y()
@@ -355,6 +397,11 @@ class Monitor(QWidget):
             self._set_manual(s, QPointF(c.x() - d.x() / s, c.y() - d.y() / s))
 
     def mouseReleaseEvent(self, e):
+        if self._band is not None:
+            self._end_band()
+            return
+        if self._drag is not None:
+            self.setCursor(Qt.OpenHandCursor if self.space_down else (Qt.CrossCursor if self.tool else Qt.ArrowCursor))
         if self._draw is not None:
             q0, q1 = self._draw
             self._draw = None
@@ -378,6 +425,27 @@ class Monitor(QWidget):
                             self.edited.emit(key, tuple(ent["ell"]), smode)
             return
         self._drag = None
+
+    def _end_band(self):
+        """고무줄 놓음: 한 레이어의 꼭짓점만 고름(간판 사각형). 선택한 레이어가 있으면 그 레이어, 없으면 가장 많이 든 레이어."""
+        q0, q1 = self._band
+        self._band = None
+        x0, x1 = sorted((q0.x(), q1.x()))
+        y0, y1 = sorted((q0.y(), q1.y()))
+        best = None
+        for ent in self.ells:
+            if ent.get("quad") is None:
+                continue
+            inside = {k for k, (x, y) in enumerate(ent["quad"]) if x0 <= x <= x1 and y0 <= y <= y1}
+            if inside and (best is None or len(inside) > len(best[1])):
+                best = (ent, inside)
+        if best is not None:
+            ent, inside = best
+            if not self._is_sel(ent):
+                self.sel, self.sel_mode = ent["key"], ent.get("mode")
+                self.selected.emit(ent["key"], ent.get("mode"))
+            self.vsel = (ent["key"], ent.get("mode"), inside)
+        self.update()
 
     def mouseDoubleClickEvent(self, e):
         self.reset_view()
@@ -426,9 +494,13 @@ class Monitor(QWidget):
                         p.setBrush(Qt.NoBrush)
                         p.drawPolygon(pts)
                         if sel:
-                            p.setBrush(QColor("#ffffff"))
-                            for pt in pts:
-                                p.drawRect(QRectF(pt.x() - 4, pt.y() - 4, 8, 8))
+                            vk, vm, vset = self.vsel
+                            mine = (vk, vm) == (ent["key"], ent.get("mode"))
+                            for k, pt in enumerate(pts):
+                                on = mine and k in vset          # v0.8.0 고른 꼭짓점 = 크게·파랑
+                                p.setBrush(QColor("#4a8fe0") if on else QColor("#ffffff"))
+                                r = 6 if on else 4
+                                p.drawRect(QRectF(pt.x() - r, pt.y() - r, 2 * r, 2 * r))
                     else:
                         p.save()
                         p.translate(ox + cx * s, oy + cy * s)
@@ -452,6 +524,11 @@ class Monitor(QWidget):
                         p.fillRect(r, col)
                         p.setPen(QColor("#111"))
                         p.drawText(r, Qt.AlignCenter, lab)
+            if self._band is not None and pane is self.panes()[0]:
+                b0, b1 = self._band
+                p.setPen(QPen(QColor("#7fd1ff"), 1, Qt.DashLine))
+                p.setBrush(QColor(127, 209, 255, 30))
+                p.drawRect(QRectF(QPointF(ox + b0.x() * s, oy + b0.y() * s), QPointF(ox + b1.x() * s, oy + b1.y() * s)))
             if self._draw is not None and pane is self.panes()[0]:
                 q0, q1 = self._draw
                 cx, cy = (q0.x() + q1.x()) / 2, (q0.y() + q1.y()) / 2
@@ -593,6 +670,7 @@ class EllipseLanes(QWidget):
     segments_changed = Signal(object, object)  # key, [(in, out), ...] — 구간별 양끝 편집·틈 메우기
     seek = Signal(int)                       # 재생선을 잡고 드래그 → 프레임 이동(소스 타임라인과 동일)
     del_key = Signal()                       # 레인에 포커스 두고 Del → 선택한 키(없으면 레이어) 삭제
+    del_after = Signal(object, object, int, bool)  # v0.8.0 키 우클릭: (레이어 key 목록, mode, 프레임, 사용자 키까지)
 
     LANE_H = 16
     PAD = 3
@@ -673,14 +751,21 @@ class EllipseLanes(QWidget):
         """Ctrl·Shift 로 더 고른 레이어의 key 목록(대표 제외)."""
         return [k for _m, k in self.multi]
 
+    def sel_pairs(self):
+        """v0.8.0 선택 전체 [(mode, key)] — 대표 + 더 고른 레이어(종류가 섞일 수 있음)."""
+        out = [(self._sel_mode, self.sel)] if self.sel is not None else []
+        return out + sorted(self.multi, key=lambda t: next((i for i, x in enumerate(self.spans)
+                                                            if (x.get("mode"), x["key"]) == t), 0))
+
     def _pick(self, idx, mods):
         """레이어 몸통 클릭: 그냥 = 하나만 · Ctrl = 더하기/빼기 · Shift = 대표부터 여기까지(같은 종류끼리)."""
         d = self.spans[idx]
         mode, key = d.get("mode"), d["key"]
         cur_i = next((i for i, x in enumerate(self.spans) if x["key"] == self.sel
                       and (self._sel_mode is None or x.get("mode") == self._sel_mode)), None)
-        many = bool(mods & (Qt.ControlModifier | Qt.ShiftModifier)) and cur_i is not None \
-            and self.spans[cur_i].get("mode") == mode
+        # v0.8.0 Shift = 종류(얼굴·간판) 상관없이 사이 레이어 전부 · Ctrl = 같은 종류에서 하나씩
+        many = cur_i is not None and (bool(mods & Qt.ShiftModifier) or
+                                      (bool(mods & Qt.ControlModifier) and self.spans[cur_i].get("mode") == mode))
         self.sel_kf = None
         if not many:
             self.multi = set()
@@ -688,9 +773,9 @@ class EllipseLanes(QWidget):
             self.select.emit(key, mode)
         elif mods & Qt.ShiftModifier:
             a, b = sorted((cur_i, idx))
-            add = {(x.get("mode"), x["key"]) for x in self.spans[a:b + 1] if x.get("mode") == mode}
+            add = {(x.get("mode"), x["key"]) for x in self.spans[a:b + 1]}
             self.multi = (self.multi | add) if mods & Qt.ControlModifier else add
-            self.multi.discard((mode, self.sel))
+            self.multi.discard((self.spans[cur_i].get("mode"), self.sel))
         elif idx == cur_i:                               # Ctrl + 대표 클릭 = 대표를 빼고 다른 하나를 대표로
             if self.multi:
                 m = sorted(self.multi, key=lambda t: next(i for i, x in enumerate(self.spans)
@@ -837,15 +922,31 @@ class EllipseLanes(QWidget):
 
     def contextMenuEvent(self, e):
         from PySide6.QtWidgets import QMenu
+        kf = self._key_hit(QPointF(e.pos()))
         idx, _ = self._hit(e.pos())
-        if idx is None:
+        if idx is None and kf is None:
             return
-        d = self.spans[idx]
-        if len(d["intervals"]) < 2:
-            return
+        d = self.spans[idx] if idx is not None else next(x for x in self.spans if x["key"] == kf[0]
+                                                         and x.get("mode") == kf[1])
         m = QMenu(self)
-        m.addAction("구간 합치기 (틈 메우기)",
-                    lambda: self.segments_changed.emit(d["key"], [(d["intervals"][0][0], d["intervals"][-1][1])]))
+        m.setStyleSheet("QMenu{font-size:13px}QMenu::item{padding:5px 18px}")
+        if kf is not None:
+            # v0.8.0 누른 키 이후 삭제(누른 키는 남김) — 누른 레이어 + (그 레이어가 선택 중이면) 함께 선택된 같은 종류 레이어
+            key, mode, fr = kf[0], kf[1], kf[2]
+            keys = [key]
+            if self._is_sel(d) or (mode, key) in self.multi:
+                sel_all = ([self.sel] if self.sel is not None and self._sel_mode in (None, mode) else []) + \
+                    [k for mm, k in self.multi if mm == mode]
+                keys += [k for k in sel_all if k != key]
+            m.addAction("이후 자동 키 삭제", lambda: self.del_after.emit(keys, mode, fr, False))
+            m.addAction("이후 키 모두 삭제", lambda: self.del_after.emit(keys, mode, fr, True))
+        if len(d["intervals"]) >= 2:
+            if kf is not None:
+                m.addSeparator()
+            m.addAction("구간 합치기 (틈 메우기)",
+                        lambda: self.segments_changed.emit(d["key"], [(d["intervals"][0][0], d["intervals"][-1][1])]))
+        if not m.actions():
+            return
         m.exec(e.globalPos())
 
     def paintEvent(self, e):
@@ -906,6 +1007,12 @@ class EllipseLanes(QWidget):
             p.setPen(QColor("#e6e6e6") if sel else QColor("#9aa0a6"))
             p.drawText(QRectF(4, y0, 40, y1 - y0), Qt.AlignVCenter | Qt.AlignLeft,
                        d["label"] + ("?" if d.get("sus") else ""))
+            if d.get("own"):                        # v0.8.0 자기 값(레이어별 강도·페더·여유 등) 가진 레이어 = 작은 점
+                lab = d["label"] + ("?" if d.get("sus") else "")
+                tx = 4 + p.fontMetrics().horizontalAdvance(lab) + 4
+                p.setPen(Qt.NoPen)
+                p.setBrush(QColor("#7fd1ff"))
+                p.drawEllipse(QPointF(tx, (y0 + y1) / 2), 2.5, 2.5)
         g = self._gap()
         if g is not None:                           # v0.7.89 얼굴 | 간판 사이 빈 줄 + 가운데 점선
             gy = self.PAD + g * self.LANE_H + self.LANE_H / 2 - 1

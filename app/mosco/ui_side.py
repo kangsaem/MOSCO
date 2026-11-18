@@ -414,7 +414,7 @@ def stat_line(st: dict) -> str:
 
 
 class RenderSettings(DragMove, QDialog):
-    def __init__(self, parent, rs: dict):
+    def __init__(self, parent, rs: dict, ok_text="확인", need_dir=False):
         super().__init__(parent, Qt.Dialog | Qt.FramelessWindowHint)     # DTME 렌더 설정 창과 같은 모양
         self.setWindowTitle("렌더 설정")
         self.setObjectName("RenderSet")
@@ -492,8 +492,23 @@ class RenderSettings(DragMove, QDialog):
         r = QHBoxLayout()
         r.addStretch(1)
         r.addWidget(btn("취소", on_click=self.reject))
-        r.addWidget(tone(btn("확인", on_click=self.accept), "blue"))      # DTME: 확인 = 파랑, 오른쪽
+        self.need_dir = need_dir              # v0.8.0 [렌더] 전에 매번 뜸 → 저장폴더 필수
+        self.b_ok = tone(btn(ok_text, on_click=self._ok), "red" if need_dir else "blue")   # DTME: 확인 = 파랑, 오른쪽
+        r.addWidget(self.b_ok)
         f.addRow(r)
+
+    def _ok(self):
+        if self.need_dir:
+            from pathlib import Path
+            d = self.dir.text().strip()
+            if not d or not Path(d).is_dir():
+                self.dir.setStyleSheet("border:1px solid #e06c6c")
+                self.dir.setFocus()
+                self._browse()
+                if not self.dir.text().strip() or not Path(self.dir.text().strip()).is_dir():
+                    return
+                self.dir.setStyleSheet("")
+        self.accept()
 
     def _browse(self):
         d = QFileDialog.getExistingDirectory(self, "저장폴더", self.dir.text())

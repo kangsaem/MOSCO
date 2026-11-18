@@ -12,7 +12,7 @@ from .ui_widgets import BTN, BTN_MAIN, DragMove, Section, Seg, SliderRow, Toggle
 KEYS = [("off", "끔"), ("final", "최종 키"), ("skin", "피부 키"), ("alpha", "타원 알파")]
 
 
-OV_SLIDERS = [("size", "크기", 50, 250, "%"), ("feather", "페더", 0, 50, "%"), ("strength", "강도", 0, 100, "")]
+OV_SLIDERS = [("size", "크기", 50, 250, "%")]   # v0.8.0 페더·강도는 왼쪽 패널(레이어 선택 시 그 레이어만)로 합침
 
 
 class ControlPanel(QWidget):
@@ -25,6 +25,8 @@ class ControlPanel(QWidget):
     minus = Signal(bool)             # 선택 타원: 블러 제외(True) / 블러(False)
     ov_pressed = Signal()
     ov_changed = Signal(str, object)
+    layer_changed = Signal(str, object)   # v0.8.0 B안: 레이어 선택 중 패널 값 → 그 레이어(들)만
+    layer_reset = Signal()                # [전체 값으로]
 
     def __init__(self, state):
         super().__init__()
@@ -119,6 +121,19 @@ class ControlPanel(QWidget):
         outer.addWidget(sc, 1)
 
         self.rows = {}
+        self.layer_on = False             # v0.8.0 레이어 선택 중이면 패널 값 = 그 레이어 값
+        self.layer_info = None            # 메인 창이 넣음: () → (레이어 수, {키: 값}, {자기 값 키}) 또는 None
+        rl = QHBoxLayout()
+        rl.setSpacing(6)
+        self.layer_lb = QLabel("전체 값")
+        self.layer_lb.setStyleSheet("color:#9a9a9a")
+        rl.addWidget(self.layer_lb, 1)
+        self.b_layer_reset = btn("전체 값으로", "선택한 레이어의 자기 값(강도·페더·여유 등)을 지우고 전체 값을 따름", w=84,
+                                 on_click=self.layer_reset.emit)
+        rl.addWidget(self.b_layer_reset)
+        self.w_layer = QWidget()
+        self.w_layer.setLayout(rl)
+        self.bl.addWidget(self.w_layer)
         # 뷰티
         self.sec_beauty = Section("뷰티")
         rr = QHBoxLayout()
@@ -300,9 +315,58 @@ class ControlPanel(QWidget):
         for key, label, lo, hi, unit in defs:
             row = SliderRow(key, label, lo, hi, unit)
             row.pressed.connect(lambda k: self.state.push_undo())
-            row.changed.connect(lambda k, v: self.state.set_param(k, v))
+            row.changed.connect(lambda k, v, m=mode: self._row_changed(m, k, v))
             sec.add(row)
             self.rows[(mode, key)] = row
+
+    def _row_changed(self, mode, k, v):
+        """v0.8.0 B안: 레이어를 선택했으면 그 레이어(들)만, 아니면 전체 값."""
+        from . import edits as E
+        if self.layer_on and k in E.LAYER_KEYS.get(mode, ()):
+            self.layer_changed.emit(k, v)
+        else:
+            self.state.set_param(k, v)
+
+    def apply_layer(self):
+        """레이어 선택 상태를 패널에 반영: 제목·값·잠금(검출·추적 값과 전체 전용 값은 흐리게)."""
+        from . import edits as E
+        s = self.state.source()
+        info = self.layer_info() if (self.layer_info and s is not None) else None
+        self.layer_on = bool(info)
+        mode = s.mode if s else None
+        keys = set(E.LAYER_KEYS.get(mode, ()))
+        if info:
+            n, vals, own = info
+            self.layer_lb.setText(f"선택 레이어 ({n}) — 이 레이어에만 적용" if n > 1 else "선택 레이어 — 이 레이어에만 적용")
+            self.layer_lb.setStyleSheet("color:#7fd1ff;font-weight:bold")
+            self.b_layer_reset.setVisible(True)
+            self.b_layer_reset.setEnabled(bool(own))
+        else:
+            self.layer_lb.setText("전체 값 — 모든 레이어")
+            self.layer_lb.setStyleSheet("color:#9a9a9a")
+            self.b_layer_reset.setVisible(False)
+        for (m, k), row in self.rows.items():
+            if m != mode:
+                continue
+            if info:
+                row.setEnabled(k in keys)
+                if k in info[1] and info[1][k] is not None:
+                    row.blockSignals(True)
+                    row.set(info[1][k])
+                    row.blockSignals(False)
+            else:
+                row.setEnabled(True)
+        if info:                       # 전체 전용 값(블러 종류·검출·피부색 찍기 등)은 레이어 선택 중 잠금
+            for w in (self.kind, self.skind, self.t_body, self.t_feat, self.b_pick, self.b_addskin, self.sec_det,
+                      self.sec_sdet):
+                w.setEnabled(False)
+            self._layer_locked = True
+        elif getattr(self, "_layer_locked", False):
+            self._layer_locked = False
+            for w in (self.kind, self.skind, self.t_body, self.t_feat, self.b_pick, self.b_addskin, self.sec_det,
+                      self.sec_sdet):
+                w.setEnabled(True)
+            self.refresh()             # 잠금 풀기 = 원래 규칙(여러 소스 선택 등)대로 다시
 
     def _key_menu(self):
         m = QMenu(self)
@@ -501,6 +565,7 @@ class ControlPanel(QWidget):
         if multi:
             self.multi_lb.setText(f"소스 {len(multi)}개 선택 — 바꾼 값이 같은 작업 {same}개에 모두 적용")
         self._sync_preset(s)
+        self.apply_layer()
 
     def _sync_preset(self, s):
         dlg = getattr(self, "_preset_dlg", None)          # v0.7.77 툴박스 프리셋 창이 떠 있으면 현재 클립 따라가기

@@ -547,10 +547,18 @@ def main():
         assert not w.bar.keys, "v0.7.90 소스 바에는 키 표시 안 함"
         d = next(x for x in w.state.ellipse_spans(src) if x["key"] == ("g", g["gid"]))
         assert w.f in d["ukeys"], "옮긴 프레임의 수동 키가 레인에 없음"
-        w.panel.ov_rows["strength"].s.setValue(80)
+        # v0.8.0 B안: 레이어 선택 중 왼쪽 패널 강도 = 그 레이어만(전체 값은 그대로)
+        assert w.panel.layer_on and "선택 레이어" in w.panel.layer_lb.text(), w.panel.layer_lb.text()
+        g_all = src.params()["strength"]
+        w.panel.rows[(src.mode, "strength")].s.setValue(80 if g_all != 80 else 81)
         pump(app, 0.3)
-        assert g["ov"].get("strength") == 80
+        src = w.state.source()
+        g = next(gg for gg in src.edits[src.mode]["groups"] if gg["gid"] == g["gid"])
+        assert g["ov"].get("strength") in (80, 81) and src.params()["strength"] == g_all, (g["ov"], src.params())
         assert w.state.delete_key(w.f)
+        w._esc()
+        pump(app, 0.2)
+        assert not w.panel.layer_on and "전체" in w.panel.layer_lb.text()
         print("edit drag OK")
     w.panel.b_add.toggle()
     pump(app, 0.1)

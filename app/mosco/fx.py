@@ -265,8 +265,9 @@ WR_FEATHER = 0.02           # 주름 메우기 영역 페더(얼굴 폭 비율)
 WR_OLD = False              # (비교 실험용) True = v0.7.64 이전 주름 메우기 식
 
 
-def beauty(frame16, items, p, frame_no=0, want_keys=False) -> BeautyResult:
-    """frame16: (H,W,3) uint16. items: edits.Item 목록(자동·추가 타원). p: 뷰티 값."""
+def beauty(frame16, items, p0, frame_no=0, want_keys=False) -> BeautyResult:
+    """frame16: (H,W,3) uint16. items: edits.Item 목록(자동·추가 타원). p0: 뷰티 값(전체).
+    v0.8.0 레이어(타원)마다 자기 값(it.ov)이 있으면 그 값으로(ov 의 size 는 타원 배율이라 제외)."""
     res = BeautyResult()
     res.out = frame16
     H, W = frame16.shape[:2]
@@ -277,6 +278,7 @@ def beauty(frame16, items, p, frame_no=0, want_keys=False) -> BeautyResult:
     for it in items:
         if it.presence <= 0:
             continue
+        p = {**p0, **{k: v for k, v in (it.ov or {}).items() if k in p0 and k != "size"}}
         ell = _item_ell(it, p)
         res.ells.append((it, ell))
         fe = it.ov.get("feather", p["feather"])
