@@ -2,11 +2,14 @@
 프로젝트 파일을 놓거나 열면 바로 편집 화면(v0.7.94 보정+렌더·자동 종료 삭제).
 v0.7.73: 윈도우 제목 표시줄 없앰 → 위쪽 정사각형 그림(assets/start.png, 400×400) + 그 위 왼쪽 위 'MOSCO 버전',
 오른쪽 위 ✕(= 종료), 빈 곳을 끌어 옮김. v0.7.74: 1px 테두리 없앰(사용자 요청). 그림이 없으면 회색 자리.
-v0.7.92: 새 그림(왼쪽 하늘·오른쪽 어둠) + 제목 뒤 하늘 쪽(왼쪽 절반)만 위 90px 파랑 그라데이션(흰 글자 잘 보이게)."""
+v0.7.92: 새 그림(왼쪽 하늘·오른쪽 어둠) + 제목 뒤 하늘 쪽(왼쪽 절반)만 위 90px 파랑 그라데이션(흰 글자 잘 보이게).
+v0.8.2: 그림 자리 = 영상(assets/start.webp, 사용자 영상을 거꾸로·DomoAI 표시 지움·600×600·24fps·5초) 한 번 재생 →
+마지막 장면에서 멈춤(지금 그림과 같은 구도). 실행 중 두 번째로 보일 때는 마지막 장면만. 영상을 못 읽으면 start.png.
+그라데이션 = 곱하기(멀티플라이)로 프레임마다 직접 그림, 전체 폭 — 어두운 쪽엔 파랑이 거의 안 보임."""
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QColor, QImage, QLinearGradient, QMovie, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from . import __version__, paths
@@ -14,7 +17,26 @@ from .ui_widgets import QSS, DragMove, btn
 
 IMG = 400                                      # 그림 한 변(논리 px). 그림 파일은 800×800(고배율 화면용)
 W, H = IMG, IMG + 160                          # v0.7.74 테두리 1px 없앰 → 400×560
-GRAD_W, GRAD_H = IMG // 2, 90                 # v0.7.92 제목 뒤 그라데이션(하늘 쪽 절반 · 높이 90)
+GRAD_H = 90                                    # v0.8.2 제목 뒤 그라데이션(전체 폭 · 높이 90 · 곱하기)
+
+
+def compose(img: QImage, dpr: float) -> QPixmap:
+    """그림/영상 한 장 → 시작 창 크기(고배율 반영) + 위 90px 파랑 그라데이션을 곱하기로."""
+    side = round(IMG * dpr)
+    im = img.scaled(side, side, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation) \
+        .convertToFormat(QImage.Format_ARGB32_Premultiplied)
+    p = QPainter(im)
+    p.setCompositionMode(QPainter.CompositionMode_Multiply)
+    gh = round(GRAD_H * dpr)
+    g = QLinearGradient(0, 0, 0, gh)
+    g.setColorAt(0, QColor(30, 120, 230, 235))
+    g.setColorAt(0.55, QColor(45, 140, 240, 120))
+    g.setColorAt(1, QColor(45, 140, 240, 0))
+    p.fillRect(0, 0, im.width(), gh, g)
+    p.end()
+    pm = QPixmap.fromImage(im)
+    pm.setDevicePixelRatio(dpr)
+    return pm
 
 
 class StartWindow(DragMove, QWidget):
@@ -40,23 +62,23 @@ class StartWindow(DragMove, QWidget):
         self.img = QLabel(self)
         self.img.setFixedSize(IMG, IMG)
         self.img.setAlignment(Qt.AlignCenter)
-        pm = QPixmap(str(paths.asset("start.png")))
-        if pm.isNull():
-            self.img.setStyleSheet("background:#3a3a3a")
+        self._dpr = self.devicePixelRatioF() or 1.0
+        self._movie = None
+        self._played = False
+        mv = QMovie(str(paths.asset("start.webp")))
+        if mv.isValid() and mv.frameCount() > 1:       # v0.8.2 영상: 보일 때 한 번 재생 → 마지막 장면에서 멈춤
+            self._movie = mv
+            mv.setCacheMode(QMovie.CacheNone)
+            mv.frameChanged.connect(self._on_frame)
+            mv.jumpToFrame(0)
+            self.img.setPixmap(compose(mv.currentImage(), self._dpr))
         else:
-            dpr = self.devicePixelRatioF() or 1.0
-            pm = pm.scaled(round(IMG * dpr), round(IMG * dpr), Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
-            pm.setDevicePixelRatio(dpr)
-            self.img.setPixmap(pm)
+            still = QImage(str(paths.asset("start.png")))
+            if still.isNull():
+                self.img.setStyleSheet("background:#3a3a3a")
+            else:
+                self.img.setPixmap(compose(still, self._dpr))
         lay.addWidget(self.img)
-
-        if not pm.isNull():                    # v0.7.92 제목 뒤 파랑 그라데이션(위 진하게 → 아래 투명), 글자보다 먼저 만들어 아래에 깔림
-            grad = QWidget(self.img)
-            grad.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-            grad.setAttribute(Qt.WA_StyledBackground, True)
-            grad.setGeometry(0, 0, GRAD_W, GRAD_H)
-            grad.setStyleSheet("background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 rgba(30,120,230,235),"
-                               "stop:0.55 rgba(45,140,240,120),stop:1 rgba(45,140,240,0))")
 
         head = QWidget(self.img)
         head.setAttribute(Qt.WA_TransparentForMouseEvents, True)     # 글자 위를 잡아도 창이 끌림
@@ -90,6 +112,20 @@ class StartWindow(DragMove, QWidget):
         lay.addWidget(self.b_auto, 0, Qt.AlignHCenter)
         lay.addStretch(1)
         self._going = False
+
+    def _on_frame(self, n):
+        mv = self._movie
+        if mv is None:
+            return
+        self.img.setPixmap(compose(mv.currentImage(), self._dpr))
+        if n >= mv.frameCount() - 1:
+            mv.stop()                              # 마지막 장면(지금 그림과 같은 구도)에서 멈춤
+            self._played = True
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        if self._movie is not None and not self._played and self._movie.state() != QMovie.Running:
+            self._movie.start()                    # 실행 후 처음 보일 때만 재생(AUTO 창 취소로 돌아오면 마지막 장면)
 
     def center(self):
         scr = QApplication.primaryScreen()
